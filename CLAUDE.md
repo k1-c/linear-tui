@@ -25,6 +25,7 @@ cargo run                # run (requires auth setup first)
 ## Rules
 
 - After completing any implementation task, ALWAYS run `/verify` before marking it done.
+- When committing, ALWAYS use the `conventional-commit` skill. Never create commits manually with `git commit`.
 - When you notice recurring patterns, user corrections, or conventions worth codifying, use `/skill-creator` to create a new skill.
 - For ownership/borrow/lifetime errors (E0382, E0597 etc.), use the `m01-ownership` skill.
 - For concurrency/async issues (Send/Sync, tokio, deadlock), use the `m07-concurrency` skill.
