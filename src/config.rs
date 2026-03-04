@@ -16,6 +16,8 @@ pub struct Config {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AuthConfig {
     pub api_key: Option<String>,
+    pub oauth_client_id: Option<String>,
+    pub oauth_client_secret: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

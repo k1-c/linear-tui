@@ -10,15 +10,32 @@ const AUTHORIZE_URL: &str = "https://linear.app/oauth/authorize";
 const TOKEN_URL: &str = "https://api.linear.app/oauth/token";
 
 // Users must register their own OAuth app at https://linear.app/settings/api
-// and set these values via environment variables or config.
+// and set these values via `linear-tui auth set-oauth`, environment variables, or config.
 fn client_id() -> Result<String> {
-    std::env::var("LINEAR_CLIENT_ID")
-        .context("LINEAR_CLIENT_ID environment variable not set. Register an OAuth app at https://linear.app/settings/api")
+    if let Ok(id) = std::env::var("LINEAR_CLIENT_ID") {
+        return Ok(id);
+    }
+    let config = crate::config::Config::load()?;
+    config.auth.oauth_client_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "OAuth client_id not configured.\n\
+             Register an OAuth app at https://linear.app/settings/api, then run:\n  \
+             linear-tui auth set-oauth <client-id> <client-secret>"
+        )
+    })
 }
 
 fn client_secret() -> Result<String> {
-    std::env::var("LINEAR_CLIENT_SECRET")
-        .context("LINEAR_CLIENT_SECRET environment variable not set")
+    if let Ok(secret) = std::env::var("LINEAR_CLIENT_SECRET") {
+        return Ok(secret);
+    }
+    let config = crate::config::Config::load()?;
+    config.auth.oauth_client_secret.ok_or_else(|| {
+        anyhow::anyhow!(
+            "OAuth client_secret not configured.\n\
+             Run: linear-tui auth set-oauth <client-id> <client-secret>"
+        )
+    })
 }
 
 fn generate_code_verifier() -> String {

@@ -33,7 +33,7 @@ async fn main() -> Result<()> {
     let config = Config::load()?;
     let token_store = TokenStore::new()?;
     let auth = auth::resolve_auth(&token_store, config.auth.api_key.as_deref()).await?;
-    let client = LinearClient::new(auth.bearer_token().to_string());
+    let client = LinearClient::new(auth.authorization_header());
 
     // Run TUI
     run_tui(client, config).await
@@ -43,12 +43,23 @@ async fn handle_subcommand(args: &[String]) -> Result<()> {
     match args[0].as_str() {
         "auth" => {
             if args.len() < 2 {
-                println!("Usage: linear-tui auth <login|token|logout>");
+                println!("Usage: linear-tui auth <login|set-oauth|token|logout>");
                 return Ok(());
             }
             let token_store = TokenStore::new()?;
             match args[1].as_str() {
                 "login" => auth::oauth::login(&token_store).await?,
+                "set-oauth" => {
+                    if args.len() < 4 {
+                        println!("Usage: linear-tui auth set-oauth <client-id> <client-secret>");
+                        return Ok(());
+                    }
+                    let mut config = Config::load()?;
+                    config.auth.oauth_client_id = Some(args[2].clone());
+                    config.auth.oauth_client_secret = Some(args[3].clone());
+                    config.save()?;
+                    println!("OAuth credentials saved.");
+                }
                 "token" => {
                     if args.len() < 3 {
                         println!("Usage: linear-tui auth token <api-key>");
@@ -69,7 +80,7 @@ async fn handle_subcommand(args: &[String]) -> Result<()> {
         }
         _ => {
             println!("Unknown command: {}", args[0]);
-            println!("Usage: linear-tui [auth login|auth token <key>|auth logout]");
+            println!("Usage: linear-tui [auth login|auth set-oauth|auth token <key>|auth logout]");
             Ok(())
         }
     }

@@ -51,11 +51,14 @@ cargo install --path .
 
 **OAuth2 (recommended)**
 
+Register an OAuth application at [Linear Settings > API](https://linear.app/settings/api), then save your credentials:
+
 ```sh
+linear-tui auth set-oauth <client-id> <client-secret>
 linear-tui auth login
 ```
 
-Opens your browser for Linear OAuth authorization. Tokens are stored locally and refreshed automatically.
+Tokens are stored locally and refreshed automatically.
 
 **Personal API Key**
 

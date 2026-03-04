@@ -11,10 +11,12 @@ pub enum AuthMethod {
 }
 
 impl AuthMethod {
-    pub fn bearer_token(&self) -> &str {
+    /// Returns the value for the Authorization header.
+    /// OAuth tokens use "Bearer <token>", API keys are sent directly.
+    pub fn authorization_header(&self) -> String {
         match self {
-            AuthMethod::OAuth { access_token } => access_token,
-            AuthMethod::ApiKey(key) => key,
+            AuthMethod::OAuth { access_token } => format!("Bearer {access_token}"),
+            AuthMethod::ApiKey(key) => key.clone(),
         }
     }
 }

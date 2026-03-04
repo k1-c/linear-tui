@@ -44,7 +44,7 @@ impl LinearClient {
         let resp = self
             .http
             .post(API_URL)
-            .header("Authorization", format!("Bearer {}", self.token))
+            .header("Authorization", &self.token)
             .header("Content-Type", "application/json")
             .json(&GraphQLRequest { query, variables })
             .send()
