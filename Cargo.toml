@@ -34,5 +34,10 @@ open = "5"
 toml = "0.8"
 directories = "5"
 
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
 # Error handling
 anyhow = "1"

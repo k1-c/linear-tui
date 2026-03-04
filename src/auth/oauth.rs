@@ -70,6 +70,7 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
         "{AUTHORIZE_URL}?client_id={client_id}&response_type=code&redirect_uri={redirect_uri}&scope=read,write&state={state}&code_challenge={code_challenge}&code_challenge_method=S256",
     );
 
+    tracing::info!(redirect_uri = %redirect_uri, "starting OAuth login flow");
     println!("Opening browser for Linear authentication...");
     open::that(&auth_url).context("Failed to open browser")?;
     println!("Waiting for authorization...");
@@ -80,9 +81,11 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
         .context("Failed to receive authorization code")?;
 
     // Exchange code for tokens
+    tracing::debug!("exchanging authorization code for tokens");
     let tokens = exchange_code(&code, &code_verifier, &redirect_uri).await?;
     token_store.save(&tokens)?;
 
+    tracing::info!("OAuth login successful");
     println!("Authentication successful!");
     Ok(())
 }
@@ -105,14 +108,17 @@ async fn exchange_code(code: &str, code_verifier: &str, redirect_uri: &str) -> R
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
+        tracing::error!(body = %body, "token exchange failed");
         anyhow::bail!("Token exchange failed: {body}");
     }
 
     let token_resp: TokenResponse = resp.json().await?;
+    tracing::debug!("token exchange successful");
     Ok(OAuthTokens::from_response(token_resp))
 }
 
 pub async fn refresh_token(refresh_token: &str) -> Result<OAuthTokens> {
+    tracing::debug!("refreshing OAuth token");
     let client = reqwest::Client::new();
     let resp = client
         .post(TOKEN_URL)
@@ -128,10 +134,12 @@ pub async fn refresh_token(refresh_token: &str) -> Result<OAuthTokens> {
 
     if !resp.status().is_success() {
         let body = resp.text().await.unwrap_or_default();
+        tracing::error!(body = %body, "token refresh failed");
         anyhow::bail!("Token refresh failed: {body}");
     }
 
     let token_resp: TokenResponse = resp.json().await?;
+    tracing::debug!("token refresh successful");
     Ok(OAuthTokens::from_response(token_resp))
 }
 

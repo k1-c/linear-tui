@@ -4,6 +4,7 @@ mod auth;
 mod config;
 mod event;
 mod keys;
+mod logging;
 mod ui;
 
 use std::io;
@@ -22,6 +23,8 @@ use config::Config;
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let _log_guard = logging::init();
+
     let args: Vec<String> = std::env::args().collect();
 
     // Handle CLI subcommands
@@ -33,6 +36,7 @@ async fn main() -> Result<()> {
     let config = Config::load()?;
     let token_store = TokenStore::new()?;
     let auth = auth::resolve_auth(&token_store, config.auth.api_key.as_deref()).await?;
+    tracing::info!("authenticated successfully");
     let client = LinearClient::new(auth.authorization_header());
 
     // Run TUI
@@ -140,6 +144,7 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
             app.loading = true;
             terminal.draw(|f| ui::draw(f, &app))?;
 
+            tracing::debug!(tab = ?app.tab, "reloading data");
             match app.tab {
                 Tab::Issues => {
                     if let Some(team) = app.current_team() {
@@ -161,7 +166,10 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
                                 app.selected_issue_index = 0;
                                 app.clear_status();
                             }
-                            Err(e) => app.set_error(format!("Failed to load issues: {e}")),
+                            Err(e) => {
+                                tracing::error!(error = %e, "failed to load issues");
+                                app.set_error(format!("Failed to load issues: {e}"));
+                            }
                         }
                     }
                 }
@@ -176,7 +184,10 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
                                 app.my_issues_loaded = true;
                                 app.clear_status();
                             }
-                            Err(e) => app.set_error(format!("Failed to load my issues: {e}")),
+                            Err(e) => {
+                                tracing::error!(error = %e, "failed to load my issues");
+                                app.set_error(format!("Failed to load my issues: {e}"));
+                            }
                         }
                     } else {
                         app.set_error("Viewer not loaded — cannot fetch my issues");
@@ -192,7 +203,10 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
                                 app.projects_loaded = true;
                                 app.clear_status();
                             }
-                            Err(e) => app.set_error(format!("Failed to load projects: {e}")),
+                            Err(e) => {
+                                tracing::error!(error = %e, "failed to load projects");
+                                app.set_error(format!("Failed to load projects: {e}"));
+                            }
                         }
                     }
                 }
@@ -206,7 +220,10 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
                                 app.cycles_loaded = true;
                                 app.clear_status();
                             }
-                            Err(e) => app.set_error(format!("Failed to load cycles: {e}")),
+                            Err(e) => {
+                                tracing::error!(error = %e, "failed to load cycles");
+                                app.set_error(format!("Failed to load cycles: {e}"));
+                            }
                         }
                     }
                 }

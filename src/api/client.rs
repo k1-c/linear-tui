@@ -41,6 +41,17 @@ impl LinearClient {
         query: &str,
         variables: Option<serde_json::Value>,
     ) -> Result<T> {
+        let query_name = query
+            .split_whitespace()
+            .nth(1)
+            .unwrap_or("unknown")
+            .trim_matches(|c: char| c == '(' || c == '{');
+
+        tracing::debug!(query_name, "sending GraphQL request");
+        if let Some(vars) = &variables {
+            tracing::trace!(query_name, variables = %vars, "request variables");
+        }
+
         let resp = self
             .http
             .post(API_URL)
@@ -51,16 +62,34 @@ impl LinearClient {
             .await
             .context("GraphQL request failed")?;
 
-        if !resp.status().is_success() {
-            let status = resp.status();
+        let status = resp.status();
+        tracing::debug!(query_name, status = %status, "received response");
+
+        if !status.is_success() {
             let body = resp.text().await.unwrap_or_default();
+            tracing::error!(query_name, status = %status, body = %body, "API error");
             anyhow::bail!("API error ({status}): {body}");
         }
 
-        let gql_resp: GraphQLResponse<T> = resp.json().await.context("Failed to parse response")?;
+        let text = resp.text().await.context("Failed to read response body")?;
+        tracing::trace!(query_name, body_len = text.len(), "response body received");
+
+        let gql_resp: GraphQLResponse<T> = match serde_json::from_str(&text) {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(
+                    query_name,
+                    error = %e,
+                    response_body = %text,
+                    "failed to parse GraphQL response"
+                );
+                anyhow::bail!("Failed to parse response: {e}");
+            }
+        };
 
         if let Some(errors) = gql_resp.errors {
             let msgs: Vec<_> = errors.iter().map(|e| e.message.as_str()).collect();
+            tracing::error!(query_name, errors = %msgs.join(", "), "GraphQL errors");
             anyhow::bail!("GraphQL errors: {}", msgs.join(", "));
         }
 
@@ -95,7 +124,7 @@ impl LinearClient {
         });
         let resp: Resp = self
             .query(
-                r#"query($teamId: String!, $after: String, $first: Int!) {
+                r#"query($teamId: ID!, $after: String, $first: Int!) {
                     issues(
                         filter: { team: { id: { eq: $teamId } } }
                         first: $first
@@ -174,7 +203,7 @@ impl LinearClient {
         });
         let resp: Resp = self
             .query(
-                r#"query($teamId: String!) {
+                r#"query($teamId: ID!) {
                     workflowStates(filter: { team: { id: { eq: $teamId } } }) {
                         nodes { id name color type }
                     }
