@@ -239,3 +239,223 @@ pub struct Viewer {
 pub struct MutationSuccess {
     pub success: bool,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fixture(name: &str) -> String {
+        let path = format!("{}/tests/fixtures/{name}", env!("CARGO_MANIFEST_DIR"));
+        std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("Failed to read fixture {path}: {e}"))
+    }
+
+    /// Helper: deserialize a fixture and extract the `data` wrapper that
+    /// the actual GraphQL client strips. Fixtures store the inner `data` object
+    /// directly (no `{"data": ...}` envelope) to match client.rs response types.
+
+    #[test]
+    fn deserialize_teams() {
+        #[derive(Deserialize)]
+        struct Resp {
+            teams: Connection<Team>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("teams.json")).unwrap();
+        assert_eq!(resp.teams.nodes.len(), 2);
+        assert_eq!(resp.teams.nodes[0].key, "ENG");
+    }
+
+    #[test]
+    fn deserialize_issues_with_pagination() {
+        #[derive(Deserialize)]
+        struct Resp {
+            issues: Connection<Issue>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("issues.json")).unwrap();
+        assert_eq!(resp.issues.nodes.len(), 2);
+        assert!(resp.issues.page_info.has_next_page);
+        assert_eq!(
+            resp.issues.page_info.end_cursor.as_deref(),
+            Some("cursor-abc123")
+        );
+    }
+
+    #[test]
+    fn deserialize_issue_with_null_fields() {
+        #[derive(Deserialize)]
+        struct Resp {
+            issues: Connection<Issue>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("issues.json")).unwrap();
+        let issue = &resp.issues.nodes[1];
+        assert!(issue.assignee.is_none());
+        assert!(issue.description.is_none());
+    }
+
+    #[test]
+    fn deserialize_canceled_state_type() {
+        #[derive(Deserialize)]
+        struct Resp {
+            issues: Connection<Issue>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("issues.json")).unwrap();
+        let state = resp.issues.nodes[1].state.as_ref().unwrap();
+        assert_eq!(state.state_type, Some(StateType::Cancelled));
+    }
+
+    #[test]
+    fn deserialize_issue_detail_with_comments() {
+        #[derive(Deserialize)]
+        struct Resp {
+            issue: Issue,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("issue_detail.json")).unwrap();
+        let comments = resp.issue.comments.as_ref().unwrap();
+        assert_eq!(comments.nodes.len(), 1);
+        assert_eq!(comments.nodes[0].body, "This is a comment");
+        assert!(resp.issue.project.is_some());
+        assert!(resp.issue.cycle.is_some());
+    }
+
+    #[test]
+    fn deserialize_workflow_states_all_types() {
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(rename = "workflowStates")]
+            workflow_states: Connection<WorkflowState>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("workflow_states.json")).unwrap();
+        let types: Vec<_> = resp
+            .workflow_states
+            .nodes
+            .iter()
+            .filter_map(|s| s.state_type)
+            .collect();
+        assert!(types.contains(&StateType::Started));
+        assert!(types.contains(&StateType::Backlog));
+        assert!(types.contains(&StateType::Cancelled));
+        assert!(types.contains(&StateType::Unstarted));
+        assert!(types.contains(&StateType::Completed));
+        assert!(types.contains(&StateType::Triage));
+    }
+
+    #[test]
+    fn deserialize_team_members() {
+        #[derive(Deserialize)]
+        struct TeamResp {
+            team: TeamWithMembers,
+        }
+        #[derive(Deserialize)]
+        struct TeamWithMembers {
+            members: Connection<User>,
+        }
+        let resp: TeamResp = serde_json::from_str(&fixture("team_members.json")).unwrap();
+        assert_eq!(resp.team.members.nodes.len(), 2);
+    }
+
+    #[test]
+    fn deserialize_viewer() {
+        #[derive(Deserialize)]
+        struct Resp {
+            viewer: Viewer,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("viewer.json")).unwrap();
+        assert_eq!(resp.viewer.name, "Test User");
+    }
+
+    #[test]
+    fn deserialize_my_issues_with_float_priority() {
+        #[derive(Deserialize)]
+        struct Resp {
+            issues: Connection<Issue>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("my_issues.json")).unwrap();
+        // priority: 3.0 should deserialize to Medium
+        assert_eq!(resp.issues.nodes[0].priority, Priority::Medium);
+        // priority: 0.0 should deserialize to None
+        assert_eq!(resp.issues.nodes[1].priority, Priority::None);
+        // "canceled" state type
+        let state = resp.issues.nodes[0].state.as_ref().unwrap();
+        assert_eq!(state.state_type, Some(StateType::Cancelled));
+        // Unicode description
+        assert!(
+            resp.issues.nodes[1]
+                .description
+                .as_ref()
+                .unwrap()
+                .contains("日本語")
+        );
+    }
+
+    #[test]
+    fn deserialize_projects() {
+        #[derive(Deserialize)]
+        struct TeamResp {
+            team: TeamWithProjects,
+        }
+        #[derive(Deserialize)]
+        struct TeamWithProjects {
+            projects: Connection<Project>,
+        }
+        let resp: TeamResp = serde_json::from_str(&fixture("projects.json")).unwrap();
+        assert_eq!(resp.team.projects.nodes.len(), 2);
+        assert!(resp.team.projects.nodes[0].lead.is_some());
+        assert!(resp.team.projects.nodes[1].lead.is_none());
+        assert!(resp.team.projects.nodes[1].start_date.is_none());
+    }
+
+    #[test]
+    fn deserialize_cycles() {
+        #[derive(Deserialize)]
+        struct TeamResp {
+            team: TeamWithCycles,
+        }
+        #[derive(Deserialize)]
+        struct TeamWithCycles {
+            cycles: Connection<Cycle>,
+        }
+        let resp: TeamResp = serde_json::from_str(&fixture("cycles.json")).unwrap();
+        assert_eq!(resp.team.cycles.nodes.len(), 2);
+        assert_eq!(resp.team.cycles.nodes[0].name.as_deref(), Some("Sprint 1"));
+        assert!(resp.team.cycles.nodes[1].name.is_none());
+    }
+
+    #[test]
+    fn deserialize_priority_edge_cases() {
+        // Integer values (Linear sometimes returns int instead of float)
+        assert_eq!(
+            serde_json::from_str::<Priority>("0").unwrap(),
+            Priority::None
+        );
+        assert_eq!(
+            serde_json::from_str::<Priority>("1").unwrap(),
+            Priority::Urgent
+        );
+        assert_eq!(
+            serde_json::from_str::<Priority>("4").unwrap(),
+            Priority::Low
+        );
+        // Float values
+        assert_eq!(
+            serde_json::from_str::<Priority>("2.0").unwrap(),
+            Priority::High
+        );
+        // Out of range
+        assert_eq!(
+            serde_json::from_str::<Priority>("99").unwrap(),
+            Priority::None
+        );
+    }
+
+    #[test]
+    fn deserialize_state_type_both_spellings() {
+        assert_eq!(
+            serde_json::from_str::<StateType>("\"canceled\"").unwrap(),
+            StateType::Cancelled
+        );
+        assert_eq!(
+            serde_json::from_str::<StateType>("\"cancelled\"").unwrap(),
+            StateType::Cancelled
+        );
+    }
+}

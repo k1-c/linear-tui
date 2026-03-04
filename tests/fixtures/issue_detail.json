@@ -1,0 +1,27 @@
+{
+  "issue": {
+    "id": "issue-001",
+    "identifier": "ENG-100",
+    "title": "Fix login bug",
+    "priority": 1,
+    "priorityLabel": "Urgent",
+    "state": { "id": "state-001", "name": "In Progress", "color": "#f2c94c", "type": "started" },
+    "assignee": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
+    "labels": { "nodes": [] },
+    "description": "Detailed description here",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-02T00:00:00.000Z",
+    "comments": {
+      "nodes": [
+        {
+          "id": "comment-001",
+          "body": "This is a comment",
+          "createdAt": "2026-01-01T12:00:00.000Z",
+          "user": { "id": "user-001", "name": "Test User", "displayName": "test.user" }
+        }
+      ]
+    },
+    "project": { "id": "project-001", "name": "Q1 Release" },
+    "cycle": { "id": "cycle-001", "name": "Sprint 1", "number": 1 }
+  }
+}

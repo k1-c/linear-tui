@@ -1,0 +1,33 @@
+{
+  "issues": {
+    "nodes": [
+      {
+        "id": "issue-003",
+        "identifier": "ENG-200",
+        "title": "Task with canceled state",
+        "priority": 3.0,
+        "priorityLabel": "Medium",
+        "state": { "id": "state-005", "name": "Canceled", "color": "#95a2b3", "type": "canceled" },
+        "assignee": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
+        "labels": { "nodes": [] },
+        "description": null,
+        "createdAt": "2026-01-01T00:00:00.000Z",
+        "updatedAt": "2026-02-01T00:00:00.000Z"
+      },
+      {
+        "id": "issue-004",
+        "identifier": "ENG-201",
+        "title": "Task with priority as float zero",
+        "priority": 0.0,
+        "priorityLabel": "No priority",
+        "state": { "id": "state-004", "name": "Todo", "color": "#e2e2e2", "type": "unstarted" },
+        "assignee": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
+        "labels": { "nodes": [{ "id": "label-002", "name": "feature", "color": "#26b5ce" }] },
+        "description": "Description with unicode: テスト日本語テキスト",
+        "createdAt": "2026-01-15T00:00:00.000Z",
+        "updatedAt": "2026-02-15T00:00:00.000Z"
+      }
+    ],
+    "pageInfo": { "hasNextPage": false, "endCursor": null }
+  }
+}

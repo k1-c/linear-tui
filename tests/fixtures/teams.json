@@ -1,0 +1,8 @@
+{
+  "teams": {
+    "nodes": [
+      { "id": "team-001", "name": "Engineering", "key": "ENG" },
+      { "id": "team-002", "name": "Design", "key": "DES" }
+    ]
+  }
+}

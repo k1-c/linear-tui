@@ -1,0 +1,10 @@
+{
+  "team": {
+    "members": {
+      "nodes": [
+        { "id": "user-001", "name": "Alice", "displayName": "alice" },
+        { "id": "user-002", "name": "Bob", "displayName": "bob" }
+      ]
+    }
+  }
+}
