@@ -43,9 +43,11 @@ impl LinearClient {
     ) -> Result<T> {
         let query_name = query
             .split_whitespace()
-            .nth(1)
+            .find(|s| !matches!(*s, "query" | "mutation"))
             .unwrap_or("unknown")
-            .trim_matches(|c: char| c == '(' || c == '{');
+            .split(['(', '{', '$'])
+            .next()
+            .unwrap_or("unknown");
 
         tracing::debug!(query_name, "sending GraphQL request");
         if let Some(vars) = &variables {

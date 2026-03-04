@@ -87,6 +87,7 @@ pub enum StateType {
     Unstarted,
     Started,
     Completed,
+    #[serde(alias = "canceled")]
     Cancelled,
 }
 
