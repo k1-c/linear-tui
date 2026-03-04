@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.2] - 2026-03-04
+
+### Bug Fixes
+
+- **api**: Accept "canceled" variant from Linear API
+
+### Documentation
+
+- **api**: Add API type definition guide
+
+### Features
+
+- **logging**: Add tracing-based structured logging
+
+### Miscellaneous
+
+- Release v0.1.1
+- **verify**: Add cargo test step to verify skill
+- **skills**: Add commit splitting logic to conventional-commit
+
+### Testing
+
+- **api**: Add deserialization tests with JSON fixtures
+
+
+
 ## [0.1.1] - 2026-03-04
 
 ### Features
