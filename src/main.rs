@@ -7,7 +7,7 @@ mod keys;
 mod logging;
 mod ui;
 
-use std::io;
+use std::io::{self, Write};
 
 use anyhow::Result;
 use crossterm::{
@@ -17,7 +17,7 @@ use crossterm::{
 use ratatui::{Terminal, backend::CrosstermBackend};
 
 use api::client::LinearClient;
-use app::{App, PendingAction, Screen, Tab};
+use app::{App, InputMode, PendingAction, Screen, Tab};
 use auth::token::TokenStore;
 use config::Config;
 
@@ -87,6 +87,40 @@ async fn handle_subcommand(args: &[String]) -> Result<()> {
             println!("Usage: linear-tui [auth login|auth set-oauth|auth token <key>|auth logout]");
             Ok(())
         }
+    }
+}
+
+fn launch_editor(current_description: &str) -> Result<Option<String>> {
+    use tempfile::NamedTempFile;
+
+    let mut tmpfile = NamedTempFile::new()?;
+    tmpfile.write_all(current_description.as_bytes())?;
+    tmpfile.flush()?;
+
+    let editor = std::env::var("EDITOR")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "vi".to_string());
+
+    let status = std::process::Command::new(&editor)
+        .arg(tmpfile.path())
+        .status()
+        .map_err(|e| anyhow::anyhow!("Failed to launch editor '{}': {}", editor, e))?;
+
+    let new_content = std::fs::read_to_string(tmpfile.path())?;
+    // tmpfile drops here (auto-deleted)
+
+    if !status.success() {
+        return Ok(None); // non-zero exit = cancel
+    }
+
+    let normalized_new = new_content.trim_end_matches('\n');
+    let normalized_orig = current_description.trim_end_matches('\n');
+
+    if normalized_new == normalized_orig {
+        Ok(None) // no change
+    } else {
+        Ok(Some(normalized_new.to_string()))
     }
 }
 
@@ -357,13 +391,66 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
                     }
                 }
                 PendingAction::UpdateDescription {
-                    issue_id: _,
-                    description: _,
+                    issue_id,
+                    description,
                 } => {
-                    // TODO: implement in Task 6
+                    match client.update_issue_description(issue_id, description).await {
+                        Ok(()) => {
+                            app.set_status("Description updated");
+                            // Reload detail to show updated description
+                            if app.screen == Screen::IssueDetail
+                                && let Some(issue) = &mut app.current_issue
+                            {
+                                issue.comments = None; // triggers detail reload
+                            }
+                        }
+                        Err(e) => app.set_error(format!("Failed to update description: {e}")),
+                    }
                 }
             }
             app.loading = false;
+        }
+
+        // Launch editor if description edit was requested
+        if app.input_mode == InputMode::EditingDescription {
+            let original = app
+                .current_issue
+                .as_ref()
+                .and_then(|i| i.description.as_deref())
+                .unwrap_or("")
+                .to_string();
+            let issue_id = app
+                .current_issue
+                .as_ref()
+                .map(|i| i.id.clone())
+                .unwrap_or_default();
+
+            // Suspend TUI
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+            terminal.show_cursor()?;
+
+            let result = launch_editor(&original);
+
+            // Resume TUI
+            enable_raw_mode()?;
+            execute!(terminal.backend_mut(), EnterAlternateScreen)?;
+            terminal.hide_cursor()?;
+            terminal.clear()?;
+
+            match result {
+                Ok(Some(new_description)) => {
+                    app.description_draft = Some((issue_id, new_description));
+                    app.input_mode = InputMode::DescriptionConfirm;
+                }
+                Ok(None) => {
+                    app.input_mode = InputMode::Normal;
+                }
+                Err(e) => {
+                    app.input_mode = InputMode::Normal;
+                    app.set_error(format!("Editor error: {e}"));
+                }
+            }
         }
 
         terminal.draw(|f| ui::draw(f, &app))?;

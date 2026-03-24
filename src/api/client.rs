@@ -533,11 +533,7 @@ impl LinearClient {
         Ok(())
     }
 
-    pub async fn update_issue_description(
-        &self,
-        issue_id: &str,
-        description: &str,
-    ) -> Result<()> {
+    pub async fn update_issue_description(&self, issue_id: &str, description: &str) -> Result<()> {
         #[derive(Deserialize)]
         struct Resp {
             #[serde(rename = "issueUpdate")]
