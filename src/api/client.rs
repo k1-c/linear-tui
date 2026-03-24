@@ -546,10 +546,10 @@ impl LinearClient {
         let _: Resp = self
             .query(
                 r#"mutation($id: String!, $description: String) {
-                issueUpdate(id: $id, input: { description: $description }) {
-                    success
-                }
-            }"#,
+                    issueUpdate(id: $id, input: { description: $description }) {
+                        success
+                    }
+                }"#,
                 Some(variables),
             )
             .await?;

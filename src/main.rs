@@ -401,7 +401,9 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
                             if app.screen == Screen::IssueDetail
                                 && let Some(issue) = &mut app.current_issue
                             {
-                                issue.comments = None; // triggers detail reload
+                                // Null out comments to reuse the existing detail-reload
+                                // sentinel (same pattern as CreateComment).
+                                issue.comments = None;
                             }
                         }
                         Err(e) => app.set_error(format!("Failed to update description: {e}")),
