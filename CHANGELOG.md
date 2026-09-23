@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.1] - 2026-09-23
+
+### Miscellaneous
+
+- **dev**: Pin the toolchain and tasks with mise
+
+### Build
+
+- **deps**: Use rustls instead of system OpenSSL
+
+
+
 ## [0.3.0] - 2026-09-23
 
 ### Documentation
