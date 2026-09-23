@@ -2,6 +2,28 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.2.0] - 2026-09-23
+
+### Bug Fixes
+
+- **app**: Keep lists and issue detail in sync after a mutation
+
+### Documentation
+
+- Document the reworked keybindings and features
+
+### Features
+
+- **api**: Add issue urls, branch names, search and issue creation
+- **ui**: Add an issue creation form and richer issue detail
+- **keys**: Align keybindings with linear's shortcuts
+
+### Refactoring
+
+- Run every api call off the ui thread
+
+
+
 ## [0.1.3] - 2026-03-05
 
 ### Miscellaneous
