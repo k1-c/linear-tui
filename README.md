@@ -19,13 +19,18 @@ Built with [ratatui](https://ratatui.rs/) and the Linear GraphQL API.
 
 ## Features
 
-- **Issue management** — Browse, search, filter, create, and mutate issues (status, priority, assignee, comments)
-- **Multiple views** — Issues, My Issues, Projects, Cycles with tab-based navigation
-- **Project & Cycle detail** — Drill into projects/cycles to see their issues
+- **Sidebar navigation, like Linear's** — My Issues, your **Favorites** (in Linear's order, with folders), and the current team's Issues / Cycles / Projects under a team switcher
+- **Favorites** — favorite projects, cycles, issues, and views open right in the terminal; favorites of kinds the TUI has no page for (documents, labels, …) open on linear.app
+- **Saved views** — every issue view you or your workspace saved, evaluated by Linear itself, so a view shows exactly what it shows on linear.app
+- **Grouped lists** — issues stacked under collapsible status headers (or by assignee, priority, project), sub-issues nested under their parent, and Linear's Active / Backlog / All issues presets
+- **Rich rows** — priority and status glyphs in the workspace's own colours, label chips, project, estimate, assignee avatar, and date, dropping columns gracefully as the terminal narrows
+- **Issue detail like the web app** — rendered Markdown (bold, code, lists, headings, quotes, code blocks) with proper Japanese line breaking, threaded comment cards, sub-issues, and a properties panel with status, priority, assignee, **creator**, estimate, due date, cycle, labels, project and milestone; step to the next/previous issue with `J`/`K`
+- **Mouse support** — click sidebar entries, preset chips, group headers, popup entries; click a row to select it and again to open it; scroll with the wheel
+- **Issue management** — create issues, change status, priority, and assignee, and comment
 - **Never blocks** — Every API call runs off the UI thread, so navigation and input stay responsive while data loads
 - **Search** — Filter as you type locally, or `Ctrl+G` to search all of Linear
 - **Open & copy** — Jump to the issue in your browser, or copy its identifier, URL, or suggested branch name
-- **Linear's own keybindings** — `c` to create, `s`/`p`/`a`/`i` to update, `g`+key to switch views, plus vim-style `j`/`k` and mouse scrolling
+- **Linear's own keybindings** — `c` to create, `s`/`p`/`a`/`i` to update, `g`+key to go places, plus vim-style `j`/`k`
 - **One-command sign-in** — `linear-tui auth login` opens the browser; no application to register, no client secret, or use a personal API key instead
 - **Theme support** — Default (dark), Light, and Ocean color schemes
 - **Pagination** — Cursor-based infinite scrolling across every list
@@ -129,13 +134,36 @@ a terminal allows it, so muscle memory carries over from the web app.
 | --- | --- |
 | `j` / `k`, `↓` / `↑` | Move cursor down / up |
 | `g` `g` / `G` | Jump to first / last item |
-| `Enter`, `Space` | Open the issue (Linear: peek) |
+| `Enter`, `Space` | Open (Linear: peek) |
 | `Esc` | Back / close |
-| `g` `e` / `g` `m` / `g` `p` / `g` `c` | Go to All Issues / My Issues / Projects / Cycles |
-| `1`-`4` | Same views, by tab number |
+| `J` / `K` | Next / previous issue, in the detail view |
+| `Tab` | Move focus between the sidebar and the content |
+| `Ctrl+b` | Show / hide the sidebar |
+| `h` / `l` | Fold / unfold a Favorites folder (while the sidebar has focus) |
+| `t` | Switch team (or Enter / click on the team row in the sidebar) |
+| `g` `a` / `g` `b` / `g` `e` | Active / Backlog / All issues of the current team |
+| `g` `m` / `g` `v` / `g` `p` / `g` `c` | Go to My Issues / Views / Projects / Cycles |
+| `1`-`5` | Team issues / My Issues / Projects / Cycles / Views |
 | `Ctrl+d` / `Ctrl+u` | Half page down / up |
 | `PgDn` / `PgUp` | Full page down / up |
-| mouse wheel | Scroll lists and issue bodies |
+
+### List display
+
+| Key | Action |
+| --- | --- |
+| `Shift+Tab` | Next preset: Active → Backlog → All issues |
+| `D` | Group by status → assignee → priority → project → none |
+| `z` / `Z` | Fold the group under the cursor / fold or unfold every group |
+
+### Mouse
+
+| Action | Effect |
+| --- | --- |
+| Click a row | Select it; click it again to open it |
+| Click a sidebar entry | Go there; a folder folds, the team row opens the team switcher |
+| Click a preset chip or group header | Switch preset / fold the group |
+| Click a popup entry | Choose it; click outside to close |
+| Wheel | Scroll whatever is under the pointer |
 
 ### Issue actions
 
@@ -182,8 +210,11 @@ actions have no meaning here. Where they differ:
 | --- | --- | --- |
 | `Ctrl+.`, `Ctrl+Shift+.`, `Ctrl+Shift+,`, `Ctrl+M` | also `y`, `b`, `Y`, `m` | Legacy terminals cannot distinguish `Ctrl`+punctuation, and `Ctrl+M` *is* `Enter`. The originals work in terminals supporting the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (kitty, Ghostty, WezTerm, foot, Alacritty), which is enabled automatically when available. |
 | `r` — rename issue | *(unbound)* | Renaming isn't supported yet; refreshing uses the terminal's `Ctrl+r` instead. |
+| `j` / `k` — next / previous issue in the issue view | `J` / `K` | In the detail view `j`/`k` scroll the text, which a terminal cannot do with a trackpad. |
+| Display options menu (grouping, collapsing) | `D`, `z`, `Z`, `Shift+Tab` | Linear keeps these behind a menu with no shortcut; the keys are ones Linear leaves free. |
+| Double-click to open | click the selected row again | Terminals do not report double-clicks. |
 | `Ctrl+d` — set due date | half page down | The scrolling convention wins in a terminal. |
-| — | `o`, `t`, `q` | Open in browser, switch team, and quit have no web-app equivalent. |
+| — | `o`, `t`, `q`, `Tab`, `Ctrl+b`, `1`-`5` | Open in browser, switch team, quit, and sidebar focus have no web-app equivalent. |
 
 Copying uses the OSC 52 terminal escape, so it works over SSH. If nothing
 lands on your clipboard, enable it in your terminal — under tmux that means
@@ -206,7 +237,13 @@ Config file: `~/.config/linear-tui/config.toml`
 default_team = "Core"       # Auto-select this team on startup
 items_per_page = 50          # Issues per page (pagination)
 theme = "default"            # "default" | "light" | "ocean"
+sidebar = true               # Show the sidebar (it hides itself below 100 columns)
+sidebar_width = 26           # Sidebar width in columns (18-48)
+group_by = "status"          # "status" | "assignee" | "priority" | "project" | "none"
 ```
+
+Saved views that list projects rather than issues are not shown yet; issue
+views are.
 
 ### Themes
 
