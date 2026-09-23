@@ -29,11 +29,16 @@ impl OAuthTokens {
     }
 
     pub fn is_expired(&self) -> bool {
+        self.seconds_until_expiry() <= 0
+    }
+
+    /// Seconds left on the access token; negative once it has lapsed.
+    pub fn seconds_until_expiry(&self) -> i64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_secs();
-        now >= self.expires_at
+        self.expires_at as i64 - now as i64
     }
 }
 
@@ -78,5 +83,9 @@ impl TokenStore {
             fs::remove_file(&self.path)?;
         }
         Ok(())
+    }
+
+    pub fn path(&self) -> &std::path::Path {
+        &self.path
     }
 }

@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/icon.png" alt="" width="120" height="120">
+
 # linear-tui
 
 **A TUI client for [Linear.app](https://linear.app) — manage issues, projects, and cycles from your terminal.**
@@ -24,7 +26,7 @@ Built with [ratatui](https://ratatui.rs/) and the Linear GraphQL API.
 - **Search** — Filter as you type locally, or `Ctrl+G` to search all of Linear
 - **Open & copy** — Jump to the issue in your browser, or copy its identifier, URL, or suggested branch name
 - **Linear's own keybindings** — `c` to create, `s`/`p`/`a`/`i` to update, `g`+key to switch views, plus vim-style `j`/`k` and mouse scrolling
-- **OAuth2 + PKCE authentication** — Secure login via browser, or use a personal API key
+- **One-command sign-in** — `linear-tui auth login` opens the browser; no application to register, no client secret, or use a personal API key instead
 - **Theme support** — Default (dark), Light, and Ocean color schemes
 - **Pagination** — Cursor-based infinite scrolling across every list
 
@@ -50,32 +52,68 @@ cargo install --path .
 
 ## Getting Started
 
-### 1. Authenticate
-
-**OAuth2 (recommended)**
-
-Register an OAuth application at [Linear Settings > API](https://linear.app/settings/api), then save your credentials:
+Just run it:
 
 ```sh
-linear-tui auth set-oauth <client-id> <client-secret>
+linear-tui
+```
+
+On first launch it asks how you want to connect, and nothing else has to be set
+up beforehand.
+
+### Signing in through the browser
+
+```sh
 linear-tui auth login
 ```
 
-Tokens are stored locally and refreshed automatically.
+This opens Linear in your browser, and the authorization screen appears as
+**k1-c/tui** — the application linear-tui is registered as. (Linear does not
+allow "Linear" in an application's name, which is why it is not called
+linear-tui there.)
 
-**Personal API Key**
+Approving it hands a token back to a local callback on port 53681, 53682, or
+53683. Tokens are stored in `~/.config/linear-tui/tokens.json` with `0600`
+permissions and refreshed automatically.
 
-Generate a key at [Linear Settings > API](https://linear.app/settings/api), then:
+No client secret is involved: Linear's PKCE flow makes one optional, so
+linear-tui ships as a public OAuth client.
+
+### Signing in with a personal API key
+
+Useful when the browser flow cannot reach your terminal — over SSH, for example,
+where the callback would land on the wrong machine.
+
+Create a key under
+[Settings > Account > Security & access](https://linear.app/settings/account/security),
+then:
 
 ```sh
 linear-tui auth token <your-api-key>
 ```
 
-### 2. Launch
+The key is verified before it is saved.
+
+### Checking and clearing credentials
 
 ```sh
-linear-tui
+linear-tui auth status        # which credentials are in use, and who they belong to
+linear-tui auth logout        # forget the OAuth token
+linear-tui auth logout --all  # forget the API key in config.toml as well
 ```
+
+### Using your own Linear application
+
+Some workspaces require third-party applications to be approved by an admin. If
+that blocks you — or you would simply rather authorize against your own — register
+one at [Linear Settings > API](https://linear.app/settings/api) with
+`http://localhost:53681/callback` (plus 53682 and 53683) as its redirect URIs:
+
+```sh
+linear-tui auth set-oauth <client-id> [client-secret]
+```
+
+`LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` override the config file.
 
 ## Keybindings
 
@@ -157,6 +195,9 @@ Config file: `~/.config/linear-tui/config.toml`
 # OAuth tokens are managed automatically via `linear-tui auth login`
 # To use a personal API key instead:
 # api_key = "lin_api_xxxxx"
+# To authorize against your own Linear application:
+# oauth_client_id = "..."
+# oauth_client_secret = "..."   # optional — PKCE does not require one
 
 [ui]
 default_team = "Core"       # Auto-select this team on startup
