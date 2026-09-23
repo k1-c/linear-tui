@@ -3,13 +3,13 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Paragraph, Row, Table},
 };
 
 use super::{format_date, issue_list::issue_row};
 use crate::app::App;
 
-pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(cycle) = &app.current_cycle else {
         return;
     };
@@ -53,7 +53,7 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(meta, chunks[0]);
 
     // Issues table
-    let loading = if app.loading {
+    let loading = if app.loading() {
         format!(" ({} Loading...)", app.spinner_symbol())
     } else {
         String::new()
@@ -89,9 +89,11 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
         )
         .highlight_symbol(" > ");
 
-    let mut table_state = TableState::default();
-    table_state.select(Some(app.selected_cycle_issue_index));
-    f.render_stateful_widget(table, chunks[1], &mut table_state);
+    app.list_viewport = chunks[1].height.saturating_sub(3);
+    app.tables
+        .cycle_issues
+        .select(Some(app.selected_cycle_issue_index));
+    f.render_stateful_widget(table, chunks[1], &mut app.tables.cycle_issues);
 
     // Footer
     let footer = Paragraph::new(Line::from(vec![

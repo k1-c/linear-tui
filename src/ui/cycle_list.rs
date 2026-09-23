@@ -3,13 +3,13 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
 use super::format_date;
 use crate::app::App;
 
-pub fn draw(f: &mut Frame, app: &App, area: Rect) {
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
         Constraint::Length(1), // header
         Constraint::Min(0),    // table
@@ -22,14 +22,14 @@ pub fn draw(f: &mut Frame, app: &App, area: Rect) {
     draw_footer(f, app, chunks[2]);
 }
 
-fn draw_header(f: &mut Frame, app: &App, area: Rect) {
+fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
     let th = &app.theme;
     let team_name = app
         .current_team()
         .map(|t| format!("Team: {} [{}]", t.name, t.key))
         .unwrap_or_else(|| "No team selected".to_string());
 
-    let loading = if app.loading {
+    let loading = if app.loading() {
         format!(" {} Loading...", app.spinner_symbol())
     } else {
         String::new()
@@ -47,7 +47,7 @@ fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(header, area);
 }
 
-fn draw_cycle_table(f: &mut Frame, app: &App, area: Rect) {
+fn draw_cycle_table(f: &mut Frame, app: &mut App, area: Rect) {
     let th = &app.theme;
     let rows: Vec<Row> = app
         .cycles
@@ -94,12 +94,12 @@ fn draw_cycle_table(f: &mut Frame, app: &App, area: Rect) {
         )
         .highlight_symbol(" > ");
 
-    let mut state = TableState::default();
-    state.select(Some(app.selected_cycle_index));
-    f.render_stateful_widget(table, area, &mut state);
+    app.list_viewport = area.height.saturating_sub(3);
+    app.tables.cycles.select(Some(app.selected_cycle_index));
+    f.render_stateful_widget(table, area, &mut app.tables.cycles);
 }
 
-fn draw_footer(f: &mut Frame, app: &App, area: Rect) {
+fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
     let th = &app.theme;
     let content = Line::from(vec![
         Span::styled(" j/k", Style::default().fg(th.accent)),

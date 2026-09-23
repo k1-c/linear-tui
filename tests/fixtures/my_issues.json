@@ -7,12 +7,25 @@
         "title": "Task with canceled state",
         "priority": 3.0,
         "priorityLabel": "Medium",
-        "state": { "id": "state-005", "name": "Canceled", "color": "#95a2b3", "type": "canceled" },
-        "assignee": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
-        "labels": { "nodes": [] },
+        "state": {
+          "id": "state-005",
+          "name": "Canceled",
+          "color": "#95a2b3",
+          "type": "canceled"
+        },
+        "assignee": {
+          "id": "user-001",
+          "name": "Test User",
+          "displayName": "test.user"
+        },
+        "labels": {
+          "nodes": []
+        },
         "description": null,
         "createdAt": "2026-01-01T00:00:00.000Z",
-        "updatedAt": "2026-02-01T00:00:00.000Z"
+        "updatedAt": "2026-02-01T00:00:00.000Z",
+        "url": "https://linear.app/acme/issue/ENG-200",
+        "branchName": "test-user/eng-200-task-with-canceled-state"
       },
       {
         "id": "issue-004",
@@ -20,14 +33,36 @@
         "title": "Task with priority as float zero",
         "priority": 0.0,
         "priorityLabel": "No priority",
-        "state": { "id": "state-004", "name": "Todo", "color": "#e2e2e2", "type": "unstarted" },
-        "assignee": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
-        "labels": { "nodes": [{ "id": "label-002", "name": "feature", "color": "#26b5ce" }] },
-        "description": "Description with unicode: テスト日本語テキスト",
+        "state": {
+          "id": "state-004",
+          "name": "Todo",
+          "color": "#e2e2e2",
+          "type": "unstarted"
+        },
+        "assignee": {
+          "id": "user-001",
+          "name": "Test User",
+          "displayName": "test.user"
+        },
+        "labels": {
+          "nodes": [
+            {
+              "id": "label-002",
+              "name": "feature",
+              "color": "#26b5ce"
+            }
+          ]
+        },
+        "description": "Description with unicode: \u30c6\u30b9\u30c8\u65e5\u672c\u8a9e\u30c6\u30ad\u30b9\u30c8",
         "createdAt": "2026-01-15T00:00:00.000Z",
-        "updatedAt": "2026-02-15T00:00:00.000Z"
+        "updatedAt": "2026-02-15T00:00:00.000Z",
+        "url": "https://linear.app/acme/issue/ENG-201",
+        "branchName": "test-user/eng-201-task-with-priority-as-float-zero"
       }
     ],
-    "pageInfo": { "hasNextPage": false, "endCursor": null }
+    "pageInfo": {
+      "hasNextPage": false,
+      "endCursor": null
+    }
   }
 }

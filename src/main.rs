@@ -5,21 +5,38 @@ mod config;
 mod event;
 mod keys;
 mod logging;
+mod message;
 mod ui;
 
-use std::io;
+use std::io::{self, Write};
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::{
+    event::{
+        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
+        PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    },
     execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+    terminal::{
+        EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode,
+        supports_keyboard_enhancement,
+    },
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
+use tokio::sync::mpsc;
+
+use base64::Engine;
 
 use api::client::LinearClient;
-use app::{App, PendingAction, Screen, Tab};
+use app::App;
 use auth::token::TokenStore;
 use config::Config;
+use message::{Message, Page, Request};
+
+/// Spinner advance interval.
+const TICK: Duration = Duration::from_millis(80);
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -90,289 +107,245 @@ async fn handle_subcommand(args: &[String]) -> Result<()> {
     }
 }
 
+/// RAII guard so the terminal is restored even if the loop returns an error.
+struct TerminalGuard {
+    /// Whether the kitty keyboard protocol was successfully enabled.
+    enhanced_keys: bool,
+}
+
+impl TerminalGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+
+        // Linear binds actions to Ctrl+punctuation (copy ID, copy branch name)
+        // and to Ctrl+M, none of which a legacy terminal can distinguish. The
+        // kitty keyboard protocol reports them as distinct events; terminals
+        // without it fall back to the plain-key aliases in `keys.rs`.
+        let enhanced_keys = supports_keyboard_enhancement().unwrap_or(false);
+        if enhanced_keys {
+            execute!(
+                io::stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )?;
+        }
+
+        Ok(Self { enhanced_keys })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        if self.enhanced_keys {
+            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+        }
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+    }
+}
+
 async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
-    // Setup terminal
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(stdout);
+    let _guard = TerminalGuard::enter()?;
+    let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
+    terminal.hide_cursor()?;
 
-    let theme = config::Theme::from_name(config.ui.theme);
-    let mut app = App::new(theme);
-    let items_per_page = config.ui.items_per_page;
+    let client = Arc::new(client);
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
 
-    // Load teams
-    app.loading = true;
-    match client.teams().await {
-        Ok(teams) => {
-            // Select default team if configured
-            if let Some(default_team) = &config.ui.default_team
-                && let Some(idx) = teams
-                    .iter()
-                    .position(|t| t.name == *default_team || t.key == *default_team)
-            {
-                app.selected_team_index = idx;
-            }
-            app.teams = teams;
-        }
-        Err(e) => app.set_error(format!("Failed to load teams: {e}")),
-    }
-    app.loading = false;
+    // `App::new` seeds the initial Teams/Viewer requests.
+    let mut app = App::new(&config);
+    let mut last_tick = Instant::now();
+    let mut dirty = true;
 
-    // Fetch viewer (current user) for My Issues
-    if let Ok(viewer) = client.viewer().await {
-        app.viewer_id = Some(viewer.id);
-    }
-
-    // Load workflow states and team members for default team
-    if let Some(team) = app.current_team() {
-        let team_id = team.id.clone();
-        if let Ok(states) = client.workflow_states(&team_id).await {
-            app.workflow_states = states;
-        }
-        if let Ok(members) = client.team_members(&team_id).await {
-            app.team_members = members;
-        }
-    }
-
-    // Main loop
     loop {
-        // Load data based on current tab
-        if app.needs_reload {
-            app.needs_reload = false;
-            app.loading = true;
-            terminal.draw(|f| ui::draw(f, &app))?;
-
-            tracing::debug!(tab = ?app.tab, "reloading data");
-            match app.tab {
-                Tab::Issues => {
-                    if let Some(team) = app.current_team() {
-                        let team_id = team.id.clone();
-
-                        // Load workflow states and members for new team
-                        if let Ok(states) = client.workflow_states(&team_id).await {
-                            app.workflow_states = states;
-                        }
-                        if let Ok(members) = client.team_members(&team_id).await {
-                            app.team_members = members;
-                        }
-
-                        match client.issues(&team_id, None, items_per_page).await {
-                            Ok((issues, page_info)) => {
-                                app.issues = issues;
-                                app.page_info = page_info;
-                                app.filtered_issues.clear();
-                                app.selected_issue_index = 0;
-                                app.clear_status();
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "failed to load issues");
-                                app.set_error(format!("Failed to load issues: {e}"));
-                            }
-                        }
-                    }
-                }
-                Tab::MyIssues => {
-                    if let Some(user_id) = &app.viewer_id {
-                        let user_id = user_id.clone();
-                        match client.my_issues(&user_id, None, items_per_page).await {
-                            Ok((issues, page_info)) => {
-                                app.my_issues = issues;
-                                app.my_issues_page_info = page_info;
-                                app.selected_my_issue_index = 0;
-                                app.my_issues_loaded = true;
-                                app.clear_status();
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "failed to load my issues");
-                                app.set_error(format!("Failed to load my issues: {e}"));
-                            }
-                        }
-                    } else {
-                        app.set_error("Viewer not loaded — cannot fetch my issues");
-                    }
-                }
-                Tab::Projects => {
-                    if let Some(team) = app.current_team() {
-                        let team_id = team.id.clone();
-                        match client.projects(&team_id).await {
-                            Ok(projects) => {
-                                app.projects = projects;
-                                app.selected_project_index = 0;
-                                app.projects_loaded = true;
-                                app.clear_status();
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "failed to load projects");
-                                app.set_error(format!("Failed to load projects: {e}"));
-                            }
-                        }
-                    }
-                }
-                Tab::Cycles => {
-                    if let Some(team) = app.current_team() {
-                        let team_id = team.id.clone();
-                        match client.cycles(&team_id).await {
-                            Ok(cycles) => {
-                                app.cycles = cycles;
-                                app.selected_cycle_index = 0;
-                                app.cycles_loaded = true;
-                                app.clear_status();
-                            }
-                            Err(e) => {
-                                tracing::error!(error = %e, "failed to load cycles");
-                                app.set_error(format!("Failed to load cycles: {e}"));
-                            }
-                        }
-                    }
-                }
-            }
-            app.loading = false;
+        // Spawn everything the UI has queued since the last pass. Each request
+        // runs on the tokio runtime, so the UI never blocks on the network.
+        while let Some(req) = app.requests.pop_front() {
+            app.inflight += 1;
+            let client = Arc::clone(&client);
+            let tx = tx.clone();
+            let per_page = app.items_per_page;
+            tokio::spawn(async move {
+                let msg = execute_request(&client, req, per_page).await;
+                let _ = tx.send(msg);
+            });
+            dirty = true;
         }
 
-        // Load more issues (pagination) — only for Issues tab
-        if app.needs_load_more && !app.loading {
-            app.needs_load_more = false;
-            if let Some(team) = app.current_team()
-                && let Some(cursor) = app.page_info.end_cursor.clone()
-            {
-                let team_id = team.id.clone();
-                app.loading = true;
-                terminal.draw(|f| ui::draw(f, &app))?;
-
-                match client.issues(&team_id, Some(&cursor), items_per_page).await {
-                    Ok((mut new_issues, page_info)) => {
-                        app.issues.append(&mut new_issues);
-                        app.page_info = page_info;
-                    }
-                    Err(e) => app.set_error(format!("Failed to load more: {e}")),
-                }
-                app.loading = false;
-            }
+        if dirty {
+            terminal.draw(|f| ui::draw(f, &mut app))?;
+            dirty = false;
         }
 
-        // Load issue detail if needed
-        if app.screen == Screen::IssueDetail
-            && let Some(issue) = &app.current_issue
-            && issue.comments.is_none()
-        {
-            let issue_id = issue.id.clone();
-            app.loading = true;
-            terminal.draw(|f| ui::draw(f, &app))?;
-
-            match client.issue_detail(&issue_id).await {
-                Ok(detail) => app.current_issue = Some(detail),
-                Err(e) => app.set_error(format!("Failed to load detail: {e}")),
-            }
-            app.loading = false;
+        // Drain completed requests without blocking.
+        while let Ok(msg) = rx.try_recv() {
+            app.inflight = app.inflight.saturating_sub(1);
+            app.handle_message(msg);
+            dirty = true;
         }
 
-        // Load project issues if needed
-        if app.screen == Screen::ProjectDetail
-            && app.project_issues.is_empty()
-            && let Some(project) = &app.current_project
-        {
-            let project_id = project.id.clone();
-            app.loading = true;
-            terminal.draw(|f| ui::draw(f, &app))?;
-
-            match client.project_issues(&project_id).await {
-                Ok(issues) => app.project_issues = issues,
-                Err(e) => app.set_error(format!("Failed to load project issues: {e}")),
-            }
-            app.loading = false;
+        if let Some(text) = app.pending_clipboard.take() {
+            copy_to_clipboard(&text)?;
         }
 
-        // Load cycle issues if needed
-        if app.screen == Screen::CycleDetail
-            && app.cycle_issues.is_empty()
-            && let Some(cycle) = &app.current_cycle
-        {
-            let cycle_id = cycle.id.clone();
-            app.loading = true;
-            terminal.draw(|f| ui::draw(f, &app))?;
-
-            match client.cycle_issues(&cycle_id).await {
-                Ok(issues) => app.cycle_issues = issues,
-                Err(e) => app.set_error(format!("Failed to load cycle issues: {e}")),
-            }
-            app.loading = false;
+        if event::poll_and_handle(&mut app)? {
+            dirty = true;
         }
 
-        // Execute pending mutations
-        if let Some(action) = app.pending_action.take() {
-            app.loading = true;
-            terminal.draw(|f| ui::draw(f, &app))?;
-
-            match &action {
-                PendingAction::UpdateStatus { issue_id, state_id } => {
-                    match client.update_issue_state(issue_id, state_id).await {
-                        Ok(()) => {
-                            app.set_status("Status updated");
-                            app.needs_reload = true;
-                        }
-                        Err(e) => app.set_error(format!("Failed to update status: {e}")),
-                    }
-                }
-                PendingAction::UpdatePriority { issue_id, priority } => {
-                    match client
-                        .update_issue_priority(issue_id, priority.as_u8())
-                        .await
-                    {
-                        Ok(()) => {
-                            app.set_status("Priority updated");
-                            app.needs_reload = true;
-                        }
-                        Err(e) => app.set_error(format!("Failed to update priority: {e}")),
-                    }
-                }
-                PendingAction::UpdateAssignee {
-                    issue_id,
-                    assignee_id,
-                } => {
-                    match client
-                        .update_issue_assignee(issue_id, assignee_id.as_deref())
-                        .await
-                    {
-                        Ok(()) => {
-                            app.set_status("Assignee updated");
-                            app.needs_reload = true;
-                        }
-                        Err(e) => app.set_error(format!("Failed to update assignee: {e}")),
-                    }
-                }
-                PendingAction::CreateComment { issue_id, body } => {
-                    match client.create_comment(issue_id, body).await {
-                        Ok(()) => {
-                            app.set_status("Comment posted");
-                            // Reload detail to show new comment
-                            if app.screen == Screen::IssueDetail
-                                && let Some(issue) = &mut app.current_issue
-                            {
-                                issue.comments = None;
-                            }
-                        }
-                        Err(e) => app.set_error(format!("Failed to post comment: {e}")),
-                    }
-                }
-            }
-            app.loading = false;
+        if app.loading() && last_tick.elapsed() >= TICK {
+            app.tick_spinner();
+            last_tick = Instant::now();
+            dirty = true;
         }
-
-        terminal.draw(|f| ui::draw(f, &app))?;
-
-        event::poll_and_handle(&mut app)?;
 
         if app.should_quit {
             break;
         }
     }
 
-    // Restore terminal
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
-
     Ok(())
+}
+
+/// Push `text` to the system clipboard with an OSC 52 escape sequence.
+///
+/// This goes through the terminal rather than a platform clipboard API, so it
+/// also works over SSH. Terminals that disable OSC 52 will simply ignore it,
+/// and tmux needs `set -g set-clipboard on`.
+fn copy_to_clipboard(text: &str) -> Result<()> {
+    let encoded = base64::engine::general_purpose::STANDARD.encode(text);
+    let mut stdout = io::stdout();
+    write!(stdout, "\x1b]52;c;{encoded}\x07")?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// Run one request against the API and turn the outcome into a [`Message`].
+async fn execute_request(client: &LinearClient, req: Request, per_page: u32) -> Message {
+    match req {
+        Request::Teams => match client.teams().await {
+            Ok(teams) => Message::Teams(teams),
+            Err(e) => Message::Error(format!("Failed to load teams: {e}")),
+        },
+        Request::Viewer => match client.viewer().await {
+            Ok(viewer) => Message::Viewer(viewer.id),
+            Err(e) => Message::Error(format!("Failed to identify current user: {e}")),
+        },
+        Request::TeamContext { team_id } => {
+            // Independent queries — fetch them concurrently.
+            let (states, members) = tokio::join!(
+                client.workflow_states(&team_id),
+                client.team_members(&team_id)
+            );
+            match (states, members) {
+                (Ok(states), Ok(members)) => Message::TeamContext { states, members },
+                (Err(e), _) | (_, Err(e)) => {
+                    Message::Error(format!("Failed to load team context: {e}"))
+                }
+            }
+        }
+        Request::Issues { team_id, after } => {
+            let append = after.is_some();
+            match client.issues(&team_id, after.as_deref(), per_page).await {
+                Ok((issues, info)) => Message::Issues(Page::new(issues, info, append)),
+                Err(e) => Message::Error(format!("Failed to load issues: {e}")),
+            }
+        }
+        Request::MyIssues { user_id, after } => {
+            let append = after.is_some();
+            match client.my_issues(&user_id, after.as_deref(), per_page).await {
+                Ok((issues, info)) => Message::MyIssues(Page::new(issues, info, append)),
+                Err(e) => Message::Error(format!("Failed to load my issues: {e}")),
+            }
+        }
+        Request::Search { term, team_id } => {
+            match client
+                .search_issues(&term, team_id.as_deref(), per_page)
+                .await
+            {
+                Ok((issues, _)) => Message::SearchResults { term, issues },
+                Err(e) => Message::Error(format!("Search failed: {e}")),
+            }
+        }
+        Request::Projects { team_id, after } => {
+            let append = after.is_some();
+            match client.projects(&team_id, after.as_deref()).await {
+                Ok((projects, info)) => Message::Projects(Page::new(projects, info, append)),
+                Err(e) => Message::Error(format!("Failed to load projects: {e}")),
+            }
+        }
+        Request::Cycles { team_id, after } => {
+            let append = after.is_some();
+            match client.cycles(&team_id, after.as_deref()).await {
+                Ok((cycles, info)) => Message::Cycles(Page::new(cycles, info, append)),
+                Err(e) => Message::Error(format!("Failed to load cycles: {e}")),
+            }
+        }
+        Request::IssueDetail { issue_id } => match client.issue_detail(&issue_id).await {
+            Ok(issue) => Message::IssueDetail(Box::new(issue)),
+            Err(e) => Message::Error(format!("Failed to load detail: {e}")),
+        },
+        Request::ProjectIssues { project_id, after } => {
+            let append = after.is_some();
+            match client.project_issues(&project_id, after.as_deref()).await {
+                Ok((issues, info)) => Message::ProjectIssues(Page::new(issues, info, append)),
+                Err(e) => Message::Error(format!("Failed to load project issues: {e}")),
+            }
+        }
+        Request::CycleIssues { cycle_id, after } => {
+            let append = after.is_some();
+            match client.cycle_issues(&cycle_id, after.as_deref()).await {
+                Ok((issues, info)) => Message::CycleIssues(Page::new(issues, info, append)),
+                Err(e) => Message::Error(format!("Failed to load cycle issues: {e}")),
+            }
+        }
+        Request::UpdateStatus { issue_id, state_id } => {
+            match client.update_issue_state(&issue_id, &state_id).await {
+                Ok(()) => Message::Mutated("Status updated"),
+                Err(e) => Message::Error(format!("Failed to update status: {e}")),
+            }
+        }
+        Request::UpdatePriority { issue_id, priority } => {
+            match client.update_issue_priority(&issue_id, priority).await {
+                Ok(()) => Message::Mutated("Priority updated"),
+                Err(e) => Message::Error(format!("Failed to update priority: {e}")),
+            }
+        }
+        Request::UpdateAssignee {
+            issue_id,
+            assignee_id,
+        } => {
+            match client
+                .update_issue_assignee(&issue_id, assignee_id.as_deref())
+                .await
+            {
+                Ok(()) => Message::Mutated("Assignee updated"),
+                Err(e) => Message::Error(format!("Failed to update assignee: {e}")),
+            }
+        }
+        Request::CreateComment { issue_id, body } => {
+            match client.create_comment(&issue_id, &body).await {
+                Ok(()) => Message::Mutated("Comment posted"),
+                Err(e) => Message::Error(format!("Failed to post comment: {e}")),
+            }
+        }
+        Request::CreateIssue {
+            team_id,
+            title,
+            description,
+            priority,
+        } => {
+            match client
+                .create_issue(&team_id, &title, description.as_deref(), priority)
+                .await
+            {
+                Ok(issue) => Message::IssueCreated(Box::new(issue)),
+                Err(e) => Message::Error(format!("Failed to create issue: {e}")),
+            }
+        }
+        Request::OpenUrl(url) => match open::that_detached(&url) {
+            Ok(()) => Message::Mutated("Opened in browser"),
+            Err(e) => Message::Error(format!("Failed to open browser: {e}")),
+        },
+    }
 }
