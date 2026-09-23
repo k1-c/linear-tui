@@ -5,15 +5,33 @@ the Linear GraphQL API.
 
 ## Build & Check Commands
 
+The toolchain is pinned in `mise.toml`, so a checkout needs nothing but
+[mise](https://mise.jdx.dev/):
+
+```bash
+mise install       # fetch the pinned Rust toolchain
+mise run verify    # fmt, lint, test, build — run after any implementation task
+mise run dev       # run the TUI (requires auth setup first)
+```
+
+`verify` is the gate before every commit. The individual steps are also
+available as `mise run fmt|lint|test|build`, and underneath they are:
+
 ```bash
 cargo fmt --all                            # format
 cargo clippy --all-targets -- -D warnings  # lint
 cargo test                                 # test
 cargo build                                # build
-cargo run                                  # run (requires auth setup first)
 ```
 
 Run all four, in that order, after any implementation task.
+
+Nothing outside the toolchain is required — TLS goes through rustls, so there is
+no system OpenSSL or `pkg-config` to install. Keep it that way: a dependency that
+drags in `openssl-sys` puts a C toolchain back in every contributor's path.
+
+Without mise, a rustup stable toolchain works the same; `mise.toml` only governs
+local work, and CI pins its own (`dtolnay/rust-toolchain@stable`).
 
 ## Project Structure
 

@@ -1,0 +1,41 @@
+# Local development environment.
+#
+#   mise install      fetch the toolchain
+#   mise run verify   fmt, lint, test, build — the gate before every commit
+#   mise run dev      launch the TUI from source
+#
+# CI pins its own toolchain (dtolnay/rust-toolchain@stable), so this file only
+# governs local work. Nothing outside the toolchain is needed: TLS goes through
+# rustls, so there is no system OpenSSL or pkg-config to install.
+
+[tools]
+rust = "stable"
+
+[tasks.fmt]
+description = "Format the workspace"
+run = "cargo fmt --all"
+
+[tasks.lint]
+description = "Clippy, with warnings denied"
+run = "cargo clippy --all-targets -- -D warnings"
+
+[tasks.test]
+description = "Run the test suite"
+run = "cargo test"
+
+[tasks.build]
+description = "Build the debug binary"
+run = "cargo build"
+
+[tasks.dev]
+description = "Run the TUI from source"
+run = "cargo run"
+
+[tasks.verify]
+description = "Format, lint, test, and build, in that order"
+run = [
+    "cargo fmt --all",
+    "cargo clippy --all-targets -- -D warnings",
+    "cargo test",
+    "cargo build",
+]
