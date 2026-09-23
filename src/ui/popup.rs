@@ -9,7 +9,7 @@ use ratatui::{
 use crate::app::{App, FilterKind, Popup};
 use crate::config::Theme;
 
-pub fn draw(f: &mut Frame, app: &App) {
+pub fn draw(f: &mut Frame, app: &mut App) {
     match app.popup {
         Popup::TeamSelect => draw_team_select(f, app),
         Popup::Filter => draw_filter(f, app),
@@ -73,7 +73,7 @@ fn numbered_item(index: usize, text: &str, is_current: bool, th: &Theme) -> List
     ]))
 }
 
-fn draw_team_select(f: &mut Frame, app: &App) {
+fn draw_team_select(f: &mut Frame, app: &mut App) {
     let th = &app.theme;
     let items: Vec<ListItem> = app
         .teams
@@ -91,7 +91,7 @@ fn draw_team_select(f: &mut Frame, app: &App) {
     render_popup_list(f, " Select Team ", items, app.popup_index, 40, th);
 }
 
-fn draw_filter(f: &mut Frame, app: &App) {
+fn draw_filter(f: &mut Frame, app: &mut App) {
     let th = &app.theme;
     let (title, items) = match app.filter_kind {
         FilterKind::Status => {
@@ -126,7 +126,7 @@ fn draw_filter(f: &mut Frame, app: &App) {
     render_popup_list(f, title, items, app.popup_index, 35, th);
 }
 
-fn draw_status_change(f: &mut Frame, app: &App) {
+fn draw_status_change(f: &mut Frame, app: &mut App) {
     let th = &app.theme;
     let current_state_id = app
         .focused_issue()
@@ -149,7 +149,7 @@ fn draw_status_change(f: &mut Frame, app: &App) {
     render_popup_list(f, " Change Status ", items, app.popup_index, 35, th);
 }
 
-fn draw_priority_change(f: &mut Frame, app: &App) {
+fn draw_priority_change(f: &mut Frame, app: &mut App) {
     use crate::api::types::Priority;
     let th = &app.theme;
     let current_pri = app.focused_issue().map(|i| i.priority);
@@ -168,7 +168,7 @@ fn draw_priority_change(f: &mut Frame, app: &App) {
     render_popup_list(f, " Change Priority ", items, app.popup_index, 30, th);
 }
 
-fn draw_assignee_change(f: &mut Frame, app: &App) {
+fn draw_assignee_change(f: &mut Frame, app: &mut App) {
     let th = &app.theme;
     let current_assignee_id = app
         .focused_issue()
