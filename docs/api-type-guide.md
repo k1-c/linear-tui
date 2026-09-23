@@ -8,18 +8,23 @@ Before defining or modifying types, always check the actual API schema.
 
 ### Introspection query
 
+Introspection is answered **without authentication**, so schema questions can be
+settled from any machine:
+
 ```bash
 curl -s https://api.linear.app/graphql \
-  -H "Authorization: <YOUR_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"query":"{ __type(name: \"WorkflowState\") { fields { name type { name kind enumValues { name } ofType { name kind } } } } }"}' | jq
 ```
+
+Useful variants: `__type(name: "Query") { fields { name args { name } } }` to
+find a query's arguments, and `__type(name: "IssueCreateInput") { inputFields
+{ name } }` for mutation inputs.
 
 ### Check enum values
 
 ```bash
 curl -s https://api.linear.app/graphql \
-  -H "Authorization: <YOUR_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"query":"{ __type(name: \"WorkflowStateType\") { enumValues { name } } }"}' | jq
 ```
@@ -82,3 +87,11 @@ Linear's GraphQL schema uses different scalar types depending on context:
 | `Issue.description`  | Can be `null`                      | `Option<String>` with `#[serde(default)]`              |
 | `Issue.comments`     | Only present in detail query       | `Option<Connection<Comment>>` with `#[serde(default)]` |
 | `Issue.assignee`     | Can be unassigned (`null`)         | `Option<User>`                                         |
+| `Issue.url`, `Issue.branchName` | Absent from older cached payloads | `Option<String>` with `#[serde(default)]` |
+
+## Shared Field Selections
+
+Fields that every issue query needs live in the `ISSUE_FIELDS` constant in
+`src/api/client.rs`, interpolated into each query with `format!`. Add new issue
+fields there so list rows and detail responses stay interchangeable, rather than
+extending a single query's selection set.
