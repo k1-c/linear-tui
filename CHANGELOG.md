@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.3.0] - 2026-09-23
+
+### Documentation
+
+- **readme**: Document signing in without an application
+
+### Features
+
+- **auth**: Sign in without registering an application
+
+### Miscellaneous
+
+- **assets**: Add the k1-c/tui application icon
+
+
+
 ## [0.2.1] - 2026-09-23
 
 ### Documentation
