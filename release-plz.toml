@@ -2,3 +2,6 @@
 changelog_config = "cliff.toml"
 git_release_enable = true
 git_tag_enable = true
+# 0.x defaults would bump a feature as a patch. AGENTS.md documents
+# feat as a minor bump, so make the tool match the rule.
+features_always_increment_minor = true
