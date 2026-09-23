@@ -37,11 +37,17 @@ local work, and CI pins its own (`dtolnay/rust-toolchain@stable`).
 
 - `src/main.rs` — entry point, CLI subcommands, TUI main loop, request dispatch
 - `src/message.rs` — `Request` / `Message` / `Page`, the boundary between UI and I/O
-- `src/app.rs` — app state (Model) and every state transition
+- `src/app.rs` — app state (Model) and every state transition, including the
+  sidebar (`Nav`, `SidebarAction`, Favorites), the active issue list
+  (`IssueSource`), and mouse
+  hit-testing (`App::click`)
+- `src/grouping.rs` — Active/Backlog/All presets and grouping of issue lists
 - `src/keys.rs` — keybindings (Controller)
 - `src/event.rs` — terminal event polling
-- `src/ui/` — rendering (View): `issue_list`, `issue_detail`, `project_list`,
-  `project_detail`, `cycle_list`, `cycle_detail`, `popup`, `new_issue`
+- `src/ui/` — rendering (View): `sidebar`, `issue_list`, `issue_detail`,
+  `view_list`, `project_list`, `project_detail`, `cycle_list`, `cycle_detail`,
+  `popup`, `new_issue`, plus `markdown` (wrapping Markdown renderer) and
+  `widgets` (glyphs, chips, width-aware truncation)
 - `src/api/` — Linear GraphQL client and types (see `docs/api-type-guide.md`)
 - `tests/fixtures/` — API response fixtures for deserialization tests
 - `src/auth/` — OAuth2 + PKCE, token storage, API key fallback
@@ -70,8 +76,17 @@ Other invariants:
   full list reload to reflect a single-field change — it costs a round trip and
   throws away the cursor position.
 - A refetch restores the selection by issue id, not by row index.
-- Every paginated list has a `*_page_info` field and a `maybe_prefetch_*` helper;
-  wire new lists into `App::move_selection` so they scroll infinitely too.
+- Every paginated list has a `*_page_info` field and is prefetched from
+  `App::move_selection`; a new issue list becomes an `IssueSource` variant and
+  gets grouping, prefetch, and selection for free. A cursor is requested at
+  most once (`prefetched`), because the next page is still in flight while the
+  user keeps scrolling.
+- Renderers record what they drew (`list_rows`, `row_targets`, `sidebar_rows`,
+  `chip_areas`, `popup_area`) so a click is hit-tested against the last frame.
+  A new clickable element records its area the same way and is routed in
+  `App::click`.
+- Measure text by display width (`unicode-width`), never by `len()` or char
+  count: CJK characters take two cells.
 
 ## Keybindings
 

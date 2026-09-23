@@ -1,52 +1,19 @@
+//! A team's projects: status, health, progress, lead, and target date.
+
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::Paragraph,
 };
 
+use super::widgets::{fit, progress_bar, row, short_date, truncate, user_name};
+use crate::api::types::{Project, hex_color};
 use crate::app::App;
+use crate::config::Theme;
 
-pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(1), // header
-        Constraint::Min(0),    // table
-        Constraint::Length(1), // footer
-    ])
-    .split(area);
-
-    draw_header(f, app, chunks[0]);
-    draw_project_table(f, app, chunks[1]);
-    draw_footer(f, app, chunks[2]);
-}
-
-fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let team_name = app
-        .current_team()
-        .map(|t| format!("Team: {} [{}]", t.name, t.key))
-        .unwrap_or_else(|| "No team selected".to_string());
-
-    let loading = if app.loading() {
-        format!(" {} Loading...", app.spinner_symbol())
-    } else {
-        String::new()
-    };
-    let count = format!(" ({} projects)", app.projects.len());
-
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            format!(" {team_name}"),
-            Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(count, Style::default().fg(th.muted)),
-        Span::styled(&loading, Style::default().fg(th.warning)),
-    ]));
-    f.render_widget(header, area);
-}
-
-fn project_state_color(state: Option<&str>) -> Color {
+pub fn project_state_color(state: Option<&str>) -> Color {
     match state {
         Some("started") => Color::Yellow,
         Some("planned") => Color::Blue,
@@ -58,75 +25,127 @@ fn project_state_color(state: Option<&str>) -> Color {
     }
 }
 
-fn draw_project_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let rows: Vec<Row> = app
-        .projects
-        .iter()
-        .map(|project| {
-            let state = project.state.as_deref().unwrap_or("-");
-            let progress = project
-                .progress
-                .map(|p| format!("{:.0}%", p * 100.0))
-                .unwrap_or_else(|| "-".to_string());
-            let lead = project
-                .lead
-                .as_ref()
-                .and_then(|u| u.display_name.as_deref().or(Some(u.name.as_str())))
-                .unwrap_or("-");
-            let target = project.target_date.as_deref().unwrap_or("-");
-
-            Row::new(vec![
-                Cell::from(project.name.clone()),
-                Cell::from(state.to_string())
-                    .style(Style::default().fg(project_state_color(Some(state)))),
-                Cell::from(progress),
-                Cell::from(lead.to_string()).style(Style::default().fg(th.text_dim)),
-                Cell::from(target.to_string()).style(Style::default().fg(th.muted)),
-            ])
-        })
-        .collect();
-
-    let header = Row::new(vec!["Name", "Status", "Progress", "Lead", "Target"])
-        .style(Style::default().fg(th.accent).add_modifier(Modifier::BOLD))
-        .bottom_margin(0);
-
-    let widths = [
-        Constraint::Min(20),
-        Constraint::Length(12),
-        Constraint::Length(10),
-        Constraint::Length(16),
-        Constraint::Length(12),
-    ];
-
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title(" Projects "))
-        .row_highlight_style(
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .fg(th.highlight_fg),
-        )
-        .highlight_symbol(" > ");
-
-    app.list_viewport = area.height.saturating_sub(3); // borders + header row
-    app.tables.projects.select(Some(app.selected_project_index));
-    f.render_stateful_widget(table, area, &mut app.tables.projects);
+/// Linear's project health, as a coloured word.
+pub fn health(project: &Project, th: &Theme) -> Span<'static> {
+    match project.health.as_deref() {
+        Some("onTrack") => Span::styled("On track", Style::default().fg(th.success)),
+        Some("atRisk") => Span::styled("At risk", Style::default().fg(th.warning)),
+        Some("offTrack") => Span::styled("Off track", Style::default().fg(th.error)),
+        _ => Span::styled("", Style::default()),
+    }
 }
 
-fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let content = Line::from(vec![
-        Span::styled(" j/k", Style::default().fg(th.accent)),
-        Span::raw(":move "),
-        Span::styled("Enter", Style::default().fg(th.accent)),
-        Span::raw(":issues "),
-        Span::styled("1-4", Style::default().fg(th.accent)),
-        Span::raw(":tab "),
-        Span::styled("t", Style::default().fg(th.accent)),
-        Span::raw(":team "),
-        Span::styled("q", Style::default().fg(th.accent)),
-        Span::raw(":quit"),
-    ]);
-    f.render_widget(Paragraph::new(content), area);
+pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
+    let th = app.theme;
+    let width = area.width as usize;
+
+    let header = Line::from(Span::styled(
+        format!(
+            " {}{}",
+            fit("Name", width.saturating_sub(60)),
+            "  Health       Progress         Lead         Target"
+        ),
+        Style::default().fg(th.muted),
+    ));
+    f.render_widget(Paragraph::new(header), Rect { height: 1, ..area });
+
+    let list = Rect {
+        y: area.y + 2,
+        height: area.height.saturating_sub(2),
+        ..area
+    };
+    app.list_area = list;
+    app.list_viewport = list.height;
+
+    if app.projects.is_empty() {
+        app.row_targets.clear();
+        let message = if app.loading() {
+            format!("{} Loading projects\u{2026}", app.spinner_symbol())
+        } else {
+            "No projects in this team".to_string()
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(message, Style::default().fg(th.muted)))
+                .alignment(ratatui::layout::Alignment::Center),
+            Rect {
+                y: list.y + list.height / 3,
+                height: 1,
+                ..list
+            },
+        );
+        return;
+    }
+
+    let height = list.height as usize;
+    let mut offset = app.tables.projects.offset();
+    let sel = app.selected_project_index;
+    if sel < offset {
+        offset = sel;
+    } else if height > 0 && sel >= offset + height {
+        offset = sel + 1 - height;
+    }
+    *app.tables.projects.offset_mut() = offset;
+
+    let lines: Vec<Line> = app
+        .projects
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(height)
+        .map(|(index, project)| project_row(project, width, index == sel, &th))
+        .collect();
+    app.row_targets = (offset..offset + lines.len()).map(Some).collect();
+    f.render_widget(Paragraph::new(lines), list);
+}
+
+fn project_row(project: &Project, width: usize, selected: bool, th: &Theme) -> Line<'static> {
+    let color = project
+        .color
+        .as_deref()
+        .and_then(hex_color)
+        .unwrap_or_else(|| project_state_color(project.state.as_deref()));
+    let progress = project.progress.unwrap_or(0.0);
+    let lead = project
+        .lead
+        .as_ref()
+        .map(|u| user_name(u).to_string())
+        .unwrap_or_else(|| "-".into());
+
+    let mut right = vec![Span::raw("  ")];
+    let mut h = health(project, th);
+    h.content = fit(&h.content, 11).into();
+    right.push(h);
+    right.push(Span::raw("  "));
+    right.extend(progress_bar(progress, 10, color, th));
+    right.push(Span::styled(
+        format!(" {:>3.0}%  ", progress * 100.0),
+        Style::default().fg(th.text_dim),
+    ));
+    right.push(Span::styled(
+        fit(&lead, 12),
+        Style::default().fg(th.text_dim),
+    ));
+    right.push(Span::styled(
+        format!(" {:>7} ", short_date(project.target_date.as_deref())),
+        Style::default().fg(th.muted),
+    ));
+
+    let state = project.state.as_deref().unwrap_or("");
+    let name_room = width.saturating_sub(62 + state.len());
+    let left = vec![
+        Span::styled("\u{25a3} ", Style::default().fg(color)),
+        Span::styled(
+            truncate(&project.name, name_room),
+            Style::default().fg(th.text).add_modifier(if selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            }),
+        ),
+        Span::styled(
+            format!("  {state}"),
+            Style::default().fg(project_state_color(Some(state))),
+        ),
+    ];
+    row(left, right, width, selected, th)
 }

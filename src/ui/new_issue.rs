@@ -25,6 +25,7 @@ pub fn draw(f: &mut Frame, app: &App) {
         .unwrap_or_else(|| " New issue ".to_string());
     let outer = Block::default()
         .borders(Borders::ALL)
+        .border_type(ratatui::widgets::BorderType::Rounded)
         .border_style(Style::default().fg(th.accent))
         .title(team)
         .title_style(Style::default().fg(th.accent).add_modifier(Modifier::BOLD))
@@ -53,9 +54,8 @@ pub fn draw(f: &mut Frame, app: &App) {
         rows[0],
     );
 
-    let desc_spans = super::input_spans(&form.description, th);
     f.render_widget(
-        Paragraph::new(Line::from(desc_spans))
+        Paragraph::new(super::input_lines(&form.description, th))
             .wrap(Wrap { trim: false })
             .block(field_block(
                 "Description",

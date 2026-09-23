@@ -2,21 +2,30 @@ pub mod cycle_detail;
 pub mod cycle_list;
 pub mod issue_detail;
 pub mod issue_list;
+pub mod markdown;
 pub mod new_issue;
 pub mod popup;
 pub mod project_detail;
 pub mod project_list;
+pub mod sidebar;
+pub mod view_list;
+pub mod widgets;
 
 use ratatui::{
     Frame,
     layout::{Constraint, Flex, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
 };
+use unicode_width::UnicodeWidthStr;
 
-use crate::app::{App, Input, InputMode, Popup, Screen, Tab};
+use crate::app::{App, Input, InputMode, Nav, Popup, Screen, TeamSection};
 use crate::config::Theme;
+
+/// Narrowest terminal that still gets the sidebar; below it the content pane
+/// needs every column, and `Tab` has nothing to focus.
+const SIDEBAR_MIN_WIDTH: u16 = 100;
 
 /// Days since the Unix epoch for a civil (proleptic Gregorian) date.
 /// Howard Hinnant's `days_from_civil`.
@@ -96,75 +105,350 @@ pub fn input_spans(input: &Input, theme: &Theme) -> Vec<Span<'static>> {
     ]
 }
 
+/// A multi-line text field: one line per `\n`, with the block cursor on the
+/// line that holds it.
+pub fn input_lines(input: &Input, theme: &Theme) -> Vec<Line<'static>> {
+    let cursor_style = Style::default()
+        .fg(theme.highlight_fg)
+        .add_modifier(Modifier::REVERSED);
+    let mut out = Vec::new();
+    let mut offset = 0;
+    for part in input.value.split('\n') {
+        let start = offset;
+        let end = offset + part.len();
+        if (start..=end).contains(&input.cursor) {
+            let (before, after) = part.split_at(input.cursor - start);
+            let mut chars = after.chars();
+            let under = chars.next().map(String::from).unwrap_or_else(|| " ".into());
+            out.push(Line::from(vec![
+                Span::raw(before.to_string()),
+                Span::styled(under, cursor_style),
+                Span::raw(chars.collect::<String>()),
+            ]));
+        } else {
+            out.push(Line::from(part.to_string()));
+        }
+        offset = end + 1;
+    }
+    out
+}
+
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let show_tabs = matches!(
-        app.screen,
-        Screen::IssueList | Screen::ProjectList | Screen::CycleList
+    let area = f.area();
+    let show_sidebar = app.sidebar_visible && area.width >= SIDEBAR_MIN_WIDTH;
+    if !show_sidebar {
+        app.sidebar_focus = false;
+        app.sidebar_area = Rect::ZERO;
+    }
+
+    let cols = if show_sidebar {
+        Layout::horizontal([Constraint::Length(app.sidebar_width), Constraint::Min(0)]).split(area)
+    } else {
+        Layout::horizontal([Constraint::Length(0), Constraint::Min(0)]).split(area)
+    };
+    if show_sidebar {
+        sidebar::draw(f, app, cols[0]);
+    }
+
+    let rows = Layout::vertical([
+        Constraint::Length(1), // breadcrumb
+        Constraint::Length(1), // rule
+        Constraint::Min(0),    // content
+        Constraint::Length(1), // status bar
+    ])
+    .split(cols[1]);
+
+    draw_breadcrumb(f, app, rows[0]);
+    let th = app.theme;
+    f.render_widget(
+        Paragraph::new(Span::styled(
+            "\u{2500}".repeat(rows[1].width as usize),
+            Style::default().fg(th.border),
+        )),
+        rows[1],
     );
 
-    if show_tabs {
-        let chunks = Layout::vertical([
-            Constraint::Length(1), // tab bar
-            Constraint::Min(0),    // content
-        ])
-        .split(f.area());
+    // Each screen resets these as it draws; clear them so a screen without
+    // clickable rows does not leave stale targets from the last one behind.
+    app.list_rows.clear();
+    app.row_targets.clear();
+    app.chip_areas.clear();
+    app.list_area = Rect::ZERO;
 
-        draw_tab_bar(f, app, chunks[0]);
-
-        match app.screen {
-            Screen::IssueList => issue_list::draw(f, app, chunks[1]),
-            Screen::ProjectList => project_list::draw(f, app, chunks[1]),
-            Screen::CycleList => cycle_list::draw(f, app, chunks[1]),
-            _ => {}
-        }
-    } else {
-        let area = f.area();
-        match app.screen {
-            Screen::IssueDetail => issue_detail::draw(f, app, area),
-            Screen::ProjectDetail => project_detail::draw(f, app, area),
-            Screen::CycleDetail => cycle_detail::draw(f, app, area),
-            _ => {}
-        }
+    let content = rows[2];
+    match app.screen {
+        Screen::IssueList => issue_list::draw(f, app, content),
+        Screen::ProjectList => project_list::draw(f, app, content),
+        Screen::CycleList => cycle_list::draw(f, app, content),
+        Screen::ViewList => view_list::draw(f, app, content),
+        Screen::IssueDetail => issue_detail::draw(f, app, content),
+        Screen::ProjectDetail => project_detail::draw(f, app, content),
+        Screen::CycleDetail => cycle_detail::draw(f, app, content),
     }
 
-    // Draw popup overlay
+    draw_status_bar(f, app, rows[3]);
+
+    app.popup_area = Rect::ZERO;
     if app.popup != Popup::None {
         popup::draw(f, app);
+    } else {
+        app.popup_offset = 0;
     }
-
-    // Draw error popup (highest priority overlay)
-    if let Some(err) = app.error_popup.clone() {
-        draw_error_popup(f, &err, app);
-    }
-
-    // Draw the issue-creation form
     if app.input_mode == InputMode::NewIssue {
         new_issue::draw(f, app);
     }
-
-    // Draw help overlay
     if app.show_help {
         draw_help(f, app);
     }
+    if let Some(err) = app.error_popup.clone() {
+        draw_error_popup(f, &err, app);
+    }
 }
 
-fn draw_tab_bar(f: &mut Frame, app: &App, area: Rect) {
+/// Where the content pane is: "Platform › Issues › PF-157", as in Linear's
+/// header, with the list position on the right in the detail view.
+fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
     let th = &app.theme;
-    let mut spans = vec![Span::raw(" ")];
-    for (i, tab) in Tab::all().iter().enumerate() {
-        let label = format!(" {}:{} ", i + 1, tab.label());
-        if *tab == app.tab {
-            spans.push(Span::styled(
-                label,
-                Style::default()
-                    .fg(th.accent)
-                    .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+    let sep = || Span::styled(" \u{203a} ", Style::default().fg(th.muted));
+    let dim = |t: String| Span::styled(t, Style::default().fg(th.text_dim));
+    let strong =
+        |t: String| Span::styled(t, Style::default().fg(th.text).add_modifier(Modifier::BOLD));
+
+    let team = app
+        .current_team()
+        .map(|t| t.name.clone())
+        .unwrap_or_else(|| "No team".into());
+    let mut crumbs: Vec<Span> = vec![Span::raw(" ")];
+    match app.nav {
+        Nav::MyIssues => crumbs.push(strong("My Issues".into())),
+        Nav::Views => crumbs.push(strong("Views".into())),
+        // The page itself (project, cycle, issue) is added below.
+        Nav::Favorite(_) => crumbs.push(dim("Favorites".into())),
+        Nav::View(i) => {
+            crumbs.push(dim("Views".into()));
+            crumbs.push(sep());
+            crumbs.push(strong(
+                app.custom_views
+                    .get(i)
+                    .map(|v| v.name.clone())
+                    .unwrap_or_default(),
             ));
-        } else {
-            spans.push(Span::styled(label, Style::default().fg(th.muted)));
         }
-        spans.push(Span::raw(" "));
+        Nav::Team(_, section) => {
+            if let Some(color) = app
+                .current_team()
+                .and_then(|t| t.color.as_deref())
+                .and_then(crate::api::types::hex_color)
+            {
+                crumbs.insert(1, Span::styled("\u{25cf} ", Style::default().fg(color)));
+            }
+            crumbs.push(dim(team));
+            crumbs.push(sep());
+            let label = match section {
+                TeamSection::Issues => "Issues",
+                TeamSection::Cycles => "Cycles",
+                TeamSection::Projects => "Projects",
+            };
+            crumbs.push(strong(label.into()));
+            if let Some(term) = &app.global_search {
+                crumbs.push(sep());
+                crumbs.push(Span::styled(
+                    format!("Search \u{201c}{term}\u{201d}"),
+                    Style::default().fg(th.warning),
+                ));
+            }
+        }
     }
+    match app.screen {
+        Screen::ProjectDetail => {
+            if let Some(p) = &app.current_project {
+                crumbs.push(sep());
+                crumbs.push(strong(p.name.clone()));
+            }
+        }
+        Screen::CycleDetail => {
+            if let Some(c) = &app.current_cycle {
+                crumbs.push(sep());
+                crumbs.push(strong(cycle_list::cycle_name(c)));
+            }
+        }
+        Screen::IssueDetail => {
+            if let Some(issue) = &app.current_issue {
+                match app.detail_return {
+                    Screen::ProjectDetail => {
+                        if let Some(p) = &app.current_project {
+                            crumbs.push(sep());
+                            crumbs.push(dim(p.name.clone()));
+                        }
+                    }
+                    Screen::CycleDetail => {
+                        if let Some(c) = &app.current_cycle {
+                            crumbs.push(sep());
+                            crumbs.push(dim(cycle_list::cycle_name(c)));
+                        }
+                    }
+                    _ => {}
+                }
+                crumbs.push(sep());
+                crumbs.push(Span::styled(
+                    format!("{} ", issue.identifier),
+                    Style::default().fg(th.text_dim),
+                ));
+                crumbs.push(strong(issue.title.clone()));
+            }
+        }
+        _ => {}
+    }
+
+    // Right side: spinner, and "6 / 203" in the detail view.
+    let mut right: Vec<Span> = Vec::new();
+    if app.loading() {
+        right.push(Span::styled(
+            format!("{} ", app.spinner_symbol()),
+            Style::default().fg(th.accent),
+        ));
+    }
+    if app.screen == Screen::IssueDetail
+        && let Some((index, total)) = app.detail_position()
+    {
+        right.push(Span::styled(
+            format!("{} / {}", index + 1, total),
+            Style::default().fg(th.text_dim),
+        ));
+        right.push(Span::styled(
+            "  J\u{2193} K\u{2191} ",
+            Style::default().fg(th.muted),
+        ));
+    }
+    let right_w: usize = right.iter().map(|s| s.width()).sum();
+
+    // Truncate the crumbs from the right so the position readout survives.
+    let room = (area.width as usize).saturating_sub(right_w + 1);
+    let mut used = 0;
+    let mut line: Vec<Span> = Vec::new();
+    for span in crumbs {
+        let w = span.width();
+        if used + w > room {
+            let cut = widgets::truncate(&span.content, room.saturating_sub(used));
+            used += cut.width();
+            line.push(Span::styled(cut, span.style));
+            break;
+        }
+        used += w;
+        line.push(span);
+    }
+    line.push(Span::raw(
+        " ".repeat((area.width as usize).saturating_sub(used + right_w)),
+    ));
+    line.extend(right);
+    f.render_widget(Paragraph::new(Line::from(line)), area);
+}
+
+/// Key hint: a highlighted key and what it does.
+fn hint(key: &str, what: &str, th: &Theme) -> Vec<Span<'static>> {
+    vec![
+        Span::styled(
+            format!(" {key}"),
+            Style::default()
+                .fg(th.text_dim)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!(" {what} "), Style::default().fg(th.muted)),
+    ]
+}
+
+/// The bottom line: the search prompt while searching, the latest status
+/// message if there is one, otherwise the keys that matter on this screen.
+fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
+    let th = &app.theme;
+    if app.input_mode == InputMode::Search {
+        let mut spans = vec![Span::styled(
+            " / ",
+            Style::default().fg(th.warning).add_modifier(Modifier::BOLD),
+        )];
+        spans.extend(input_spans(&app.search, th));
+        spans.push(Span::styled(
+            format!(
+                "   {} matches \u{00b7} Enter keep \u{00b7} Esc clear \u{00b7} Ctrl+G search all of Linear",
+                app.visible_issues().len()
+            ),
+            Style::default().fg(th.muted),
+        ));
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+        return;
+    }
+    if let Some(msg) = &app.status_message {
+        f.render_widget(
+            Paragraph::new(Span::styled(
+                format!(" {msg}"),
+                Style::default().fg(th.warning),
+            )),
+            area,
+        );
+        return;
+    }
+    if let Some(chord) = app.pending_chord {
+        let mut spans = vec![Span::styled(
+            format!(" {chord} \u{2026} "),
+            Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
+        )];
+        for (k, w) in [
+            ("a", "active"),
+            ("b", "backlog"),
+            ("e", "all issues"),
+            ("m", "my issues"),
+            ("v", "views"),
+            ("p", "projects"),
+            ("c", "cycles"),
+            ("g", "top"),
+        ] {
+            spans.extend(hint(k, w, th));
+        }
+        f.render_widget(Paragraph::new(Line::from(spans)), area);
+        return;
+    }
+
+    let keys: &[(&str, &str)] = if app.sidebar_focus {
+        &[
+            ("j/k", "move"),
+            ("Enter", "open"),
+            ("h/l", "fold"),
+            ("Tab", "content"),
+            ("^B", "hide"),
+            ("?", "help"),
+        ]
+    } else {
+        match app.screen {
+            Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => &[
+                ("Enter", "open"),
+                ("s/p/a", "status/priority/assignee"),
+                ("c", "new"),
+                ("/", "filter"),
+                ("S-Tab", "preset"),
+                ("D", "group"),
+                ("z", "fold"),
+                ("Tab", "sidebar"),
+                ("?", "help"),
+            ],
+            Screen::IssueDetail => &[
+                ("Esc", "back"),
+                ("J/K", "next/prev"),
+                ("s/p/a", "status/priority/assignee"),
+                ("m", "comment"),
+                ("o", "open"),
+                ("y", "copy ID"),
+                ("?", "help"),
+            ],
+            Screen::ProjectList | Screen::CycleList | Screen::ViewList => &[
+                ("Enter", "open"),
+                ("j/k", "move"),
+                ("Tab", "sidebar"),
+                ("^R", "refresh"),
+                ("?", "help"),
+            ],
+        }
+    };
+    let spans: Vec<Span> = keys.iter().flat_map(|(k, w)| hint(k, w, th)).collect();
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -190,6 +474,7 @@ fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(th.error))
                 .title(" Error ")
                 .title_style(Style::default().fg(th.error).add_modifier(Modifier::BOLD)),
@@ -223,25 +508,38 @@ fn draw_help(f: &mut Frame, app: &App) {
     };
     let key_line = |key: &str, desc: &str| -> Line<'static> {
         Line::from(vec![
-            Span::styled(format!("  {key:<9}  "), Style::default().fg(th.warning)),
+            Span::styled(format!("  {key:<9}  "), Style::default().fg(th.accent)),
             Span::raw(desc.to_string()),
         ])
     };
 
     let help_text = vec![
         section("Navigation"),
-        key_line("j/k", "Move cursor up/down"),
-        key_line("gg/G", "Go to first/last item"),
-        key_line("Enter", "Open issue"),
-        key_line("Space", "Open issue (Linear: peek)"),
+        key_line("j/k", "Move cursor down/up"),
+        key_line("gg/G", "First/last item"),
+        key_line("Enter", "Open"),
         key_line("Esc", "Back / close"),
+        key_line("J/K", "Next/previous issue (detail)"),
         Line::from(""),
-        section("Go to view"),
+        section("Sidebar"),
+        key_line("Tab", "Focus sidebar / content"),
+        key_line("C-b", "Show/hide sidebar"),
+        key_line("h/l", "Fold/unfold a team"),
+        Line::from(""),
+        section("Go to"),
+        key_line("g a", "Active issues"),
+        key_line("g b", "Backlog"),
         key_line("g e", "All issues"),
         key_line("g m", "My issues"),
+        key_line("g v", "Views"),
         key_line("g p", "Projects"),
         key_line("g c", "Cycles"),
-        key_line("1-4", "Same, by tab number"),
+        key_line("1-5", "Issues/My/Projects/Cycles/Views"),
+        Line::from(""),
+        section("List display"),
+        key_line("S-Tab", "Next preset (Active/Backlog/All)"),
+        key_line("D", "Group by status/assignee/\u{2026}"),
+        key_line("z / Z", "Fold group / all groups"),
         Line::from(""),
         section("Issue actions"),
         key_line("c", "Create issue"),
@@ -263,6 +561,11 @@ fn draw_help(f: &mut Frame, app: &App) {
         key_line("C-g", "Search all of Linear"),
         key_line("f/F", "Filter / clear filters"),
         Line::from(""),
+        section("Mouse"),
+        key_line("click", "Select; click again to open"),
+        key_line("click", "Sidebar, chips, group headers"),
+        key_line("wheel", "Scroll"),
+        Line::from(""),
         section("Other"),
         key_line("t", "Switch team"),
         key_line("C-r", "Refresh"),
@@ -272,7 +575,6 @@ fn draw_help(f: &mut Frame, app: &App) {
         section("Scrolling"),
         key_line("C-d/C-u", "Half page down/up"),
         key_line("PgDn/PgUp", "Full page down/up"),
-        key_line("wheel", "Mouse scrolling"),
         Line::from(""),
         section("Editing"),
         key_line("C-w", "Delete previous word"),
@@ -283,7 +585,7 @@ fn draw_help(f: &mut Frame, app: &App) {
 
     let total = help_text.len() as u16;
     let height = (total + 2).min(f.area().height.saturating_sub(4));
-    let width = 48.min(f.area().width.saturating_sub(4));
+    let width = 52.min(f.area().width.saturating_sub(4));
     let area = centered_rect(width, height, f.area());
     let scroll = app
         .help_scroll
@@ -293,6 +595,8 @@ fn draw_help(f: &mut Frame, app: &App) {
     let help = Paragraph::new(help_text).scroll((scroll, 0)).block(
         Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(th.border))
             .title(" Help (j/k to scroll, any other key closes) ")
             .title_style(Style::default().fg(th.accent).add_modifier(Modifier::BOLD)),
     );

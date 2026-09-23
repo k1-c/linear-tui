@@ -1,9 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 
+use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
 
 use crate::api::types::*;
 use crate::config::{Config, Theme};
+use crate::grouping::{GroupBy, Preset, Section, group};
 use crate::message::{Message, Page, Request};
 
 const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -12,25 +14,45 @@ const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦
 /// is requested.
 const PREFETCH_MARGIN: usize = 5;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Tab {
-    Issues,
+/// A destination in the sidebar — everything the content pane can be showing.
+///
+/// Linear's navigation is a tree of places, not a strip of four tabs, and the
+/// team a place belongs to is part of the place: `Platform > Cycles` and
+/// `Development > Cycles` are different destinations. Carrying the team index
+/// here is what lets the sidebar jump between teams without a modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Nav {
     MyIssues,
-    Projects,
-    Cycles,
+    /// The index of saved views.
+    Views,
+    /// One saved view, by its position in `custom_views`.
+    View(usize),
+    Team(usize, TeamSection),
+    /// A favorite opened in place — a project, cycle, or issue — by its
+    /// position in `favorites`. Favorites that point at a view or a team page
+    /// use that destination instead, so the sidebar highlights one row.
+    Favorite(usize),
 }
 
-impl Tab {
-    pub fn all() -> &'static [Tab] {
-        &[Tab::Issues, Tab::MyIssues, Tab::Projects, Tab::Cycles]
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TeamSection {
+    Issues,
+    Cycles,
+    Projects,
+}
 
-    pub fn label(&self) -> &'static str {
+impl Nav {
+    /// The screen this destination opens.
+    pub fn screen(&self) -> Screen {
         match self {
-            Tab::Issues => "Issues",
-            Tab::MyIssues => "My Issues",
-            Tab::Projects => "Projects",
-            Tab::Cycles => "Cycles",
+            Self::MyIssues | Self::View(_) | Self::Team(_, TeamSection::Issues) => {
+                Screen::IssueList
+            }
+            Self::Views => Screen::ViewList,
+            Self::Team(_, TeamSection::Cycles) => Screen::CycleList,
+            Self::Team(_, TeamSection::Projects) => Screen::ProjectList,
+            // Depends on what the favorite is; `App::activate` opens it.
+            Self::Favorite(_) => Screen::ProjectDetail,
         }
     }
 }
@@ -43,6 +65,106 @@ pub enum Screen {
     ProjectDetail,
     CycleList,
     CycleDetail,
+    /// The index of saved views.
+    ViewList,
+}
+
+/// Which of the app's issue lists the current screen is showing.
+///
+/// Five lists behave identically once you know which one is on screen —
+/// selection, prefetch, grouping, opening a row — so they are addressed
+/// through this rather than duplicated five times over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueSource {
+    Team,
+    My,
+    View,
+    Project,
+    Cycle,
+}
+
+impl IssueSource {
+    fn slot(self) -> usize {
+        self as usize
+    }
+}
+
+/// One line of the navigation sidebar.
+#[derive(Debug, Clone)]
+pub enum SidebarRow {
+    /// A section caption. Not selectable.
+    Header(String),
+    /// Blank spacing between sections. Not selectable.
+    Gap,
+    Item(SidebarItem),
+}
+
+#[derive(Debug, Clone)]
+pub struct SidebarItem {
+    pub label: String,
+    pub icon: &'static str,
+    /// Colour Linear gives this team, view, or project, when it has one.
+    pub color: Option<ratatui::style::Color>,
+    pub depth: u8,
+    /// What Enter (or a click) does.
+    pub action: SidebarAction,
+    /// Open/closed, for a row that heads a foldable group.
+    pub expanded: Option<bool>,
+    /// Text shown right-aligned, muted.
+    pub trailing: Option<String>,
+    /// How loudly the row is drawn. Favorites are what people navigate by, so
+    /// they read strongest; secondary pages like Views recede.
+    pub tone: Tone,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tone {
+    Subtle,
+    Normal,
+    Strong,
+}
+
+impl SidebarItem {
+    /// The destination this row goes to, if it is one.
+    pub fn nav(&self) -> Option<Nav> {
+        match self.action {
+            SidebarAction::Go(nav) => Some(nav),
+            _ => None,
+        }
+    }
+}
+
+fn contains(area: Rect, x: u16, y: u16) -> bool {
+    area.width > 0
+        && x >= area.x
+        && x < area.x + area.width
+        && y >= area.y
+        && y < area.y + area.height
+}
+
+/// One rendered line of a grouped issue list.
+#[derive(Debug, Clone)]
+pub enum ListRow {
+    Group {
+        key: String,
+        label: String,
+        color: ratatui::style::Color,
+        glyph: &'static str,
+        count: usize,
+        collapsed: bool,
+    },
+    /// `ordinal` indexes into [`App::visible_issues`].
+    Issue { ordinal: usize, depth: u8 },
+}
+
+/// What activating a sidebar row does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SidebarAction {
+    Go(Nav),
+    /// Fold or unfold a Favorites folder, by its position in `favorites`.
+    Fold(usize),
+    /// Open the team picker — the team row is a switcher, not a tree.
+    SwitchTeam,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -199,6 +321,8 @@ impl Input {
 pub struct TableStates {
     pub issues: TableState,
     pub my_issues: TableState,
+    pub view_issues: TableState,
+    pub views: TableState,
     pub projects: TableState,
     pub cycles: TableState,
     pub project_issues: TableState,
@@ -259,9 +383,13 @@ pub struct App {
     pub requests: VecDeque<Request>,
     /// Number of requests currently in flight.
     pub inflight: usize,
+    /// Page cursors already requested. A next-page request stays in flight
+    /// while the user keeps scrolling, and each step near the bottom would
+    /// otherwise ask for the same page again — appending it once per step.
+    prefetched: HashSet<String>,
 
-    // Tab
-    pub tab: Tab,
+    /// Where the content pane currently is.
+    pub nav: Nav,
 
     // Popup
     pub popup: Popup,
@@ -274,7 +402,6 @@ pub struct App {
 
     // Issues
     pub issues: Vec<Issue>,
-    pub filtered_issues: Vec<usize>,
     pub selected_issue_index: usize,
     pub page_info: PageInfo,
 
@@ -283,8 +410,66 @@ pub struct App {
     pub filter_kind: FilterKind,
     pub workflow_states: Vec<WorkflowState>,
 
+    // Saved views
+    pub custom_views: Vec<CustomView>,
+    pub views_loaded: bool,
+    pub selected_view_index: usize,
+    pub view_issues: Vec<Issue>,
+    pub view_issues_page_info: PageInfo,
+    pub selected_view_issue_index: usize,
+    /// Which view `view_issues` belongs to, so switching views refetches.
+    pub loaded_view_id: Option<String>,
+
+    // Sidebar
+    pub sidebar_visible: bool,
+    pub sidebar_width: u16,
+    /// True while the cursor is in the sidebar rather than the content pane.
+    pub sidebar_focus: bool,
+    pub sidebar_index: usize,
+    /// First sidebar row on screen, when the tree is taller than the pane.
+    pub sidebar_offset: usize,
+    /// Rows the sidebar drew last frame, kept for keyboard and mouse hit-testing.
+    pub sidebar_rows: Vec<SidebarRow>,
+    /// Favorites, in the order Linear's sidebar shows them.
+    pub favorites: Vec<Favorite>,
+    /// Favorites folders the user has folded, by favorite id.
+    pub collapsed_folders: HashSet<String>,
+
+    // List shaping
+    pub group_by: GroupBy,
+    /// The preset chip selected on each list, indexed by [`IssueSource`].
+    ///
+    /// A team's issues open on Active, as in Linear; every other list opens on
+    /// All, because its contents were already chosen — by a saved view's
+    /// filter, by a project, by being yours — and hiding the done half of a
+    /// view someone deliberately built would be a surprise.
+    presets: [Preset; 5],
+    /// Group keys the user has folded away.
+    pub collapsed_groups: HashSet<String>,
+    /// Display rows the content list drew last frame — only the visible
+    /// slice, top to bottom — for mouse hit-testing.
+    pub list_rows: Vec<ListRow>,
+    /// For the non-issue lists (projects, cycles, views): which item each
+    /// visible row of `list_area` selects, top to bottom.
+    pub row_targets: Vec<Option<usize>>,
+    /// Screen area those rows occupy, so a click can be mapped back to a row.
+    pub list_area: Rect,
+    /// Where the sidebar was drawn.
+    pub sidebar_area: Rect,
+    /// Screen area of each preset chip, left to right.
+    pub chip_areas: Vec<(Rect, Preset)>,
+    /// Where the open popup drew its entries, so they are clickable too.
+    pub popup_area: Rect,
+    /// First popup entry on screen, when the list scrolls.
+    pub popup_offset: usize,
+
     // Issue detail
     pub current_issue: Option<Issue>,
+    /// Screen to return to when the detail view is closed.
+    pub detail_return: Screen,
+    /// Destination to return to with it — an issue opened from Favorites
+    /// points the sidebar at the favorite while it is open.
+    pub detail_return_nav: Nav,
     pub detail_scroll: u16,
     /// Rendered height of the detail body, updated each frame so scrolling can clamp.
     pub detail_lines: u16,
@@ -372,20 +557,53 @@ impl App {
             should_quit: false,
             requests: VecDeque::new(),
             inflight: 0,
-            tab: Tab::Issues,
+            prefetched: HashSet::new(),
+            nav: Nav::Team(0, TeamSection::Issues),
             popup: Popup::None,
             popup_index: 0,
             teams: Vec::new(),
             selected_team_index: 0,
             team_members: Vec::new(),
             issues: Vec::new(),
-            filtered_issues: Vec::new(),
             selected_issue_index: 0,
             page_info: PageInfo::default(),
             filters: Filters::default(),
             filter_kind: FilterKind::Status,
             workflow_states: Vec::new(),
+            custom_views: Vec::new(),
+            views_loaded: false,
+            selected_view_index: 0,
+            view_issues: Vec::new(),
+            view_issues_page_info: PageInfo::default(),
+            selected_view_issue_index: 0,
+            loaded_view_id: None,
+            sidebar_visible: config.ui.sidebar,
+            sidebar_width: config.ui.sidebar_width.clamp(18, 48),
+            sidebar_focus: false,
+            sidebar_index: 0,
+            sidebar_offset: 0,
+            sidebar_rows: Vec::new(),
+            favorites: Vec::new(),
+            collapsed_folders: HashSet::new(),
+            group_by: GroupBy::from_config(config.ui.group_by),
+            presets: [
+                Preset::Active,
+                Preset::All,
+                Preset::All,
+                Preset::All,
+                Preset::All,
+            ],
+            collapsed_groups: HashSet::new(),
+            list_rows: Vec::new(),
+            row_targets: Vec::new(),
+            list_area: Rect::ZERO,
+            sidebar_area: Rect::ZERO,
+            chip_areas: Vec::new(),
+            popup_area: Rect::ZERO,
+            popup_offset: 0,
             current_issue: None,
+            detail_return: Screen::IssueList,
+            detail_return_nav: Nav::Team(0, TeamSection::Issues),
             detail_scroll: 0,
             detail_lines: 0,
             detail_viewport: 0,
@@ -431,6 +649,8 @@ impl App {
         };
         app.request(Request::Teams);
         app.request(Request::Viewer);
+        app.request(Request::CustomViews);
+        app.request(Request::Favorites);
         app
     }
 
@@ -452,18 +672,10 @@ impl App {
         self.current_team().map(|t| t.id.clone())
     }
 
-    /// Queue the fetch that populates the currently visible tab.
+    /// Queue the fetch that populates the current destination.
     pub fn reload_current_tab(&mut self) {
-        match self.tab {
-            Tab::Issues => {
-                if let Some(team_id) = self.team_id() {
-                    self.request(Request::Issues {
-                        team_id,
-                        after: None,
-                    });
-                }
-            }
-            Tab::MyIssues => {
+        match self.nav {
+            Nav::MyIssues => {
                 if let Some(user_id) = self.viewer_id.clone() {
                     self.request(Request::MyIssues {
                         user_id,
@@ -471,33 +683,57 @@ impl App {
                     });
                 }
             }
-            Tab::Projects => {
-                if let Some(team_id) = self.team_id() {
-                    self.request(Request::Projects {
-                        team_id,
+            Nav::Views => {
+                if !self.views_loaded {
+                    self.request(Request::CustomViews);
+                }
+            }
+            Nav::View(index) => {
+                if let Some(view) = self.custom_views.get(index) {
+                    let view_id = view.id.clone();
+                    self.request(Request::ViewIssues {
+                        view_id,
                         after: None,
                     });
                 }
             }
-            Tab::Cycles => {
-                if let Some(team_id) = self.team_id() {
-                    self.request(Request::Cycles {
+            // A favorite's page reloads through `queue_detail_fetches`.
+            Nav::Favorite(_) => {}
+            Nav::Team(_, section) => {
+                let Some(team_id) = self.team_id() else {
+                    return;
+                };
+                let request = match section {
+                    TeamSection::Issues => Request::Issues {
                         team_id,
                         after: None,
-                    });
-                }
+                        preset: self.presets[IssueSource::Team.slot()],
+                    },
+                    TeamSection::Projects => Request::Projects {
+                        team_id,
+                        after: None,
+                    },
+                    TeamSection::Cycles => Request::Cycles {
+                        team_id,
+                        after: None,
+                    },
+                };
+                self.request(request);
             }
         }
     }
 
-    /// Force a refetch of the current tab, discarding its cached flag.
+    /// Force a refetch of the current destination, discarding its cached flag.
     pub fn force_reload(&mut self) {
         self.global_search = None;
-        match self.tab {
-            Tab::MyIssues => self.my_issues_loaded = false,
-            Tab::Projects => self.projects_loaded = false,
-            Tab::Cycles => self.cycles_loaded = false,
-            Tab::Issues => {}
+        self.prefetched.clear();
+        match self.nav {
+            Nav::MyIssues => self.my_issues_loaded = false,
+            Nav::Views => self.views_loaded = false,
+            Nav::View(_) => self.loaded_view_id = None,
+            Nav::Team(_, TeamSection::Projects) => self.projects_loaded = false,
+            Nav::Team(_, TeamSection::Cycles) => self.cycles_loaded = false,
+            Nav::Team(_, TeamSection::Issues) | Nav::Favorite(_) => {}
         }
         if self.screen == Screen::ProjectDetail {
             self.project_issues_loaded = false;
@@ -551,7 +787,7 @@ impl App {
     pub fn handle_message(&mut self, msg: Message) {
         // Captured before the match moves `msg`; several arms need it.
         let page_appended = match &msg {
-            Message::Issues(p) | Message::MyIssues(p) => p.append,
+            Message::Issues { page: p, .. } | Message::MyIssues(p) => p.append,
             _ => false,
         };
         match msg {
@@ -564,6 +800,7 @@ impl App {
                     self.selected_team_index = idx;
                 }
                 self.teams = teams;
+                self.nav = Nav::Team(self.selected_team_index, TeamSection::Issues);
                 if let Some(team_id) = self.team_id() {
                     self.request(Request::TeamContext {
                         team_id: team_id.clone(),
@@ -571,12 +808,13 @@ impl App {
                     self.request(Request::Issues {
                         team_id,
                         after: None,
+                        preset: self.presets[IssueSource::Team.slot()],
                     });
                 }
             }
             Message::Viewer(id) => {
                 self.viewer_id = Some(id);
-                if self.tab == Tab::MyIssues {
+                if self.nav == Nav::MyIssues {
                     self.reload_current_tab();
                 }
             }
@@ -584,20 +822,21 @@ impl App {
                 self.workflow_states = states;
                 self.team_members = members;
             }
-            Message::Issues(page) => {
+            Message::Issues { preset, page } => {
+                // A page for a preset the user has since left would mix, say,
+                // backlog issues into the Active list.
+                if preset != self.presets[IssueSource::Team.slot()] {
+                    return;
+                }
                 let keep = self.selected_issue_id();
-                Self::merge(&mut self.issues, page, &mut self.page_info);
+                Self::merge_issues(&mut self.issues, page, &mut self.page_info);
                 if !page_appended {
-                    self.filtered_issues.clear();
-                    if !self.search.is_empty() {
-                        self.apply_search();
-                    }
                     self.restore_issue_selection(keep.as_deref());
                 }
                 self.clear_status();
             }
             Message::MyIssues(page) => {
-                Self::merge(&mut self.my_issues, page, &mut self.my_issues_page_info);
+                Self::merge_issues(&mut self.my_issues, page, &mut self.my_issues_page_info);
                 if !page_appended {
                     self.selected_my_issue_index = 0;
                 }
@@ -605,12 +844,15 @@ impl App {
                 self.clear_status();
             }
             Message::SearchResults { term, issues } => {
-                self.tab = Tab::Issues;
+                self.nav = Nav::Team(self.selected_team_index, TeamSection::Issues);
                 self.screen = Screen::IssueList;
                 self.issues = issues;
                 self.page_info = PageInfo::default();
-                self.filtered_issues.clear();
                 self.filters.clear();
+                // Search answers "where is it", done or not; the Active slice
+                // would quietly hide half the matches. Set without refetching,
+                // which would replace the results with the team's list.
+                self.presets[IssueSource::Team.slot()] = Preset::All;
                 self.search.clear();
                 self.selected_issue_index = 0;
                 self.global_search = Some(term);
@@ -627,6 +869,46 @@ impl App {
                 self.cycles_loaded = true;
                 self.clear_status();
             }
+            Message::CustomViews(views) => {
+                // Keep the open view pointing at the same view across a refetch;
+                // the index alone would silently swap which one is on screen.
+                let open = match self.nav {
+                    Nav::View(i) => self.custom_views.get(i).map(|v| v.id.clone()),
+                    _ => None,
+                };
+                let mut views: Vec<CustomView> =
+                    views.into_iter().filter(CustomView::lists_issues).collect();
+                // Linear's Views page lists personal views above workspace ones.
+                views.sort_by(|a, b| {
+                    a.shared
+                        .cmp(&b.shared)
+                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
+                });
+                self.custom_views = views;
+                self.views_loaded = true;
+                if let Some(id) = open {
+                    match self.custom_views.iter().position(|v| v.id == id) {
+                        Some(i) => self.nav = Nav::View(i),
+                        None => self.activate(Nav::Views),
+                    }
+                }
+                self.selected_view_index = self
+                    .selected_view_index
+                    .min(self.custom_views.len().saturating_sub(1));
+            }
+            Message::Favorites(mut favorites) => {
+                favorites.sort_by(|a, b| a.sort_order.total_cmp(&b.sort_order));
+                self.favorites = favorites;
+            }
+            Message::ViewIssues { view_id, page } => {
+                let append = page.append;
+                Self::merge_issues(&mut self.view_issues, page, &mut self.view_issues_page_info);
+                if !append {
+                    self.selected_view_issue_index = 0;
+                }
+                self.loaded_view_id = Some(view_id);
+                self.clear_status();
+            }
             Message::IssueDetail(issue) => {
                 // Ignore a detail response for an issue the user already navigated away from.
                 if self
@@ -638,7 +920,7 @@ impl App {
                 }
             }
             Message::ProjectIssues(page) => {
-                Self::merge(
+                Self::merge_issues(
                     &mut self.project_issues,
                     page,
                     &mut self.project_issues_page_info,
@@ -647,7 +929,7 @@ impl App {
                 self.project_issues_loaded = true;
             }
             Message::CycleIssues(page) => {
-                Self::merge(
+                Self::merge_issues(
                     &mut self.cycle_issues,
                     page,
                     &mut self.cycle_issues_page_info,
@@ -657,10 +939,13 @@ impl App {
             }
             Message::IssueCreated(issue) => {
                 self.set_status(format!("Created {}", issue.identifier));
-                // Show it immediately at the top rather than waiting for a refetch.
+                // Show it immediately rather than waiting for a refetch, with
+                // the cursor on it — found by id, since grouping decides where
+                // in the list it lands.
+                let id = issue.id.clone();
                 self.issues.insert(0, *issue);
-                if self.tab == Tab::Issues && self.screen == Screen::IssueList {
-                    self.selected_issue_index = 0;
+                if self.issue_source() == IssueSource::Team && self.screen == Screen::IssueList {
+                    self.restore_issue_selection(Some(&id));
                 }
             }
             Message::Mutated(what) => {
@@ -668,7 +953,25 @@ impl App {
                 // A posted comment clears the cached thread; pull it back in.
                 self.queue_detail_fetches();
             }
-            Message::Error(err) => self.set_error(err),
+            Message::Error(err) => {
+                // A failed page must be retryable.
+                self.prefetched.clear();
+                self.set_error(err);
+            }
+        }
+    }
+
+    /// [`Self::merge`] for issue lists, dropping any issue already held.
+    ///
+    /// Pages are ordered by `updatedAt`, so an issue touched between two page
+    /// fetches moves and can come back on both; without this it would be
+    /// listed twice.
+    fn merge_issues(dst: &mut Vec<Issue>, page: Page<Issue>, info: &mut PageInfo) {
+        let append = page.append;
+        Self::merge(dst, page, info);
+        if append {
+            let mut seen = HashSet::new();
+            dst.retain(|issue| seen.insert(issue.id.clone()));
         }
     }
 
@@ -712,47 +1015,93 @@ impl App {
 
     fn selected_issue_id(&self) -> Option<String> {
         self.visible_issues()
-            .get(self.selected_issue_index)
+            .get(self.selected_index())
             .map(|i| i.id.clone())
     }
 
+    /// Put the cursor back on the issue it was on, by identity.
+    ///
+    /// A refetch reorders the list — `updatedAt` moves the moment anyone
+    /// touches an issue — so restoring by row index would quietly select a
+    /// different issue than the one the user was looking at.
     fn restore_issue_selection(&mut self, id: Option<&str>) {
-        self.selected_issue_index = id
+        let index = id
             .and_then(|id| self.visible_issues().iter().position(|i| i.id == id))
             .unwrap_or(0);
+        *self.selected_index_mut() = index;
+    }
+
+    // ------------------------------------------------- the active issue list
+
+    /// Which of the five issue lists the current screen is showing.
+    pub fn issue_source(&self) -> IssueSource {
+        match self.screen {
+            Screen::ProjectDetail => IssueSource::Project,
+            Screen::CycleDetail => IssueSource::Cycle,
+            _ => match self.nav {
+                Nav::MyIssues => IssueSource::My,
+                Nav::View(_) => IssueSource::View,
+                _ => IssueSource::Team,
+            },
+        }
+    }
+
+    /// The unfiltered contents of the active list.
+    fn source_issues(&self) -> &[Issue] {
+        match self.issue_source() {
+            IssueSource::Team => &self.issues,
+            IssueSource::My => &self.my_issues,
+            IssueSource::View => &self.view_issues,
+            IssueSource::Project => &self.project_issues,
+            IssueSource::Cycle => &self.cycle_issues,
+        }
+    }
+
+    /// Cursor position within the active list, as an index into
+    /// [`Self::visible_issues`].
+    pub fn selected_index(&self) -> usize {
+        match self.issue_source() {
+            IssueSource::Team => self.selected_issue_index,
+            IssueSource::My => self.selected_my_issue_index,
+            IssueSource::View => self.selected_view_issue_index,
+            IssueSource::Project => self.selected_project_issue_index,
+            IssueSource::Cycle => self.selected_cycle_issue_index,
+        }
+    }
+
+    fn selected_index_mut(&mut self) -> &mut usize {
+        match self.issue_source() {
+            IssueSource::Team => &mut self.selected_issue_index,
+            IssueSource::My => &mut self.selected_my_issue_index,
+            IssueSource::View => &mut self.selected_view_issue_index,
+            IssueSource::Project => &mut self.selected_project_issue_index,
+            IssueSource::Cycle => &mut self.selected_cycle_issue_index,
+        }
+    }
+
+    pub fn set_selected_index(&mut self, index: usize) {
+        let len = self.visible_issues().len();
+        *self.selected_index_mut() = index.min(len.saturating_sub(1));
+    }
+
+    /// The [`TableState`] whose scroll offset belongs to the active list.
+    pub fn active_table_state(&mut self) -> &mut TableState {
+        match self.issue_source() {
+            IssueSource::Team => &mut self.tables.issues,
+            IssueSource::My => &mut self.tables.my_issues,
+            IssueSource::View => &mut self.tables.view_issues,
+            IssueSource::Project => &mut self.tables.project_issues,
+            IssueSource::Cycle => &mut self.tables.cycle_issues,
+        }
     }
 
     /// Get the issue currently focused (selected in list, or being viewed in detail).
     pub fn focused_issue(&self) -> Option<&Issue> {
         match self.screen {
             Screen::IssueDetail => self.current_issue.as_ref(),
-            Screen::IssueList => match self.tab {
-                Tab::Issues => {
-                    let issues = self.visible_issues();
-                    issues.get(self.selected_issue_index).copied()
-                }
-                Tab::MyIssues => self
-                    .visible_my_issues()
-                    .get(self.selected_my_issue_index)
-                    .copied(),
-                _ => None,
-            },
-            Screen::ProjectDetail => self.project_issues.get(self.selected_project_issue_index),
-            Screen::CycleDetail => self.cycle_issues.get(self.selected_cycle_issue_index),
-            Screen::ProjectList | Screen::CycleList => None,
+            Screen::ViewList | Screen::ProjectList | Screen::CycleList => None,
+            _ => self.visible_issues().get(self.selected_index()).copied(),
         }
-    }
-
-    /// My Issues filtered by the live search query.
-    pub fn visible_my_issues(&self) -> Vec<&Issue> {
-        if self.search.is_empty() {
-            return self.my_issues.iter().collect();
-        }
-        let query = self.search.value.to_lowercase();
-        self.my_issues
-            .iter()
-            .filter(|i| Self::matches(i, &query))
-            .collect()
     }
 
     fn matches(issue: &Issue, lowercase_query: &str) -> bool {
@@ -760,64 +1109,227 @@ impl App {
             || issue.identifier.to_lowercase().contains(lowercase_query)
     }
 
-    pub fn visible_issues(&self) -> Vec<&Issue> {
-        let base: Vec<&Issue> = if !self.filtered_issues.is_empty() || !self.search.is_empty() {
-            self.filtered_issues
-                .iter()
-                .filter_map(|&i| self.issues.get(i))
-                .collect()
-        } else {
-            self.issues.iter().collect()
-        };
+    /// Whether an issue survives the search box and the status/priority filters.
+    fn admitted(&self, issue: &Issue) -> bool {
+        if !self.preset().admits(issue) {
+            return false;
+        }
+        if !self.search.is_empty() {
+            let query = self.search.value.to_lowercase();
+            if !Self::matches(issue, &query) {
+                return false;
+            }
+        }
+        if let Some(status) = &self.filters.status {
+            match &issue.state {
+                Some(state) if &state.name == status => {}
+                _ => return false,
+            }
+        }
+        if let Some(pri) = self.filters.priority
+            && issue.priority != pri
+        {
+            return false;
+        }
+        true
+    }
 
-        base.into_iter()
-            .filter(|issue| {
-                if let Some(status) = &self.filters.status {
-                    if let Some(state) = &issue.state {
-                        if &state.name != status {
-                            return false;
-                        }
-                    } else {
-                        return false;
-                    }
-                }
-                if let Some(pri) = self.filters.priority
-                    && issue.priority != pri
-                {
-                    return false;
-                }
-                true
-            })
+    /// The active list, filtered and stacked into its groups.
+    ///
+    /// Sections are the single source of truth for both what is on screen and
+    /// where the cursor can land, so a collapsed group cannot leave the cursor
+    /// pointing at an issue nobody can see.
+    pub fn sections(&self) -> Vec<Section<'_>> {
+        group(
+            self.source_issues().iter().filter(|i| self.admitted(i)),
+            self.group_by,
+            &self.collapsed_groups,
+            &self.theme,
+        )
+    }
+
+    /// Every issue the cursor can currently reach, in the order it is drawn.
+    pub fn visible_issues(&self) -> Vec<&Issue> {
+        self.sections()
+            .into_iter()
+            .filter(|s| !s.collapsed)
+            .flat_map(|s| s.issues.into_iter().map(|(issue, _)| issue))
             .collect()
     }
 
-    /// Ask for the next page once the cursor nears the end of what we have.
-    fn maybe_prefetch(&mut self, len: usize) {
-        if self.selected_issue_index + PREFETCH_MARGIN < len || !self.page_info.has_next_page {
+    /// The display rows of the active list: group headers interleaved with the
+    /// issues under them, addressed by their position in [`Self::visible_issues`].
+    pub fn list_layout(&self) -> Vec<ListRow> {
+        let mut rows = Vec::new();
+        let mut ordinal = 0;
+        for section in self.sections() {
+            if self.group_by != GroupBy::None {
+                rows.push(ListRow::Group {
+                    key: section.key.clone(),
+                    label: section.label.clone(),
+                    color: section.color,
+                    glyph: section.glyph,
+                    count: section.issues.len(),
+                    collapsed: section.collapsed,
+                });
+            }
+            if section.collapsed {
+                continue;
+            }
+            for (_, depth) in &section.issues {
+                rows.push(ListRow::Issue {
+                    ordinal,
+                    depth: *depth,
+                });
+                ordinal += 1;
+            }
+        }
+        rows
+    }
+
+    /// The group the cursor currently sits in, if the list is grouped.
+    fn selected_group_key(&self) -> Option<String> {
+        let target = self.selected_index();
+        let mut ordinal = 0;
+        for section in self.sections() {
+            if section.collapsed {
+                continue;
+            }
+            if target < ordinal + section.issues.len() {
+                return Some(section.key);
+            }
+            ordinal += section.issues.len();
+        }
+        None
+    }
+
+    /// Fold or unfold the group the cursor is in.
+    pub fn toggle_selected_group(&mut self) {
+        let Some(key) = self.selected_group_key() else {
+            return;
+        };
+        self.toggle_group(&key);
+    }
+
+    pub fn toggle_group(&mut self, key: &str) {
+        if !self.collapsed_groups.remove(key) {
+            self.collapsed_groups.insert(key.to_string());
+        }
+        // Folding a group can put the cursor past the end of what is left.
+        let len = self.visible_issues().len();
+        *self.selected_index_mut() = self.selected_index().min(len.saturating_sub(1));
+    }
+
+    /// Fold every group, or unfold them all if none is folded.
+    pub fn toggle_all_groups(&mut self) {
+        let keys: Vec<String> = self.sections().into_iter().map(|s| s.key).collect();
+        let any_open = keys.iter().any(|k| !self.collapsed_groups.contains(k));
+        if any_open {
+            self.collapsed_groups.extend(keys);
+        } else {
+            for key in keys {
+                self.collapsed_groups.remove(&key);
+            }
+        }
+        let len = self.visible_issues().len();
+        *self.selected_index_mut() = self.selected_index().min(len.saturating_sub(1));
+    }
+
+    pub fn cycle_group_by(&mut self) {
+        self.group_by = self.group_by.next();
+        self.collapsed_groups.clear();
+        *self.selected_index_mut() = 0;
+        self.set_status(format!("Grouped by {}", self.group_by.label()));
+    }
+
+    /// The preset chip selected on the list currently on screen.
+    pub fn preset(&self) -> Preset {
+        self.presets[self.issue_source().slot()]
+    }
+
+    pub fn set_preset(&mut self, preset: Preset) {
+        if self.preset() == preset {
             return;
         }
-        if let (Some(team_id), Some(cursor)) = (self.team_id(), self.page_info.end_cursor.clone()) {
+        let source = self.issue_source();
+        self.presets[source.slot()] = preset;
+        *self.selected_index_mut() = 0;
+        // A team's list is sliced on the server; the other lists already hold
+        // everything they can show and only filter locally. Workspace search
+        // results are not refetched either — that would throw them away.
+        if source == IssueSource::Team
+            && self.global_search.is_none()
+            && let Some(team_id) = self.team_id()
+        {
             self.request(Request::Issues {
                 team_id,
-                after: Some(cursor),
+                after: None,
+                preset,
             });
         }
     }
 
-    fn maybe_prefetch_my_issues(&mut self) {
-        if self.selected_my_issue_index + PREFETCH_MARGIN < self.my_issues.len()
-            || !self.my_issues_page_info.has_next_page
-        {
+    /// Step to the next preset chip, as clicking along the row would.
+    pub fn cycle_preset(&mut self) {
+        let presets = Preset::all();
+        let next = presets
+            .iter()
+            .position(|p| *p == self.preset())
+            .map(|i| (i + 1) % presets.len())
+            .unwrap_or(0);
+        self.set_preset(presets[next]);
+    }
+
+    /// Ask for the next page once the cursor nears the end of the active list.
+    fn maybe_prefetch(&mut self) {
+        let source = self.issue_source();
+        if self.selected_index() + PREFETCH_MARGIN < self.source_issues().len() {
             return;
         }
-        if let (Some(user_id), Some(cursor)) = (
-            self.viewer_id.clone(),
-            self.my_issues_page_info.end_cursor.clone(),
-        ) {
-            self.request(Request::MyIssues {
-                user_id,
-                after: Some(cursor),
-            });
+        let info = match source {
+            IssueSource::Team => &self.page_info,
+            IssueSource::My => &self.my_issues_page_info,
+            IssueSource::View => &self.view_issues_page_info,
+            IssueSource::Project => &self.project_issues_page_info,
+            IssueSource::Cycle => &self.cycle_issues_page_info,
+        };
+        if !info.has_next_page {
+            return;
+        }
+        let Some(cursor) = info.end_cursor.clone() else {
+            return;
+        };
+        let after = Some(cursor.clone());
+        let request = match source {
+            IssueSource::Team => self.team_id().map(|team_id| Request::Issues {
+                team_id,
+                after,
+                preset: self.presets[IssueSource::Team.slot()],
+            }),
+            IssueSource::My => self
+                .viewer_id
+                .clone()
+                .map(|user_id| Request::MyIssues { user_id, after }),
+            IssueSource::View => self
+                .loaded_view_id
+                .clone()
+                .map(|view_id| Request::ViewIssues { view_id, after }),
+            IssueSource::Project => self
+                .current_project
+                .as_ref()
+                .map(|p| Request::ProjectIssues {
+                    project_id: p.id.clone(),
+                    after,
+                }),
+            IssueSource::Cycle => self.current_cycle.as_ref().map(|c| Request::CycleIssues {
+                cycle_id: c.id.clone(),
+                after,
+            }),
+        };
+        if let Some(request) = request
+            && self.prefetched.insert(cursor)
+        {
+            self.request(request);
         }
     }
 
@@ -829,6 +1341,7 @@ impl App {
         }
         if let (Some(team_id), Some(cursor)) =
             (self.team_id(), self.projects_page_info.end_cursor.clone())
+            && self.prefetched.insert(cursor.clone())
         {
             self.request(Request::Projects {
                 team_id,
@@ -845,6 +1358,7 @@ impl App {
         }
         if let (Some(team_id), Some(cursor)) =
             (self.team_id(), self.cycles_page_info.end_cursor.clone())
+            && self.prefetched.insert(cursor.clone())
         {
             self.request(Request::Cycles {
                 team_id,
@@ -853,44 +1367,9 @@ impl App {
         }
     }
 
-    fn maybe_prefetch_project_issues(&mut self) {
-        if self.selected_project_issue_index + PREFETCH_MARGIN < self.project_issues.len()
-            || !self.project_issues_page_info.has_next_page
-        {
-            return;
-        }
-        if let (Some(project), Some(cursor)) = (
-            self.current_project.as_ref().map(|p| p.id.clone()),
-            self.project_issues_page_info.end_cursor.clone(),
-        ) {
-            self.request(Request::ProjectIssues {
-                project_id: project,
-                after: Some(cursor),
-            });
-        }
-    }
-
-    fn maybe_prefetch_cycle_issues(&mut self) {
-        if self.selected_cycle_issue_index + PREFETCH_MARGIN < self.cycle_issues.len()
-            || !self.cycle_issues_page_info.has_next_page
-        {
-            return;
-        }
-        if let (Some(cycle), Some(cursor)) = (
-            self.current_cycle.as_ref().map(|c| c.id.clone()),
-            self.cycle_issues_page_info.end_cursor.clone(),
-        ) {
-            self.request(Request::CycleIssues {
-                cycle_id: cycle,
-                after: Some(cursor),
-            });
-        }
-    }
-
     pub fn open_issue_detail(&mut self) {
-        let issues = self.visible_issues();
-        if let Some(issue) = issues.get(self.selected_issue_index) {
-            let issue = (*issue).clone();
+        if let Some(issue) = self.visible_issues().get(self.selected_index()).copied() {
+            let issue = issue.clone();
             self.open_issue_from_list(&issue);
         }
     }
@@ -900,20 +1379,18 @@ impl App {
         self.popup_index = self.selected_team_index;
     }
 
+    /// Pick a team from the switcher and go to it, keeping the page (Issues,
+    /// Cycles, Projects) when already on one of the team's pages.
     pub fn select_team(&mut self) {
-        if self.popup_index < self.teams.len() && self.popup_index != self.selected_team_index {
-            self.selected_team_index = self.popup_index;
-            self.issues.clear();
-            self.filtered_issues.clear();
-            self.selected_issue_index = 0;
-            self.filters.clear();
-            self.invalidate_tab_caches();
-            if let Some(team_id) = self.team_id() {
-                self.request(Request::TeamContext { team_id });
-            }
-            self.reload_current_tab();
-        }
         self.popup = Popup::None;
+        if self.popup_index >= self.teams.len() {
+            return;
+        }
+        let section = match self.nav {
+            Nav::Team(_, section) => section,
+            _ => TeamSection::Issues,
+        };
+        self.activate(Nav::Team(self.popup_index, section));
     }
 
     pub fn open_filter(&mut self) {
@@ -1180,19 +1657,6 @@ impl App {
     /// the next page if the cursor nears the end of a paginated list.
     pub fn move_selection(&mut self, delta: isize) {
         match self.screen {
-            Screen::IssueList => match self.tab {
-                Tab::Issues => {
-                    let len = self.visible_issues().len();
-                    Self::nav_by(len, &mut self.selected_issue_index, delta);
-                    self.maybe_prefetch(len);
-                }
-                Tab::MyIssues => {
-                    let len = self.visible_my_issues().len();
-                    Self::nav_by(len, &mut self.selected_my_issue_index, delta);
-                    self.maybe_prefetch_my_issues();
-                }
-                _ => {}
-            },
             Screen::ProjectList => {
                 Self::nav_by(self.projects.len(), &mut self.selected_project_index, delta);
                 self.maybe_prefetch_projects();
@@ -1201,24 +1665,54 @@ impl App {
                 Self::nav_by(self.cycles.len(), &mut self.selected_cycle_index, delta);
                 self.maybe_prefetch_cycles();
             }
-            Screen::ProjectDetail => {
+            Screen::ViewList => {
                 Self::nav_by(
-                    self.project_issues.len(),
-                    &mut self.selected_project_issue_index,
+                    self.custom_views.len(),
+                    &mut self.selected_view_index,
                     delta,
                 );
-                self.maybe_prefetch_project_issues();
-            }
-            Screen::CycleDetail => {
-                Self::nav_by(
-                    self.cycle_issues.len(),
-                    &mut self.selected_cycle_issue_index,
-                    delta,
-                );
-                self.maybe_prefetch_cycle_issues();
             }
             Screen::IssueDetail => {}
+            // Every issue list scrolls the same way, whichever one it is.
+            Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => {
+                let len = self.visible_issues().len();
+                let mut index = self.selected_index();
+                Self::nav_by(len, &mut index, delta);
+                *self.selected_index_mut() = index;
+                self.maybe_prefetch();
+            }
         }
+    }
+
+    /// Step to the neighbouring issue without leaving the detail view — the
+    /// `↓`/`↑` pair Linear puts next to the "6 / 203" counter.
+    pub fn step_issue(&mut self, delta: isize) {
+        if self.screen != Screen::IssueDetail {
+            return;
+        }
+        let Some(position) = self.detail_position() else {
+            return;
+        };
+        let next = (position.0 as isize + delta).clamp(0, position.1 as isize - 1) as usize;
+        if next == position.0 {
+            return;
+        }
+        let Some(issue) = self.visible_issues().get(next).copied().cloned() else {
+            return;
+        };
+        *self.selected_index_mut() = next;
+        self.maybe_prefetch();
+        let ret = self.detail_return;
+        self.open_issue_from_list(&issue);
+        self.detail_return = ret;
+    }
+
+    /// Where the open issue sits in the list it came from: `(index, total)`.
+    pub fn detail_position(&self) -> Option<(usize, usize)> {
+        let current = self.current_issue.as_ref()?;
+        let issues = self.visible_issues();
+        let index = issues.iter().position(|i| i.id == current.id)?;
+        Some((index, issues.len()))
     }
 
     /// Drop the cached issue detail and fetch it again.
@@ -1270,30 +1764,20 @@ impl App {
         self.input_mode = InputMode::Normal;
     }
 
+    /// Re-run the live filter. Matching happens inside [`Self::sections`], so
+    /// this only has to put the cursor back at the top of what is left.
     pub fn apply_search(&mut self) {
-        self.selected_my_issue_index = 0;
-        if self.search.is_empty() {
-            self.filtered_issues.clear();
-        } else {
-            let query = self.search.value.to_lowercase();
-            self.filtered_issues = self
-                .issues
-                .iter()
-                .enumerate()
-                .filter(|(_, issue)| Self::matches(issue, &query))
-                .map(|(i, _)| i)
-                .collect();
-        }
-        self.selected_issue_index = 0;
+        *self.selected_index_mut() = 0;
     }
 
     pub fn clear_search(&mut self) {
         self.search.clear();
-        self.filtered_issues.clear();
         self.selected_issue_index = 0;
         self.selected_my_issue_index = 0;
+        self.selected_view_issue_index = 0;
         // Leaving a workspace search returns the list to the team's own issues.
         if self.global_search.take().is_some() {
+            self.presets[IssueSource::Team.slot()] = Preset::Active;
             self.reload_current_tab();
         }
     }
@@ -1400,6 +1884,133 @@ impl App {
         self.cancel_new_issue();
     }
 
+    // ------------------------------------------------------------------- mouse
+
+    /// Apply the highlighted popup entry.
+    pub fn apply_popup(&mut self) {
+        match self.popup {
+            Popup::TeamSelect => self.select_team(),
+            Popup::Filter => self.apply_filter_selection(),
+            Popup::StatusChange => self.apply_status_selection(),
+            Popup::PriorityChange => self.apply_priority_selection(),
+            Popup::AssigneeChange => self.apply_assignee_selection(),
+            Popup::None => {}
+        }
+    }
+
+    /// A left click at terminal cell `(x, y)`.
+    ///
+    /// Hit-testing runs against the rows and areas the last frame recorded, so
+    /// a click always lands on what the user actually saw. Clicking a row
+    /// selects it; clicking the selected row again opens it — the terminal's
+    /// stand-in for a double-click, which crossterm cannot report.
+    pub fn click(&mut self, x: u16, y: u16) {
+        if self.error_popup.is_some() {
+            self.dismiss_error();
+            return;
+        }
+        if self.show_help {
+            self.show_help = false;
+            return;
+        }
+        if self.popup != Popup::None {
+            if contains(self.popup_area, x, y) {
+                let index = self.popup_offset + (y - self.popup_area.y) as usize;
+                if index < self.popup_list_len() {
+                    self.popup_index = index;
+                    self.apply_popup();
+                }
+            } else {
+                self.close_popup();
+            }
+            return;
+        }
+        if self.input_mode != InputMode::Normal {
+            return;
+        }
+
+        if contains(self.sidebar_area, x, y) {
+            let index = self.sidebar_offset + (y - self.sidebar_area.y) as usize;
+            let Some(SidebarRow::Item(item)) = self.sidebar_rows.get(index).cloned() else {
+                return;
+            };
+            self.sidebar_index = index;
+            self.run_sidebar_action(item.action);
+            return;
+        }
+
+        if let Some((_, preset)) = self.chip_areas.iter().find(|(r, _)| contains(*r, x, y)) {
+            let preset = *preset;
+            self.sidebar_focus = false;
+            self.set_preset(preset);
+            return;
+        }
+
+        if !contains(self.list_area, x, y) {
+            return;
+        }
+        self.sidebar_focus = false;
+        let row = (y - self.list_area.y) as usize;
+        match self.screen {
+            Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => {
+                match self.list_rows.get(row).cloned() {
+                    Some(ListRow::Group { key, .. }) => self.toggle_group(&key),
+                    Some(ListRow::Issue { ordinal, .. }) => {
+                        if ordinal == self.selected_index() {
+                            self.open_issue_detail();
+                        } else {
+                            self.set_selected_index(ordinal);
+                            self.maybe_prefetch();
+                        }
+                    }
+                    None => {}
+                }
+            }
+            Screen::ProjectList | Screen::CycleList | Screen::ViewList => {
+                let Some(Some(target)) = self.row_targets.get(row).copied() else {
+                    return;
+                };
+                let current = match self.screen {
+                    Screen::ProjectList => &mut self.selected_project_index,
+                    Screen::CycleList => &mut self.selected_cycle_index,
+                    _ => &mut self.selected_view_index,
+                };
+                if *current != target {
+                    *current = target;
+                    return;
+                }
+                match self.screen {
+                    Screen::ProjectList => self.open_project_detail(),
+                    Screen::CycleList => self.open_cycle_detail(),
+                    _ => self.open_selected_view(),
+                }
+            }
+            Screen::IssueDetail => {}
+        }
+    }
+
+    /// The mouse wheel at `(x, y)`: scroll whatever is under the pointer.
+    pub fn wheel(&mut self, x: u16, y: u16, delta: i16) {
+        if self.popup != Popup::None {
+            if delta > 0 {
+                self.popup_next();
+            } else {
+                self.popup_prev();
+            }
+        } else if contains(self.sidebar_area, x, y) {
+            let max = self
+                .sidebar_rows
+                .len()
+                .saturating_sub(self.sidebar_area.height as usize);
+            self.sidebar_offset =
+                (self.sidebar_offset as isize + delta as isize).clamp(0, max as isize) as usize;
+        } else if self.show_help {
+            self.help_scroll = (self.help_scroll as i32 + delta as i32).max(0) as u16;
+        } else {
+            self.scroll_list_or_detail(delta);
+        }
+    }
+
     // ------------------------------------------------------------------ status
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
@@ -1443,42 +2054,430 @@ impl App {
 
     /// Open issue detail from any sub-list (project issues, cycle issues, my issues).
     pub fn open_issue_from_list(&mut self, issue: &Issue) {
+        if self.screen != Screen::IssueDetail {
+            self.detail_return = self.screen;
+            self.detail_return_nav = self.nav;
+        }
         self.current_issue = Some(issue.clone());
         self.detail_scroll = 0;
         self.screen = Screen::IssueDetail;
         self.queue_detail_fetches();
     }
 
-    pub fn switch_tab(&mut self, tab: Tab) {
-        if self.tab == tab {
+    /// Leave the detail view for wherever it was opened from.
+    pub fn close_detail(&mut self) {
+        self.screen = self.detail_return;
+        self.nav = self.detail_return_nav;
+    }
+
+    /// Esc on a project or cycle page: back to the team's list it came from,
+    /// or — opened from Favorites, where there is no list behind it — to the
+    /// sidebar.
+    pub fn leave_container(&mut self) {
+        match self.nav {
+            Nav::Team(_, TeamSection::Projects) => self.screen = Screen::ProjectList,
+            Nav::Team(_, TeamSection::Cycles) => self.screen = Screen::CycleList,
+            _ => self.focus_sidebar(true),
+        }
+    }
+
+    /// Go to a sidebar destination, fetching whatever it needs.
+    pub fn activate(&mut self, nav: Nav) {
+        if let Nav::Favorite(index) = nav {
+            return self.open_favorite(index);
+        }
+        // A team destination also selects that team, which is how the sidebar
+        // crosses team boundaries without the team-switch popup.
+        if let Nav::Team(index, _) = nav
+            && index != self.selected_team_index
+            && index < self.teams.len()
+        {
+            self.select_team_index(index);
+        }
+        if self.nav == nav && self.screen == nav.screen() {
             return;
         }
-        self.tab = tab;
-        let cached = match tab {
-            Tab::Issues => {
-                self.screen = Screen::IssueList;
-                !self.issues.is_empty()
-            }
-            Tab::MyIssues => {
-                self.screen = Screen::IssueList;
-                self.my_issues_loaded
-            }
-            Tab::Projects => {
-                self.screen = Screen::ProjectList;
-                self.projects_loaded
-            }
-            Tab::Cycles => {
-                self.screen = Screen::CycleList;
-                self.cycles_loaded
-            }
+        self.nav = nav;
+        self.screen = nav.screen();
+        self.sidebar_focus = false;
+
+        let cached = match nav {
+            Nav::MyIssues => self.my_issues_loaded,
+            Nav::Views => self.views_loaded,
+            Nav::View(index) => self
+                .custom_views
+                .get(index)
+                .zip(self.loaded_view_id.as_ref())
+                .is_some_and(|(view, loaded)| &view.id == loaded),
+            Nav::Team(_, TeamSection::Issues) => !self.issues.is_empty(),
+            Nav::Team(_, TeamSection::Projects) => self.projects_loaded,
+            Nav::Team(_, TeamSection::Cycles) => self.cycles_loaded,
+            Nav::Favorite(_) => true,
         };
+        if let Nav::View(_) = nav
+            && !cached
+        {
+            // A different view's issues are still in the list; clear them so
+            // the old results are not briefly attributed to the new view.
+            self.view_issues.clear();
+            self.view_issues_page_info = PageInfo::default();
+            self.selected_view_issue_index = 0;
+        }
         if !cached {
             self.reload_current_tab();
         }
     }
 
+    /// Go to the current team's issue list.
+    pub fn go_to_team_issues(&mut self) {
+        self.go_to_team_section(TeamSection::Issues);
+    }
+
+    /// Go to a page of the team that is already selected.
+    ///
+    /// The `g …` chords and the number keys are shorthand for "this section, of
+    /// wherever I am" — they should not drag the user to another team.
+    pub fn go_to_team_section(&mut self, section: TeamSection) {
+        self.activate(Nav::Team(self.selected_team_index, section));
+    }
+
+    /// Open the view under the cursor on the saved-view index.
+    pub fn open_selected_view(&mut self) {
+        if self.selected_view_index < self.custom_views.len() {
+            self.activate(Nav::View(self.selected_view_index));
+        }
+    }
+
+    /// Switch the current team, discarding everything scoped to the old one.
+    fn select_team_index(&mut self, index: usize) {
+        self.selected_team_index = index;
+        self.issues.clear();
+        self.selected_issue_index = 0;
+        // The old team's projects and cycles would otherwise sit on screen,
+        // under the new team's name, until the refetch lands.
+        self.projects.clear();
+        self.cycles.clear();
+        self.selected_project_index = 0;
+        self.selected_cycle_index = 0;
+        self.filters.clear();
+        self.invalidate_tab_caches();
+        if let Some(team_id) = self.team_id() {
+            self.request(Request::TeamContext { team_id });
+        }
+    }
+
+    // ----------------------------------------------------------- sidebar
+
+    /// Build the sidebar's rows from the current state.
+    ///
+    /// Recomputed rather than cached because every input to it — teams, views,
+    /// favorites, folded folders — can change under a message arriving from
+    /// the network.
+    pub fn sidebar_layout(&self) -> Vec<SidebarRow> {
+        let item =
+            |label: &str, icon: &'static str, depth: u8, action: SidebarAction, tone: Tone| {
+                SidebarRow::Item(SidebarItem {
+                    label: label.to_string(),
+                    icon,
+                    color: None,
+                    depth,
+                    action,
+                    expanded: None,
+                    trailing: None,
+                    tone,
+                })
+            };
+
+        let mut rows = vec![
+            item(
+                "My Issues",
+                "\u{25c9}",
+                0,
+                SidebarAction::Go(Nav::MyIssues),
+                Tone::Normal,
+            ),
+            item(
+                "Views",
+                "\u{2261}",
+                0,
+                SidebarAction::Go(Nav::Views),
+                Tone::Subtle,
+            ),
+        ];
+
+        if !self.favorites.is_empty() {
+            rows.push(SidebarRow::Gap);
+            rows.push(SidebarRow::Header("Favorites".into()));
+            // Top-level entries in order, each folder followed by its contents.
+            for (index, fav) in self.favorites.iter().enumerate() {
+                if fav.parent.is_some() {
+                    continue;
+                }
+                rows.push(self.favorite_row(index, 0));
+                if fav.is_folder() && !self.collapsed_folders.contains(&fav.id) {
+                    for (child, _) in self
+                        .favorites
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, f)| f.parent.as_ref().is_some_and(|p| p.id == fav.id))
+                    {
+                        rows.push(self.favorite_row(child, 1));
+                    }
+                }
+            }
+        }
+
+        // The team is a switcher: one row naming the current team, and only
+        // that team's pages beneath it.
+        if let Some(team) = self.current_team() {
+            let index = self.selected_team_index;
+            rows.push(SidebarRow::Gap);
+            rows.push(SidebarRow::Header("Team".into()));
+            rows.push(SidebarRow::Item(SidebarItem {
+                label: team.name.clone(),
+                icon: "\u{25cf}",
+                color: team.color.as_deref().and_then(hex_color),
+                depth: 0,
+                action: SidebarAction::SwitchTeam,
+                expanded: None,
+                trailing: (self.teams.len() > 1).then(|| "t \u{21c5}".to_string()),
+                tone: Tone::Strong,
+            }));
+            rows.push(item(
+                "Issues",
+                "\u{2263}",
+                1,
+                SidebarAction::Go(Nav::Team(index, TeamSection::Issues)),
+                Tone::Normal,
+            ));
+            // Teams that do not run cycles have no Cycles page in Linear
+            // either, so showing an empty one would be a dead end.
+            if team.cycles_enabled {
+                rows.push(item(
+                    "Cycles",
+                    "\u{25d4}",
+                    1,
+                    SidebarAction::Go(Nav::Team(index, TeamSection::Cycles)),
+                    Tone::Normal,
+                ));
+            }
+            rows.push(item(
+                "Projects",
+                "\u{25a3}",
+                1,
+                SidebarAction::Go(Nav::Team(index, TeamSection::Projects)),
+                Tone::Normal,
+            ));
+        }
+
+        rows
+    }
+
+    /// The sidebar row for one favorite.
+    fn favorite_row(&self, index: usize, depth: u8) -> SidebarRow {
+        let fav = &self.favorites[index];
+        let color = fav
+            .color
+            .as_deref()
+            .or_else(|| fav.project.as_ref().and_then(|p| p.color.as_deref()))
+            .or_else(|| {
+                fav.issue
+                    .as_ref()
+                    .and_then(|i| i.state.as_ref()?.color.as_deref())
+            })
+            .and_then(hex_color);
+        let icon = match fav.kind.as_str() {
+            "folder" | "document" => "\u{25a4}",
+            "project" => "\u{25a3}",
+            "customView" | "predefinedView" => "\u{2261}",
+            "issue" => fav
+                .issue
+                .as_ref()
+                .and_then(|i| i.state.as_ref()?.state_type)
+                .unwrap_or(StateType::Unknown)
+                .glyph(),
+            "cycle" => "\u{25d4}",
+            "label" => "\u{25cf}",
+            _ => "\u{2022}",
+        };
+        let label = match (&fav.issue, fav.kind.as_str()) {
+            (Some(issue), "issue") => format!("{} {}", issue.identifier, issue.title),
+            _ => fav.label(),
+        };
+        SidebarRow::Item(SidebarItem {
+            label,
+            icon,
+            color,
+            depth,
+            action: self.favorite_action(index),
+            expanded: fav
+                .is_folder()
+                .then(|| !self.collapsed_folders.contains(&fav.id)),
+            trailing: None,
+            tone: Tone::Strong,
+        })
+    }
+
+    /// Where a favorite leads. Views and team pages resolve to their own
+    /// destination, so opening one lights the same row as getting there any
+    /// other way.
+    fn favorite_action(&self, index: usize) -> SidebarAction {
+        let fav = &self.favorites[index];
+        if fav.is_folder() {
+            return SidebarAction::Fold(index);
+        }
+        if let Some(view) = &fav.custom_view
+            && let Some(i) = self.custom_views.iter().position(|v| v.id == view.id)
+        {
+            return SidebarAction::Go(Nav::View(i));
+        }
+        if fav.kind == "predefinedView" {
+            if fav.predefined_view_type.as_deref() == Some("myIssues") {
+                return SidebarAction::Go(Nav::MyIssues);
+            }
+            let team = fav
+                .predefined_view_team
+                .as_ref()
+                .and_then(|t| self.teams.iter().position(|x| x.id == t.id));
+            let section = match fav.predefined_view_type.as_deref() {
+                Some("issues" | "allIssues" | "activeIssues" | "backlog") => {
+                    Some(TeamSection::Issues)
+                }
+                Some("cycles") => Some(TeamSection::Cycles),
+                Some("projects") => Some(TeamSection::Projects),
+                _ => None,
+            };
+            if let (Some(team), Some(section)) = (team, section) {
+                return SidebarAction::Go(Nav::Team(team, section));
+            }
+        }
+        SidebarAction::Go(Nav::Favorite(index))
+    }
+
+    /// Open a favorite that has no destination of its own: a project, cycle,
+    /// or issue in place, and anything this client has no page for — a
+    /// document, a label, a workspace-wide page — on linear.app.
+    fn open_favorite(&mut self, index: usize) {
+        let Some(fav) = self.favorites.get(index).cloned() else {
+            return;
+        };
+        self.sidebar_focus = false;
+        if let Some(project) = fav.project {
+            self.nav = Nav::Favorite(index);
+            self.open_project(project);
+        } else if let Some(cycle) = fav.cycle {
+            self.nav = Nav::Favorite(index);
+            self.open_cycle(cycle);
+        } else if let Some(issue) = fav.issue {
+            // Just enough to draw the header; the detail fetch fills the rest.
+            let stub = Issue {
+                id: issue.id,
+                identifier: issue.identifier,
+                title: issue.title,
+                state: issue.state,
+                ..Issue::default()
+            };
+            self.open_issue_from_list(&stub);
+            self.nav = Nav::Favorite(index);
+        } else if let Some(url) = fav.url {
+            self.request(Request::OpenUrl(url));
+        } else {
+            self.set_status("This favorite cannot be opened here");
+        }
+    }
+
+    /// Indices of the sidebar rows the cursor may land on.
+    fn sidebar_stops(&self) -> Vec<usize> {
+        self.sidebar_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| matches!(row, SidebarRow::Item(_)))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn sidebar_move(&mut self, delta: isize) {
+        let stops = self.sidebar_stops();
+        if stops.is_empty() {
+            return;
+        }
+        let current = stops
+            .iter()
+            .position(|i| *i == self.sidebar_index)
+            .unwrap_or(0);
+        let mut next = current;
+        Self::nav_by(stops.len(), &mut next, delta);
+        self.sidebar_index = stops[next];
+    }
+
+    fn sidebar_item(&self, index: usize) -> Option<&SidebarItem> {
+        match self.sidebar_rows.get(index) {
+            Some(SidebarRow::Item(item)) => Some(item),
+            _ => None,
+        }
+    }
+
+    /// Enter on the sidebar.
+    pub fn sidebar_activate(&mut self) {
+        if let Some(action) = self.sidebar_item(self.sidebar_index).map(|i| i.action) {
+            self.run_sidebar_action(action);
+        }
+    }
+
+    fn run_sidebar_action(&mut self, action: SidebarAction) {
+        match action {
+            SidebarAction::Go(nav) => self.activate(nav),
+            SidebarAction::Fold(index) => self.toggle_folder(index),
+            SidebarAction::SwitchTeam => self.open_team_select(),
+        }
+    }
+
+    /// `h`/`l` on the sidebar: fold or unfold the folder under the cursor.
+    pub fn sidebar_toggle(&mut self) {
+        if let Some(SidebarAction::Fold(index)) =
+            self.sidebar_item(self.sidebar_index).map(|i| i.action)
+        {
+            self.toggle_folder(index);
+        }
+    }
+
+    pub fn toggle_folder(&mut self, index: usize) {
+        let Some(id) = self.favorites.get(index).map(|f| f.id.clone()) else {
+            return;
+        };
+        if !self.collapsed_folders.remove(&id) {
+            self.collapsed_folders.insert(id);
+        }
+        self.sidebar_rows = self.sidebar_layout();
+    }
+
+    /// Move focus between the sidebar and the content pane.
+    pub fn focus_sidebar(&mut self, focused: bool) {
+        if focused && !self.sidebar_visible {
+            return;
+        }
+        self.sidebar_focus = focused;
+        if focused {
+            // Start on the row matching where the content pane already is, so
+            // the sidebar opens pointing at you rather than at the top.
+            if let Some(index) = self.sidebar_rows.iter().position(
+                |row| matches!(row, SidebarRow::Item(item) if item.nav() == Some(self.nav)),
+            ) {
+                self.sidebar_index = index;
+            }
+        }
+    }
+
+    pub fn toggle_sidebar(&mut self) {
+        self.sidebar_visible = !self.sidebar_visible;
+        if !self.sidebar_visible {
+            self.sidebar_focus = false;
+        }
+    }
+
     pub fn invalidate_tab_caches(&mut self) {
         self.my_issues_loaded = false;
+        self.loaded_view_id = None;
         self.projects_loaded = false;
         self.cycles_loaded = false;
         self.project_issues_loaded = false;
@@ -1487,26 +2486,34 @@ impl App {
 
     // Project navigation
     pub fn open_project_detail(&mut self) {
-        if let Some(project) = self.projects.get(self.selected_project_index) {
-            self.current_project = Some(project.clone());
-            self.project_issues.clear();
-            self.project_issues_loaded = false;
-            self.selected_project_issue_index = 0;
-            self.screen = Screen::ProjectDetail;
-            self.queue_detail_fetches();
+        if let Some(project) = self.projects.get(self.selected_project_index).cloned() {
+            self.open_project(project);
         }
+    }
+
+    fn open_project(&mut self, project: Project) {
+        self.current_project = Some(project);
+        self.project_issues.clear();
+        self.project_issues_loaded = false;
+        self.selected_project_issue_index = 0;
+        self.screen = Screen::ProjectDetail;
+        self.queue_detail_fetches();
     }
 
     // Cycle navigation
     pub fn open_cycle_detail(&mut self) {
-        if let Some(cycle) = self.cycles.get(self.selected_cycle_index) {
-            self.current_cycle = Some(cycle.clone());
-            self.cycle_issues.clear();
-            self.cycle_issues_loaded = false;
-            self.selected_cycle_issue_index = 0;
-            self.screen = Screen::CycleDetail;
-            self.queue_detail_fetches();
+        if let Some(cycle) = self.cycles.get(self.selected_cycle_index).cloned() {
+            self.open_cycle(cycle);
         }
+    }
+
+    fn open_cycle(&mut self, cycle: Cycle) {
+        self.current_cycle = Some(cycle);
+        self.cycle_issues.clear();
+        self.cycle_issues_loaded = false;
+        self.selected_cycle_issue_index = 0;
+        self.screen = Screen::CycleDetail;
+        self.queue_detail_fetches();
     }
 }
 
@@ -1695,6 +2702,7 @@ mod tests {
         let req = Request::Issues {
             team_id: "t".into(),
             after: None,
+            preset: Preset::Active,
         };
         app.request(req.clone());
         app.request(req);
@@ -1706,12 +2714,51 @@ mod tests {
     #[test]
     fn appending_a_page_extends_the_list() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-        app.handle_message(Message::Issues(Page::new(
-            vec![issue("2", "ENG-2", "b")],
-            PageInfo::default(),
-            true,
-        )));
+        app.handle_message(Message::Issues {
+            preset: Preset::Active,
+            page: Page::new(vec![issue("2", "ENG-2", "b")], PageInfo::default(), true),
+        });
         assert_eq!(app.issues.len(), 2);
+    }
+
+    /// Regression: scrolling near the bottom while the next page was still in
+    /// flight asked for it again on every step, and each copy was appended.
+    #[test]
+    fn a_page_is_requested_once_while_scrolling() {
+        let mut app = app_with(
+            (0..10)
+                .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), "t"))
+                .collect(),
+        );
+        app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+        app.page_info = PageInfo {
+            has_next_page: true,
+            end_cursor: Some("c1".into()),
+        };
+        app.select_last();
+        // The main loop takes the request off the queue: it is now in flight.
+        app.requests.clear();
+        app.move_selection(-1);
+        app.move_selection(1);
+        assert!(
+            app.requests.is_empty(),
+            "the in-flight page is not asked for again"
+        );
+    }
+
+    #[test]
+    fn an_appended_page_never_duplicates_an_issue() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")]);
+        app.handle_message(Message::Issues {
+            preset: Preset::Active,
+            page: Page::new(
+                vec![issue("2", "ENG-2", "b"), issue("3", "ENG-3", "c")],
+                PageInfo::default(),
+                true,
+            ),
+        });
+        let ids: Vec<_> = app.issues.iter().map(|i| i.id.as_str()).collect();
+        assert_eq!(ids, ["1", "2", "3"]);
     }
 
     #[test]
@@ -1720,11 +2767,14 @@ mod tests {
         app.selected_issue_index = 1;
         // ENG-2 comes back first this time; the cursor must follow the issue,
         // not stay on row 1.
-        app.handle_message(Message::Issues(Page::new(
-            vec![issue("2", "ENG-2", "b"), issue("9", "ENG-9", "c")],
-            PageInfo::default(),
-            false,
-        )));
+        app.handle_message(Message::Issues {
+            preset: Preset::Active,
+            page: Page::new(
+                vec![issue("2", "ENG-2", "b"), issue("9", "ENG-9", "c")],
+                PageInfo::default(),
+                false,
+            ),
+        });
         assert_eq!(app.issues.len(), 2);
         assert_eq!(app.selected_issue_index, 0);
     }
@@ -1771,7 +2821,7 @@ mod tests {
     fn switching_to_a_cached_tab_does_not_refetch() {
         let mut app = app_with(vec![]);
         app.projects_loaded = true;
-        app.switch_tab(Tab::Projects);
+        app.go_to_team_section(TeamSection::Projects);
         assert_eq!(app.screen, Screen::ProjectList);
         assert!(app.requests.is_empty());
     }
@@ -1780,7 +2830,7 @@ mod tests {
     fn switching_to_an_uncached_tab_fetches_it() {
         let mut app = app_with(vec![]);
         app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
-        app.switch_tab(Tab::Cycles);
+        app.go_to_team_section(TeamSection::Cycles);
         assert!(matches!(app.requests.front(), Some(Request::Cycles { .. })));
     }
 
@@ -1831,6 +2881,18 @@ mod tests {
             app.requests.front(),
             Some(Request::CreateIssue { priority: 1, .. })
         ));
+    }
+
+    #[test]
+    fn search_results_are_not_narrowed_to_active() {
+        let mut app = app_with(vec![]);
+        app.handle_message(Message::SearchResults {
+            term: "x".into(),
+            issues: vec![stated("1", "s", "Done", "completed")],
+        });
+        assert_eq!(app.visible_issues().len(), 1);
+        app.clear_search();
+        assert_eq!(app.preset(), Preset::Active);
     }
 
     #[test]
@@ -1896,5 +2958,462 @@ mod tests {
             app.requests.front(),
             Some(Request::UpdatePriority { priority: 1, .. })
         ));
+    }
+
+    // ------------------------------------------------------ grouping / nav
+
+    fn stated(id: &str, state_id: &str, name: &str, kind: &str) -> Issue {
+        serde_json::from_str(&format!(
+            r#"{{"id":"{id}","identifier":"ENG-{id}","title":"t{id}","priority":0,
+                "state":{{"id":"{state_id}","name":"{name}","type":"{kind}","position":1}},
+                "assignee":null,"description":null,"comments":null,"project":null,"cycle":null}}"#
+        ))
+        .unwrap()
+    }
+
+    fn team(id: &str, name: &str) -> Team {
+        serde_json::from_str(&format!(
+            r#"{{"id":"{id}","name":"{name}","key":"{name}"}}"#
+        ))
+        .unwrap()
+    }
+
+    fn view(id: &str, name: &str, shared: bool) -> CustomView {
+        serde_json::from_str(&format!(
+            r#"{{"id":"{id}","name":"{name}","shared":{shared}}}"#
+        ))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_team_list_opens_on_active_and_hides_done_work() {
+        let mut app = app_with(vec![
+            stated("1", "s-todo", "Todo", "unstarted"),
+            stated("2", "s-done", "Done", "completed"),
+        ]);
+        assert_eq!(app.preset(), Preset::Active);
+        assert_eq!(app.visible_issues().len(), 1);
+        app.set_preset(Preset::All);
+        assert_eq!(app.visible_issues().len(), 2);
+    }
+
+    /// A saved view already chose its issues; the client must not narrow them.
+    #[test]
+    fn a_saved_view_opens_on_all() {
+        let mut app = app_with(vec![]);
+        app.custom_views = vec![view("v", "Mine", false)];
+        app.view_issues = vec![stated("2", "s-done", "Done", "completed")];
+        app.loaded_view_id = Some("v".into());
+        app.activate(Nav::View(0));
+        assert_eq!(app.preset(), Preset::All);
+        assert_eq!(app.visible_issues().len(), 1);
+    }
+
+    #[test]
+    fn issues_are_listed_in_group_order() {
+        let mut app = app_with(vec![
+            stated("1", "s-todo", "Todo", "unstarted"),
+            stated("2", "s-prog", "In Progress", "started"),
+            stated("3", "s-todo", "Todo", "unstarted"),
+        ]);
+        let ids: Vec<_> = app.visible_issues().iter().map(|i| i.id.clone()).collect();
+        assert_eq!(ids, ["2", "1", "3"]);
+        // Header rows interleave with the issues.
+        let layout = app.list_layout();
+        assert!(matches!(layout[0], ListRow::Group { count: 1, .. }));
+        assert!(matches!(layout[2], ListRow::Group { count: 2, .. }));
+        app.group_by = GroupBy::None;
+        assert!(
+            app.list_layout()
+                .iter()
+                .all(|r| matches!(r, ListRow::Issue { .. }))
+        );
+    }
+
+    #[test]
+    fn folding_a_group_keeps_the_cursor_on_a_visible_issue() {
+        let mut app = app_with(vec![
+            stated("1", "s-prog", "In Progress", "started"),
+            stated("2", "s-todo", "Todo", "unstarted"),
+            stated("3", "s-todo", "Todo", "unstarted"),
+        ]);
+        app.selected_issue_index = 2;
+        app.toggle_selected_group();
+        assert_eq!(app.visible_issues().len(), 1);
+        assert_eq!(app.selected_issue_index, 0);
+        app.toggle_group("status:s-todo");
+        assert_eq!(app.visible_issues().len(), 3);
+    }
+
+    #[test]
+    fn folding_all_groups_then_again_unfolds_them() {
+        let mut app = app_with(vec![
+            stated("1", "a", "In Progress", "started"),
+            stated("2", "b", "Todo", "unstarted"),
+        ]);
+        app.toggle_all_groups();
+        assert!(app.visible_issues().is_empty());
+        app.toggle_all_groups();
+        assert_eq!(app.visible_issues().len(), 2);
+    }
+
+    #[test]
+    fn switching_a_team_preset_refetches_that_slice() {
+        let mut app = app_with(vec![]);
+        app.teams = vec![team("t1", "Core")];
+        app.set_preset(Preset::Backlog);
+        assert!(matches!(
+            app.requests.back(),
+            Some(Request::Issues {
+                preset: Preset::Backlog,
+                after: None,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn a_page_for_a_preset_already_left_is_dropped() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.handle_message(Message::Issues {
+            preset: Preset::All,
+            page: Page::new(
+                vec![issue("9", "ENG-9", "stale")],
+                PageInfo::default(),
+                false,
+            ),
+        });
+        assert_eq!(app.issues[0].id, "1");
+    }
+
+    #[test]
+    fn a_sidebar_team_entry_switches_team() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+        app.activate(Nav::Team(1, TeamSection::Cycles));
+        assert_eq!(app.selected_team_index, 1);
+        assert_eq!(app.screen, Screen::CycleList);
+        assert!(app.issues.is_empty(), "the old team's issues are dropped");
+        assert!(
+            app.requests
+                .iter()
+                .any(|r| matches!(r, Request::Cycles { team_id, .. } if team_id == "t2"))
+        );
+    }
+
+    fn fav(json: &str) -> Favorite {
+        serde_json::from_str(json).unwrap()
+    }
+
+    fn sidebar_navs(app: &App) -> Vec<Option<Nav>> {
+        app.sidebar_rows
+            .iter()
+            .filter_map(|r| match r {
+                SidebarRow::Item(i) => Some(i.nav()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Only the current team's pages are listed; other teams are reached
+    /// through the switcher, not a tree of every team.
+    #[test]
+    fn the_sidebar_shows_only_the_current_team() {
+        let mut app = app_with(vec![]);
+        app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+        app.custom_views = vec![view("v1", "Today", false)];
+        app.sidebar_rows = app.sidebar_layout();
+
+        let navs = sidebar_navs(&app);
+        assert!(navs.contains(&Some(Nav::Team(0, TeamSection::Projects))));
+        assert!(!navs.contains(&Some(Nav::Team(1, TeamSection::Projects))));
+        assert!(
+            !navs.contains(&Some(Nav::View(0))),
+            "views are not expanded"
+        );
+        assert!(app.sidebar_rows.iter().any(|r| matches!(
+            r,
+            SidebarRow::Item(i) if i.action == SidebarAction::SwitchTeam
+        )));
+
+        app.sidebar_index = 0;
+        for _ in 0..app.sidebar_rows.len() {
+            app.sidebar_move(1);
+            assert!(matches!(
+                app.sidebar_rows[app.sidebar_index],
+                SidebarRow::Item(_)
+            ));
+        }
+    }
+
+    #[test]
+    fn the_team_switcher_goes_to_the_picked_team() {
+        let mut app = app_with(vec![]);
+        app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+        app.nav = Nav::MyIssues;
+        app.run_sidebar_action(SidebarAction::SwitchTeam);
+        assert_eq!(app.popup, Popup::TeamSelect);
+        app.popup_index = 1;
+        app.select_team();
+        assert_eq!(app.nav, Nav::Team(1, TeamSection::Issues));
+        assert_eq!(app.selected_team_index, 1);
+    }
+
+    #[test]
+    fn switching_team_keeps_the_page() {
+        let mut app = app_with(vec![]);
+        app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+        app.go_to_team_section(TeamSection::Cycles);
+        app.open_team_select();
+        app.popup_index = 1;
+        app.select_team();
+        assert_eq!(app.nav, Nav::Team(1, TeamSection::Cycles));
+    }
+
+    #[test]
+    fn favorites_are_listed_in_linear_order_with_folders() {
+        let mut app = app_with(vec![]);
+        app.handle_message(Message::Favorites(vec![
+            fav(r#"{"id":"b","type":"document","title":"Second","sortOrder":2}"#),
+            fav(r#"{"id":"f","type":"folder","folderName":"Box","sortOrder":3}"#),
+            fav(r#"{"id":"a","type":"document","title":"First","sortOrder":1}"#),
+            fav(r#"{"id":"c","type":"document","title":"Inside","sortOrder":1,"parent":{"id":"f"}}"#),
+        ]));
+        app.sidebar_rows = app.sidebar_layout();
+        let labels: Vec<_> = app
+            .sidebar_rows
+            .iter()
+            .filter_map(|r| match r {
+                SidebarRow::Item(i)
+                    if i.tone == Tone::Strong && i.action != SidebarAction::SwitchTeam =>
+                {
+                    Some((i.label.clone(), i.depth))
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            labels,
+            [
+                ("First".into(), 0),
+                ("Second".into(), 0),
+                ("Box".into(), 0),
+                ("Inside".into(), 1)
+            ]
+        );
+
+        let folder = app.favorites.iter().position(|f| f.id == "f").unwrap();
+        app.toggle_folder(folder);
+        assert!(
+            !app.sidebar_rows
+                .iter()
+                .any(|r| matches!(r, SidebarRow::Item(i) if i.label == "Inside"))
+        );
+    }
+
+    #[test]
+    fn a_view_favorite_opens_the_view_itself() {
+        let mut app = app_with(vec![]);
+        app.custom_views = vec![view("v1", "Today", false)];
+        app.favorites = vec![fav(
+            r#"{"id":"x","type":"customView","customView":{"id":"v1"},"sortOrder":1}"#,
+        )];
+        assert_eq!(app.favorite_action(0), SidebarAction::Go(Nav::View(0)));
+    }
+
+    #[test]
+    fn a_project_favorite_opens_the_project_and_esc_returns_to_the_sidebar() {
+        let mut app = app_with(vec![]);
+        app.favorites = vec![fav(
+            r#"{"id":"x","type":"project","sortOrder":1,"project":{"id":"p1","name":"Launch","lead":null}}"#,
+        )];
+        app.activate(Nav::Favorite(0));
+        assert_eq!(app.screen, Screen::ProjectDetail);
+        assert_eq!(app.current_project.as_ref().unwrap().id, "p1");
+        assert!(matches!(
+            app.requests.back(),
+            Some(Request::ProjectIssues { .. })
+        ));
+        app.leave_container();
+        assert!(app.sidebar_focus);
+        assert_eq!(
+            app.screen,
+            Screen::ProjectDetail,
+            "nothing behind it to go back to"
+        );
+    }
+
+    #[test]
+    fn an_issue_favorite_opens_the_detail_and_esc_restores_where_you_were() {
+        let mut app = app_with(vec![]);
+        app.favorites = vec![fav(r#"{"id":"x","type":"issue","sortOrder":1,
+                "issue":{"id":"i1","identifier":"ENG-1","title":"Bug"}}"#)];
+        app.nav = Nav::MyIssues;
+        app.activate(Nav::Favorite(0));
+        assert_eq!(app.screen, Screen::IssueDetail);
+        assert_eq!(app.nav, Nav::Favorite(0));
+        assert!(matches!(
+            app.requests.back(),
+            Some(Request::IssueDetail { .. })
+        ));
+        app.close_detail();
+        assert_eq!(app.nav, Nav::MyIssues);
+        assert_eq!(app.screen, Screen::IssueList);
+    }
+
+    #[test]
+    fn a_favorite_with_no_page_here_opens_in_the_browser() {
+        let mut app = app_with(vec![]);
+        app.favorites = vec![fav(
+            r#"{"id":"x","type":"document","sortOrder":1,"url":"https://linear.app/d"}"#,
+        )];
+        let before = app.nav;
+        app.activate(Nav::Favorite(0));
+        assert_eq!(app.nav, before);
+        assert!(
+            matches!(app.requests.back(), Some(Request::OpenUrl(u)) if u == "https://linear.app/d")
+        );
+    }
+
+    #[test]
+    fn a_views_refetch_keeps_the_open_view_by_identity() {
+        let mut app = app_with(vec![]);
+        app.custom_views = vec![view("a", "A", false), view("b", "B", false)];
+        app.nav = Nav::View(1);
+        app.handle_message(Message::CustomViews(vec![
+            view("b", "B", false),
+            view("z", "Z", true),
+        ]));
+        assert_eq!(app.nav, Nav::View(0));
+        assert_eq!(app.custom_views[0].id, "b");
+    }
+
+    #[test]
+    fn project_views_are_left_out() {
+        let mut app = app_with(vec![]);
+        let mut projects = view("p", "Roadmap", true);
+        projects.model_name = Some("Project".into());
+        app.handle_message(Message::CustomViews(vec![
+            projects,
+            view("i", "Bugs", true),
+        ]));
+        assert_eq!(app.custom_views.len(), 1);
+        assert_eq!(app.custom_views[0].id, "i");
+    }
+
+    #[test]
+    fn personal_views_sort_above_shared_ones() {
+        let mut app = app_with(vec![]);
+        app.handle_message(Message::CustomViews(vec![
+            view("1", "Team board", true),
+            view("2", "zzz mine", false),
+        ]));
+        assert!(!app.custom_views[0].shared);
+    }
+
+    #[test]
+    fn stepping_through_issues_from_the_detail_view() {
+        let mut app = app_with(vec![
+            stated("1", "s", "Todo", "unstarted"),
+            stated("2", "s", "Todo", "unstarted"),
+        ]);
+        app.open_issue_detail();
+        assert_eq!(app.detail_position(), Some((0, 2)));
+        app.step_issue(1);
+        assert_eq!(app.current_issue.as_ref().unwrap().id, "2");
+        assert_eq!(app.selected_issue_index, 1);
+        app.step_issue(1);
+        assert_eq!(
+            app.current_issue.as_ref().unwrap().id,
+            "2",
+            "clamped at the end"
+        );
+        app.close_detail();
+        assert_eq!(app.screen, Screen::IssueList);
+    }
+
+    #[test]
+    fn the_detail_view_returns_to_the_project_it_came_from() {
+        let mut app = app_with(vec![]);
+        app.project_issues = vec![stated("1", "s", "Todo", "unstarted")];
+        app.screen = Screen::ProjectDetail;
+        app.open_issue_detail();
+        assert_eq!(app.screen, Screen::IssueDetail);
+        app.close_detail();
+        assert_eq!(app.screen, Screen::ProjectDetail);
+    }
+
+    // ------------------------------------------------------------------ mouse
+
+    fn clickable(app: &mut App) {
+        app.list_area = Rect::new(30, 5, 80, 20);
+        app.list_rows = app.list_layout();
+    }
+
+    #[test]
+    fn clicking_a_row_selects_it_and_clicking_again_opens_it() {
+        let mut app = app_with(vec![
+            stated("1", "s", "Todo", "unstarted"),
+            stated("2", "s", "Todo", "unstarted"),
+        ]);
+        clickable(&mut app);
+        // Row 0 is the "Todo" header, rows 1 and 2 the issues.
+        app.click(40, 7);
+        assert_eq!(app.selected_issue_index, 1);
+        assert_eq!(app.screen, Screen::IssueList);
+        app.click(40, 7);
+        assert_eq!(app.screen, Screen::IssueDetail);
+        assert_eq!(app.current_issue.as_ref().unwrap().id, "2");
+    }
+
+    #[test]
+    fn clicking_a_group_header_folds_it() {
+        let mut app = app_with(vec![stated("1", "s", "Todo", "unstarted")]);
+        clickable(&mut app);
+        app.click(40, 5);
+        assert!(app.collapsed_groups.contains("status:s"));
+    }
+
+    #[test]
+    fn clicking_a_preset_chip_switches_preset() {
+        let mut app = app_with(vec![]);
+        app.chip_areas = vec![(Rect::new(30, 3, 8, 1), Preset::Backlog)];
+        app.click(32, 3);
+        assert_eq!(app.preset(), Preset::Backlog);
+    }
+
+    #[test]
+    fn clicking_a_sidebar_entry_navigates() {
+        let mut app = app_with(vec![]);
+        app.viewer_id = Some("u".into());
+        app.sidebar_rows = app.sidebar_layout();
+        app.sidebar_area = Rect::new(0, 2, 25, 30);
+        // Row 0 is My Issues.
+        app.click(10, 2);
+        assert_eq!(app.nav, Nav::MyIssues);
+        assert!(matches!(
+            app.requests.back(),
+            Some(Request::MyIssues { .. })
+        ));
+    }
+
+    #[test]
+    fn clicking_a_popup_entry_applies_it() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.open_priority_change();
+        app.popup_area = Rect::new(10, 10, 30, 5);
+        app.click(15, 11); // second entry: Urgent
+        assert_eq!(app.popup, Popup::None);
+        assert_eq!(app.issues[0].priority, Priority::Urgent);
+    }
+
+    #[test]
+    fn clicking_outside_a_popup_closes_it() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.open_priority_change();
+        app.popup_area = Rect::new(10, 10, 30, 5);
+        app.click(0, 0);
+        assert_eq!(app.popup, Popup::None);
+        assert!(app.requests.is_empty());
     }
 }

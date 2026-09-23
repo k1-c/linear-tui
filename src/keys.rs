@@ -1,7 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::api::types::Priority;
-use crate::app::{App, FormField, Input, InputMode, Popup, Screen, Tab};
+use crate::app::{App, FormField, Input, InputMode, Nav, Popup, Screen, TeamSection};
+use crate::grouping::Preset;
 
 pub fn handle_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
@@ -48,17 +49,6 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn apply_popup_selection(app: &mut App) {
-    match app.popup {
-        Popup::TeamSelect => app.select_team(),
-        Popup::Filter => app.apply_filter_selection(),
-        Popup::StatusChange => app.apply_status_selection(),
-        Popup::PriorityChange => app.apply_priority_selection(),
-        Popup::AssigneeChange => app.apply_assignee_selection(),
-        Popup::None => {}
-    }
-}
-
 fn handle_popup_keys(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.close_popup(),
@@ -68,12 +58,12 @@ fn handle_popup_keys(app: &mut App, key: KeyEvent) {
         KeyCode::Char('G') | KeyCode::End => {
             app.popup_index = app.popup_list_len().saturating_sub(1);
         }
-        KeyCode::Enter => apply_popup_selection(app),
+        KeyCode::Enter => app.apply_popup(),
         KeyCode::Char(c @ '1'..='9') => {
             let idx = (c as usize) - ('1' as usize);
             if idx < app.popup_list_len() {
                 app.popup_index = idx;
-                apply_popup_selection(app);
+                app.apply_popup();
             }
         }
         _ => {}
@@ -90,17 +80,17 @@ fn handle_global_actions(app: &mut App, key: KeyEvent) -> bool {
     match key.code {
         // Copy issue ID — Linear: Ctrl+.
         KeyCode::Char('.') if ctrl && !shift => app.copy_identifier(),
-        KeyCode::Char('y') => app.copy_identifier(),
+        KeyCode::Char('y') if !ctrl => app.copy_identifier(),
         // Copy issue URL — Linear: Ctrl+Shift+,
         KeyCode::Char(',' | '<') if ctrl && shift => app.copy_url(),
-        KeyCode::Char('Y') => app.copy_url(),
+        KeyCode::Char('Y') if !ctrl => app.copy_url(),
         // Copy git branch name — Linear: Ctrl+Shift+.
         KeyCode::Char('.' | '>') if ctrl && shift => app.copy_branch_name(),
-        KeyCode::Char('b') => app.copy_branch_name(),
+        KeyCode::Char('b') if !ctrl => app.copy_branch_name(),
         // Add comment — Linear: Ctrl+M. A legacy terminal reports Ctrl+M as
         // Enter, so plain `m` is accepted too (Linear leaves `m` for relations,
         // which this client does not support).
-        KeyCode::Char('m') => app.start_comment(),
+        KeyCode::Char('m') if !ctrl => app.start_comment(),
         // Direct priority — Linear: Shift+1..4 / Shift+0
         KeyCode::Char('!') => app.set_priority(Priority::Urgent),
         KeyCode::Char('@') => app.set_priority(Priority::High),
@@ -112,8 +102,11 @@ fn handle_global_actions(app: &mut App, key: KeyEvent) -> bool {
     true
 }
 
-/// Second key of a `g …` chord. Mirrors Linear's "go to view" sequences, plus
-/// vim's `gg`.
+/// Second key of a `g …` chord.
+///
+/// Linear reaches its view presets with `G` then `A`/`B`/`E` (Active, Backlog,
+/// All issues) and its pages with the other letters; both are mirrored here,
+/// plus vim's `gg`.
 fn handle_goto_chord(app: &mut App, key: KeyEvent) {
     app.pending_chord = None;
     match key.code {
@@ -125,10 +118,23 @@ fn handle_goto_chord(app: &mut App, key: KeyEvent) {
                 app.select_first();
             }
         }
-        KeyCode::Char('m') => app.switch_tab(Tab::MyIssues),
-        KeyCode::Char('e') => app.switch_tab(Tab::Issues),
-        KeyCode::Char('p') => app.switch_tab(Tab::Projects),
-        KeyCode::Char('c') => app.switch_tab(Tab::Cycles),
+        // Linear's view presets.
+        KeyCode::Char('a') => {
+            app.go_to_team_issues();
+            app.set_preset(Preset::Active);
+        }
+        KeyCode::Char('b') => {
+            app.go_to_team_issues();
+            app.set_preset(Preset::Backlog);
+        }
+        KeyCode::Char('e') => {
+            app.go_to_team_issues();
+            app.set_preset(Preset::All);
+        }
+        KeyCode::Char('m') => app.activate(Nav::MyIssues),
+        KeyCode::Char('v') => app.activate(Nav::Views),
+        KeyCode::Char('p') => app.go_to_team_section(TeamSection::Projects),
+        KeyCode::Char('c') => app.go_to_team_section(TeamSection::Cycles),
         _ => {}
     }
 }
@@ -147,17 +153,45 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         return;
     }
 
-    // Tab switching with 1-4 (only on list screens). Linear reaches views with
-    // `g …`; the digits are a TUI convenience on top of that.
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+
+    // Sidebar: show/hide, and move focus in and out of it.
+    if ctrl && key.code == KeyCode::Char('b') {
+        return app.toggle_sidebar();
+    }
+    if app.sidebar_focus {
+        return handle_sidebar_keys(app, key);
+    }
+    if matches!(key.code, KeyCode::Tab) {
+        return app.focus_sidebar(true);
+    }
+
+    // Destination jumps by number, a TUI shorthand for the sidebar. Linear has
+    // no equivalent — it reaches pages with `g …`, which works here too.
     if matches!(
         app.screen,
-        Screen::IssueList | Screen::ProjectList | Screen::CycleList
+        Screen::IssueList | Screen::ProjectList | Screen::CycleList | Screen::ViewList
     ) {
         match key.code {
-            KeyCode::Char('1') => return app.switch_tab(Tab::Issues),
-            KeyCode::Char('2') => return app.switch_tab(Tab::MyIssues),
-            KeyCode::Char('3') => return app.switch_tab(Tab::Projects),
-            KeyCode::Char('4') => return app.switch_tab(Tab::Cycles),
+            KeyCode::Char('1') => return app.go_to_team_issues(),
+            KeyCode::Char('2') => return app.activate(Nav::MyIssues),
+            KeyCode::Char('3') => return app.go_to_team_section(TeamSection::Projects),
+            KeyCode::Char('4') => return app.go_to_team_section(TeamSection::Cycles),
+            KeyCode::Char('5') => return app.activate(Nav::Views),
+            _ => {}
+        }
+    }
+
+    // List shaping. Neither has a Linear keybinding — the web app puts both
+    // behind a display-options menu — so they take keys Linear leaves free.
+    if app.screen == Screen::IssueList
+        || matches!(app.screen, Screen::ProjectDetail | Screen::CycleDetail)
+    {
+        match key.code {
+            KeyCode::Char('D') => return app.cycle_group_by(),
+            KeyCode::Char('z') => return app.toggle_selected_group(),
+            KeyCode::Char('Z') => return app.toggle_all_groups(),
+            KeyCode::BackTab => return app.cycle_preset(),
             _ => {}
         }
     }
@@ -167,6 +201,14 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) {
         app.screen,
         Screen::IssueList | Screen::IssueDetail | Screen::ProjectDetail | Screen::CycleDetail
     ) {
+        // Step to the neighbouring issue without leaving the detail view.
+        if app.screen == Screen::IssueDetail {
+            match key.code {
+                KeyCode::Char('J') => return app.step_issue(1),
+                KeyCode::Char('K') => return app.step_issue(-1),
+                _ => {}
+            }
+        }
         match key.code {
             KeyCode::Char('s') => return app.open_status_change(),
             KeyCode::Char('p') => return app.open_priority_change(),
@@ -204,16 +246,47 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) {
     }
 
     match app.screen {
-        Screen::IssueList => match app.tab {
-            Tab::Issues => handle_issue_list_keys(app, key),
-            Tab::MyIssues => handle_my_issues_keys(app, key),
-            _ => {}
-        },
+        Screen::IssueList => handle_issue_list_keys(app, key),
+        Screen::ViewList => handle_view_list_keys(app, key),
         Screen::IssueDetail => handle_issue_detail_keys(app, key),
         Screen::ProjectList => handle_project_list_keys(app, key),
         Screen::ProjectDetail => handle_project_detail_keys(app, key),
         Screen::CycleList => handle_cycle_list_keys(app, key),
         Screen::CycleDetail => handle_cycle_detail_keys(app, key),
+    }
+}
+
+/// Keys while the cursor is in the navigation sidebar.
+fn handle_sidebar_keys(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    match key.code {
+        KeyCode::Char('j') | KeyCode::Down => app.sidebar_move(1),
+        KeyCode::Char('k') | KeyCode::Up => app.sidebar_move(-1),
+        KeyCode::Char('d') if ctrl => app.sidebar_move(app.half_page()),
+        KeyCode::Char('u') if ctrl => app.sidebar_move(-app.half_page()),
+        KeyCode::Char('g') | KeyCode::Home => app.sidebar_move(isize::MIN / 2),
+        KeyCode::Char('G') | KeyCode::End => app.sidebar_move(isize::MAX / 2),
+        // A tree folds with h/l, as in every file explorer.
+        KeyCode::Char('h') | KeyCode::Left | KeyCode::Char('l') | KeyCode::Right => {
+            app.sidebar_toggle()
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => app.sidebar_activate(),
+        KeyCode::Tab | KeyCode::Esc => app.focus_sidebar(false),
+        KeyCode::Char('t') => app.open_team_select(),
+        KeyCode::Char('q') => app.should_quit = true,
+        _ => {}
+    }
+}
+
+/// Keys on the saved-view index.
+fn handle_view_list_keys(app: &mut App, key: KeyEvent) {
+    if handle_list_nav(app, key) {
+        return;
+    }
+    match key.code {
+        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Enter | KeyCode::Char(' ') => app.open_selected_view(),
+        _ => {}
     }
 }
 
@@ -268,40 +341,11 @@ fn handle_issue_list_keys(app: &mut App, key: KeyEvent) {
     }
 }
 
-fn handle_my_issues_keys(app: &mut App, key: KeyEvent) {
-    if handle_list_nav(app, key) {
-        return;
-    }
-    match key.code {
-        KeyCode::Char('q') => app.should_quit = true,
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            if let Some(issue) = app
-                .visible_my_issues()
-                .get(app.selected_my_issue_index)
-                .map(|i| (*i).clone())
-            {
-                app.open_issue_from_list(&issue);
-            }
-        }
-        KeyCode::Char('/') => {
-            app.input_mode = InputMode::Search;
-            app.search.clear();
-        }
-        KeyCode::Esc => app.clear_search(),
-        KeyCode::Char('t') => app.open_team_select(),
-        _ => {}
-    }
-}
-
 fn handle_issue_detail_keys(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
     let page = app.detail_viewport as i16;
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => match app.tab {
-            Tab::Issues | Tab::MyIssues => app.screen = Screen::IssueList,
-            Tab::Projects => app.screen = Screen::ProjectDetail,
-            Tab::Cycles => app.screen = Screen::CycleDetail,
-        },
+        KeyCode::Esc | KeyCode::Char('q') => app.close_detail(),
         KeyCode::Char('j') | KeyCode::Down => app.scroll_down(),
         KeyCode::Char('k') | KeyCode::Up => app.scroll_up(),
         KeyCode::Char('d') if ctrl => app.scroll_by(page / 2),
@@ -332,7 +376,7 @@ fn handle_project_detail_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => app.screen = Screen::ProjectList,
+        KeyCode::Esc | KeyCode::Char('q') => app.leave_container(),
         KeyCode::Enter | KeyCode::Char(' ') => {
             if let Some(issue) = app
                 .project_issues
@@ -363,7 +407,7 @@ fn handle_cycle_detail_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => app.screen = Screen::CycleList,
+        KeyCode::Esc | KeyCode::Char('q') => app.leave_container(),
         KeyCode::Enter | KeyCode::Char(' ') => {
             if let Some(issue) = app
                 .cycle_issues

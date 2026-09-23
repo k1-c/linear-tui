@@ -13,11 +13,16 @@ const ISSUE_FIELDS: &str = r#"
     title
     priority
     priorityLabel
+    estimate
+    dueDate
     url
     branchName
-    state { id name color type }
+    state { id name color type position }
     assignee { id name displayName }
+    creator { id name displayName }
     labels { nodes { id name color } }
+    project { id name color state }
+    parent { id identifier title state { id name color type } }
     description
     createdAt
     updatedAt
@@ -125,14 +130,20 @@ impl LinearClient {
             teams: Connection<Team>,
         }
         let resp: Resp = self
-            .query("query { teams { nodes { id name key } } }", None)
+            .query(
+                "query { teams(first: 100) { nodes { id name key color cyclesEnabled } } }",
+                None,
+            )
             .await?;
         Ok(resp.teams.nodes)
     }
 
+    /// A team's issues, newest activity first, optionally narrowed to some
+    /// workflow categories (`state` is an `IssueFilter.state` clause).
     pub async fn issues(
         &self,
         team_id: &str,
+        state: Option<serde_json::Value>,
         after: Option<&str>,
         first: u32,
     ) -> Result<(Vec<Issue>, PageInfo)> {
@@ -140,15 +151,19 @@ impl LinearClient {
         struct Resp {
             issues: Connection<Issue>,
         }
+        let mut filter = serde_json::json!({ "team": { "id": { "eq": team_id } } });
+        if let Some(state) = state {
+            filter["state"] = state;
+        }
         let variables = serde_json::json!({
-            "teamId": team_id,
+            "filter": filter,
             "after": after,
             "first": first,
         });
         let query = format!(
-            r#"query($teamId: ID!, $after: String, $first: Int!) {{
+            r#"query($filter: IssueFilter, $after: String, $first: Int!) {{
                 issues(
-                    filter: {{ team: {{ id: {{ eq: $teamId }} }} }}
+                    filter: $filter
                     first: $first
                     after: $after
                     orderBy: updatedAt
@@ -172,15 +187,21 @@ impl LinearClient {
             r#"query($id: String!) {{
                 issue(id: $id) {{
                     {ISSUE_FIELDS}
-                    comments {{
+                    comments(first: 100) {{
                         nodes {{
                             id
                             body
                             createdAt
+                            editedAt
                             user {{ id name displayName }}
+                            parent {{ id }}
                         }}
                     }}
-                    project {{ id name url }}
+                    children(first: 50) {{
+                        nodes {{ id identifier title state {{ id name color type }} }}
+                    }}
+                    project {{ id name url color state }}
+                    projectMilestone {{ id name }}
                     cycle {{ id name number }}
                 }}
             }}"#
@@ -202,7 +223,7 @@ impl LinearClient {
             .query(
                 r#"query($teamId: ID!) {
                     workflowStates(filter: { team: { id: { eq: $teamId } } }) {
-                        nodes { id name color type }
+                        nodes { id name color type position }
                     }
                 }"#,
                 Some(variables),
@@ -306,6 +327,117 @@ impl LinearClient {
         Ok((resp.search_issues.nodes, resp.search_issues.page_info))
     }
 
+    /// Every saved view the user can open. The list is small and rarely
+    /// changes, so it is fetched once at startup and lives in the sidebar.
+    pub async fn custom_views(&self) -> Result<Vec<CustomView>> {
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(rename = "customViews")]
+            custom_views: Connection<CustomView>,
+        }
+        let resp: Resp = self
+            .query(
+                r#"query {
+                    customViews(first: 100) {
+                        nodes {
+                            id
+                            name
+                            description
+                            color
+                            shared
+                            modelName
+                            team { id name key color cyclesEnabled }
+                            owner { id name displayName }
+                        }
+                    }
+                }"#,
+                None,
+            )
+            .await?;
+        Ok(resp.custom_views.nodes)
+    }
+
+    /// The user's Favorites, in no particular order (the caller sorts them by
+    /// `sortOrder`, as Linear's sidebar does).
+    pub async fn favorites(&self) -> Result<Vec<Favorite>> {
+        #[derive(Deserialize)]
+        struct Resp {
+            favorites: Connection<Favorite>,
+        }
+        let resp: Resp = self
+            .query(
+                r#"query {
+                    favorites(first: 250) {
+                        nodes {
+                            id
+                            type
+                            title
+                            url
+                            color
+                            sortOrder
+                            folderName
+                            predefinedViewType
+                            parent { id }
+                            predefinedViewTeam { id }
+                            customView { id }
+                            issue { id identifier title state { id name color type } }
+                            project {
+                                id name description state color health progress
+                                startDate targetDate url
+                                lead { id name displayName }
+                            }
+                            cycle { id name number startsAt endsAt progress }
+                        }
+                    }
+                }"#,
+                None,
+            )
+            .await?;
+        Ok(resp.favorites.nodes)
+    }
+
+    /// Issues belonging to a saved view.
+    ///
+    /// The filter is evaluated by Linear, not here: `filterData` is an opaque
+    /// JSON blob whose semantics are Linear's to define, and reimplementing it
+    /// would drift the moment a user adds a condition this client has not seen.
+    pub async fn custom_view_issues(
+        &self,
+        view_id: &str,
+        after: Option<&str>,
+        first: u32,
+    ) -> Result<(Vec<Issue>, PageInfo)> {
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(rename = "customView")]
+            custom_view: ViewWithIssues,
+        }
+        #[derive(Deserialize)]
+        struct ViewWithIssues {
+            issues: Connection<Issue>,
+        }
+        let variables = serde_json::json!({
+            "id": view_id,
+            "after": after,
+            "first": first,
+        });
+        let query = format!(
+            r#"query($id: String!, $after: String, $first: Int!) {{
+                customView(id: $id) {{
+                    issues(first: $first, after: $after) {{
+                        nodes {{ {ISSUE_FIELDS} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
+        Ok((
+            resp.custom_view.issues.nodes,
+            resp.custom_view.issues.page_info,
+        ))
+    }
+
     pub async fn projects(
         &self,
         team_id: &str,
@@ -332,7 +464,10 @@ impl LinearClient {
                             nodes {
                                 id
                                 name
+                                description
                                 state
+                                color
+                                health
                                 progress
                                 startDate
                                 targetDate

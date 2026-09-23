@@ -1,117 +1,164 @@
+//! A team's cycles, current one marked, each with its progress and dates.
+
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::Paragraph,
 };
 
-use super::format_date;
+use super::widgets::{progress_bar, row, short_date, truncate};
+use crate::api::types::Cycle;
 use crate::app::App;
+use crate::config::Theme;
+
+pub fn cycle_name(cycle: &Cycle) -> String {
+    cycle
+        .name
+        .clone()
+        .unwrap_or_else(|| format!("Cycle {}", cycle.number.unwrap_or(0.0)))
+}
+
+/// Whether `now` (an ISO timestamp) falls inside the cycle.
+fn is_current(cycle: &Cycle, now: &str) -> bool {
+    match (cycle.starts_at.as_deref(), cycle.ends_at.as_deref()) {
+        (Some(start), Some(end)) => start <= now && now < end,
+        _ => false,
+    }
+}
+
+pub fn now_iso() -> String {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let days = secs.div_euclid(86_400);
+    let rem = secs.rem_euclid(86_400);
+    // Civil-from-days (Howard Hinnant), inverse of ui::days_from_civil.
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + i64::from(m <= 2);
+    format!(
+        "{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}.000Z",
+        rem / 3600,
+        (rem % 3600) / 60,
+        rem % 60
+    )
+}
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    let chunks = Layout::vertical([
-        Constraint::Length(1), // header
-        Constraint::Min(0),    // table
-        Constraint::Length(1), // footer
-    ])
-    .split(area);
-
-    draw_header(f, app, chunks[0]);
-    draw_cycle_table(f, app, chunks[1]);
-    draw_footer(f, app, chunks[2]);
-}
-
-fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let team_name = app
-        .current_team()
-        .map(|t| format!("Team: {} [{}]", t.name, t.key))
-        .unwrap_or_else(|| "No team selected".to_string());
-
-    let loading = if app.loading() {
-        format!(" {} Loading...", app.spinner_symbol())
-    } else {
-        String::new()
+    let th = app.theme;
+    let width = area.width as usize;
+    let list = Rect {
+        y: area.y + 1,
+        height: area.height.saturating_sub(1),
+        ..area
     };
-    let count = format!(" ({} cycles)", app.cycles.len());
+    app.list_area = list;
+    app.list_viewport = list.height;
 
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            format!(" {team_name}"),
-            Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(count, Style::default().fg(th.muted)),
-        Span::styled(&loading, Style::default().fg(th.warning)),
-    ]));
-    f.render_widget(header, area);
-}
+    if app.cycles.is_empty() {
+        app.row_targets.clear();
+        let message = if app.loading() {
+            format!("{} Loading cycles\u{2026}", app.spinner_symbol())
+        } else {
+            "This team has no cycles".to_string()
+        };
+        f.render_widget(
+            Paragraph::new(Span::styled(message, Style::default().fg(th.muted)))
+                .alignment(ratatui::layout::Alignment::Center),
+            Rect {
+                y: list.y + list.height / 3,
+                height: 1,
+                ..list
+            },
+        );
+        return;
+    }
 
-fn draw_cycle_table(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let rows: Vec<Row> = app
+    let height = list.height as usize;
+    let sel = app.selected_cycle_index;
+    let mut offset = app.tables.cycles.offset();
+    if sel < offset {
+        offset = sel;
+    } else if height > 0 && sel >= offset + height {
+        offset = sel + 1 - height;
+    }
+    *app.tables.cycles.offset_mut() = offset;
+
+    let now = now_iso();
+    let lines: Vec<Line> = app
         .cycles
         .iter()
-        .map(|cycle| {
-            let name = cycle
-                .name
-                .clone()
-                .unwrap_or_else(|| format!("Cycle #{}", cycle.number.unwrap_or(0.0)));
-            let progress = cycle
-                .progress
-                .map(|p| format!("{:.0}%", p * 100.0))
-                .unwrap_or_else(|| "-".to_string());
-            let start = format_date(cycle.starts_at.as_deref());
-            let end = format_date(cycle.ends_at.as_deref());
-
-            Row::new(vec![
-                Cell::from(name),
-                Cell::from(progress),
-                Cell::from(start).style(Style::default().fg(th.text_dim)),
-                Cell::from(end).style(Style::default().fg(th.text_dim)),
-            ])
-        })
+        .enumerate()
+        .skip(offset)
+        .take(height)
+        .map(|(index, cycle)| cycle_row(cycle, &now, width, index == sel, &th))
         .collect();
-
-    let header = Row::new(vec!["Name", "Progress", "Start", "End"])
-        .style(Style::default().fg(th.accent).add_modifier(Modifier::BOLD))
-        .bottom_margin(0);
-
-    let widths = [
-        Constraint::Min(20),
-        Constraint::Length(10),
-        Constraint::Length(12),
-        Constraint::Length(12),
-    ];
-
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title(" Cycles "))
-        .row_highlight_style(
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .fg(th.highlight_fg),
-        )
-        .highlight_symbol(" > ");
-
-    app.list_viewport = area.height.saturating_sub(3);
-    app.tables.cycles.select(Some(app.selected_cycle_index));
-    f.render_stateful_widget(table, area, &mut app.tables.cycles);
+    app.row_targets = (offset..offset + lines.len()).map(Some).collect();
+    f.render_widget(Paragraph::new(lines), list);
 }
 
-fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let content = Line::from(vec![
-        Span::styled(" j/k", Style::default().fg(th.accent)),
-        Span::raw(":move "),
-        Span::styled("Enter", Style::default().fg(th.accent)),
-        Span::raw(":issues "),
-        Span::styled("1-4", Style::default().fg(th.accent)),
-        Span::raw(":tab "),
-        Span::styled("t", Style::default().fg(th.accent)),
-        Span::raw(":team "),
-        Span::styled("q", Style::default().fg(th.accent)),
-        Span::raw(":quit"),
-    ]);
-    f.render_widget(Paragraph::new(content), area);
+fn cycle_row(cycle: &Cycle, now: &str, width: usize, selected: bool, th: &Theme) -> Line<'static> {
+    let current = is_current(cycle, now);
+    let past = cycle.ends_at.as_deref().is_some_and(|end| end <= now);
+    let (glyph, color) = if current {
+        ("\u{25d4}", th.accent)
+    } else if past {
+        ("\u{25cf}", th.muted)
+    } else {
+        ("\u{25cb}", th.text_dim)
+    };
+    let progress = cycle.progress.unwrap_or(0.0);
+
+    let mut left = vec![
+        Span::styled(format!("{glyph} "), Style::default().fg(color)),
+        Span::styled(
+            truncate(&cycle_name(cycle), width.saturating_sub(50)),
+            Style::default()
+                .fg(if past { th.text_dim } else { th.text })
+                .add_modifier(if selected || current {
+                    Modifier::BOLD
+                } else {
+                    Modifier::empty()
+                }),
+        ),
+    ];
+    if current {
+        left.push(Span::styled("  Current", Style::default().fg(th.accent)));
+    }
+
+    let mut right = progress_bar(progress, 12, color, th);
+    right.push(Span::styled(
+        format!(" {:>3.0}%   ", progress * 100.0),
+        Style::default().fg(th.text_dim),
+    ));
+    right.push(Span::styled(
+        format!(
+            "{:>6} \u{2192} {:<6} ",
+            short_date(cycle.starts_at.as_deref()),
+            short_date(cycle.ends_at.as_deref())
+        ),
+        Style::default().fg(th.muted),
+    ));
+    row(left, right, width, selected, th)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn now_is_a_well_formed_timestamp() {
+        let now = now_iso();
+        assert_eq!(now.len(), 24);
+        assert!(super::super::parse_iso(&now).is_some());
+    }
 }

@@ -1,202 +1,391 @@
+//! Issue lists, drawn the way Linear draws them: a row of view presets, then
+//! issues stacked under collapsible status (or assignee, priority, project)
+//! headers, each row carrying priority, identifier, status, title, labels,
+//! project, estimate, assignee, and date.
+//!
+//! The same renderer serves every issue list — a team's issues, My Issues, a
+//! saved view, and the issues inside a project or cycle.
+
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::Paragraph,
 };
+use unicode_width::UnicodeWidthStr;
 
-use crate::api::types::Issue;
-use crate::app::{App, InputMode, Tab};
+use super::widgets::{
+    fit, initials, label_chip, person_color, priority_glyph, short_date, state_glyph, truncate,
+    user_name,
+};
+use crate::api::types::{Issue, hex_color};
+use crate::app::{App, IssueSource, ListRow};
 use crate::config::Theme;
+use crate::grouping::{GroupBy, Preset};
 
-fn state_color(state_type: Option<&crate::api::types::StateType>) -> Color {
-    match state_type {
-        Some(st) => st.color(),
-        None => Color::White,
-    }
-}
-
+/// The issue-list screen: preset chips over the grouped list.
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let chunks = Layout::vertical([
-        Constraint::Length(1), // header
-        Constraint::Min(0),    // table
-        Constraint::Length(1), // footer
+        Constraint::Length(1), // presets + display summary
+        Constraint::Length(1), // breathing room
+        Constraint::Min(0),    // list
     ])
     .split(area);
-
-    draw_header(f, app, chunks[0]);
-    draw_issue_table(f, app, chunks[1]);
-    draw_footer(f, app, chunks[2]);
+    draw_toolbar(f, app, chunks[0]);
+    draw_list(f, app, chunks[2]);
 }
 
-fn draw_header(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let loading = if app.loading() {
-        format!(" {} Loading...", app.spinner_symbol())
-    } else {
-        String::new()
-    };
-
-    let (label, count) = match app.tab {
-        Tab::MyIssues => ("My Issues".to_string(), app.visible_my_issues().len()),
-        _ => match &app.global_search {
-            Some(term) => (format!("Search: \"{term}\""), app.visible_issues().len()),
-            None => {
-                let team_name = app
-                    .current_team()
-                    .map(|t| format!("Team: {} [{}]", t.name, t.key))
-                    .unwrap_or_else(|| "No team selected".to_string());
-                (team_name, app.visible_issues().len())
-            }
-        },
-    };
-
-    let issue_count = format!(" ({} issues)", count);
-    let filter_info = if app.tab == Tab::Issues && app.filters.is_active() {
-        format!("  [{}]", app.filters.summary())
-    } else {
-        String::new()
-    };
-
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            format!(" {label}"),
-            Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(issue_count, Style::default().fg(th.muted)),
-        Span::styled(filter_info, Style::default().fg(th.secondary)),
-        Span::styled(&loading, Style::default().fg(th.warning)),
-    ]));
-    f.render_widget(header, area);
-}
-
-pub fn issue_row(issue: &Issue, theme: &Theme) -> Row<'static> {
-    let state_name = issue
-        .state
-        .as_ref()
-        .map(|s| s.name.clone())
-        .unwrap_or_else(|| "-".to_string());
-    let state_type = issue.state.as_ref().and_then(|s| s.state_type.as_ref());
-    let pri_label = issue
-        .priority_label
-        .clone()
-        .unwrap_or_else(|| issue.priority.label().to_string());
-    let assignee = issue
-        .assignee
-        .as_ref()
-        .and_then(|a| a.display_name.clone().or_else(|| Some(a.name.clone())))
-        .unwrap_or_else(|| "-".to_string());
-
-    Row::new(vec![
-        Cell::from(issue.identifier.clone()),
-        Cell::from(issue.title.clone()),
-        Cell::from(state_name).style(Style::default().fg(state_color(state_type))),
-        Cell::from(pri_label).style(Style::default().fg(issue.priority.color(theme))),
-        Cell::from(assignee).style(Style::default().fg(theme.text_dim)),
-    ])
-}
-
-fn draw_issue_table(f: &mut Frame, app: &mut App, area: Rect) {
+/// Preset chips on the left, grouping and counts on the right.
+pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
     let th = app.theme;
-    let my_issues = app.tab == Tab::MyIssues;
-
-    // Build owned rows first so the immutable borrow of `app` ends before we
-    // reach for the mutable table state below.
-    let (rows, selected_index, title): (Vec<Row>, usize, &str) = if my_issues {
-        let rows = app
-            .visible_my_issues()
-            .into_iter()
-            .map(|i| issue_row(i, &th))
-            .collect();
-        (rows, app.selected_my_issue_index, " My Issues ")
-    } else {
-        let rows = app
-            .visible_issues()
-            .into_iter()
-            .map(|i| issue_row(i, &th))
-            .collect();
-        (rows, app.selected_issue_index, " Issues ")
-    };
-
-    let header = Row::new(vec!["ID", "Title", "Status", "Priority", "Assignee"])
-        .style(Style::default().fg(th.accent).add_modifier(Modifier::BOLD))
-        .bottom_margin(0);
-
-    let widths = [
-        Constraint::Length(10),
-        Constraint::Min(20),
-        Constraint::Length(14),
-        Constraint::Length(10),
-        Constraint::Length(16),
-    ];
-
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title(title))
-        .row_highlight_style(
+    let mut spans = vec![Span::raw(" ")];
+    let mut x = area.x + 1;
+    app.chip_areas.clear();
+    for preset in Preset::all() {
+        let label = format!(" {} ", preset.label());
+        let width = label.width() as u16;
+        let style = if *preset == app.preset() {
             Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .fg(th.highlight_fg),
-        )
-        .highlight_symbol(" > ");
+                .fg(th.text)
+                .bg(th.selection_bg)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(th.muted)
+        };
+        app.chip_areas.push((
+            Rect {
+                x,
+                y: area.y,
+                width,
+                height: 1,
+            },
+            *preset,
+        ));
+        spans.push(Span::styled(label, style));
+        spans.push(Span::raw(" "));
+        x += width + 1;
+    }
 
-    app.list_viewport = area.height.saturating_sub(3); // borders + header row
-    let state = if my_issues {
-        &mut app.tables.my_issues
-    } else {
-        &mut app.tables.issues
-    };
-    state.select(Some(selected_index));
-    f.render_stateful_widget(table, area, state);
+    let count = app.visible_issues().len();
+    let mut right = vec![];
+    if app.filters.is_active() {
+        right.push(Span::styled(
+            format!("\u{25bc} {}  ", app.filters.summary()),
+            Style::default().fg(th.secondary),
+        ));
+    }
+    if !app.search.is_empty() {
+        right.push(Span::styled(
+            format!("/{}  ", app.search.value),
+            Style::default().fg(th.warning),
+        ));
+    }
+    right.push(Span::styled(
+        format!("{} ", app.group_by.label()),
+        Style::default().fg(th.text_dim),
+    ));
+    right.push(Span::styled("\u{00b7} ", Style::default().fg(th.muted)));
+    right.push(Span::styled(
+        format!("{count} issues "),
+        Style::default().fg(th.text_dim),
+    ));
+
+    let left_w: usize = spans.iter().map(|s| s.width()).sum();
+    let right_w: usize = right.iter().map(|s| s.width()).sum();
+    let pad = (area.width as usize).saturating_sub(left_w + right_w);
+    spans.push(Span::raw(" ".repeat(pad)));
+    spans.extend(right);
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn draw_footer(f: &mut Frame, app: &mut App, area: Rect) {
-    let th = &app.theme;
-    let content = match app.input_mode {
-        InputMode::Search => {
-            let mut spans = vec![Span::styled(" /", Style::default().fg(th.warning))];
-            spans.extend(super::input_spans(&app.search, th));
-            let matches = if app.tab == Tab::MyIssues {
-                app.visible_my_issues().len()
-            } else {
-                app.visible_issues().len()
-            };
-            spans.push(Span::styled(
-                format!("   ({matches} matches · Ctrl+G searches all of Linear)"),
+/// The grouped list itself. Records its rows and area for mouse hit-testing.
+pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
+    let th = app.theme;
+    let rows = app.list_layout();
+    let selected = app.selected_index();
+    let selected_row = rows
+        .iter()
+        .position(|r| matches!(r, ListRow::Issue { ordinal, .. } if *ordinal == selected));
+
+    app.list_viewport = area.height;
+    app.list_area = area;
+
+    if rows.is_empty() {
+        app.list_rows.clear();
+        let message = if app.loading() {
+            format!("{} Loading issues\u{2026}", app.spinner_symbol())
+        } else if !app.search.is_empty() || app.filters.is_active() {
+            "No issues match the current filter".to_string()
+        } else if app.preset() != Preset::All {
+            format!(
+                "No {} issues \u{2014} Shift+Tab or g e shows all issues",
+                app.preset().label().to_lowercase()
+            )
+        } else {
+            "No issues".to_string()
+        };
+        let y = area.y + area.height / 3;
+        f.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                message,
+                Style::default().fg(th.muted),
+            )))
+            .alignment(ratatui::layout::Alignment::Center),
+            Rect {
+                y,
+                height: 1,
+                ..area
+            },
+        );
+        return;
+    }
+
+    // Scroll so the cursor stays visible — and when the cursor is the first
+    // issue of a group, keep that group's header in view with it.
+    let height = area.height as usize;
+    let mut offset = app.active_table_state().offset();
+    if let Some(sel) = selected_row {
+        let want_top = if sel > 0 && matches!(rows[sel - 1], ListRow::Group { .. }) {
+            sel - 1
+        } else {
+            sel
+        };
+        if want_top < offset {
+            offset = want_top;
+        } else if height > 0 && sel >= offset + height {
+            offset = sel + 1 - height;
+        }
+    }
+    offset = offset.min(rows.len().saturating_sub(height));
+    *app.active_table_state().offset_mut() = offset;
+
+    let issues = app.visible_issues();
+    let id_width = issues
+        .iter()
+        .map(|i| i.identifier.width())
+        .max()
+        .unwrap_or(6)
+        .min(10);
+    let width = area.width as usize;
+    // A column that only repeats what the page or the group header already
+    // says is left out: the project inside a project, the assignee when
+    // grouped by assignee.
+    let columns = Columns {
+        project: app.issue_source() != IssueSource::Project && app.group_by != GroupBy::Project,
+        assignee: app.group_by != GroupBy::Assignee,
+    };
+
+    let lines: Vec<Line> = rows
+        .iter()
+        .enumerate()
+        .skip(offset)
+        .take(height)
+        .map(|(index, row)| match row {
+            ListRow::Group {
+                label,
+                color,
+                glyph,
+                count,
+                collapsed,
+                ..
+            } => group_line(label, *color, glyph, *count, *collapsed, width, &th),
+            ListRow::Issue { ordinal, depth } => match issues.get(*ordinal) {
+                Some(issue) => issue_line(
+                    issue,
+                    *depth,
+                    id_width,
+                    width,
+                    Some(index) == selected_row,
+                    columns,
+                    &th,
+                ),
+                None => Line::from(""),
+            },
+        })
+        .collect();
+
+    app.list_rows = rows.into_iter().skip(offset).take(height).collect();
+    f.render_widget(Paragraph::new(lines), area);
+}
+
+fn group_line(
+    label: &str,
+    color: ratatui::style::Color,
+    glyph: &str,
+    count: usize,
+    collapsed: bool,
+    width: usize,
+    th: &Theme,
+) -> Line<'static> {
+    let chevron = if collapsed { "\u{25b8}" } else { "\u{25be}" };
+    let spans = vec![
+        Span::styled(format!(" {chevron} "), Style::default().fg(th.muted)),
+        Span::styled(format!("{glyph} "), Style::default().fg(color)),
+        Span::styled(
+            label.to_string(),
+            Style::default().fg(th.text).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(format!("  {count}"), Style::default().fg(th.muted)),
+    ];
+    let used: usize = spans.iter().map(|s| s.width()).sum();
+    let mut spans = spans;
+    spans.push(Span::raw(" ".repeat(width.saturating_sub(used))));
+    for span in &mut spans {
+        span.style = span.style.bg(th.surface);
+    }
+    Line::from(spans)
+}
+
+/// Optional columns an issue row may carry, when there is room.
+#[derive(Debug, Clone, Copy)]
+pub struct Columns {
+    pub project: bool,
+    pub assignee: bool,
+}
+
+/// One issue row. Columns drop out from the right as the pane narrows, in
+/// roughly the order Linear hides them: labels first, then project, estimate,
+/// date — the title and assignee go last.
+pub fn issue_line(
+    issue: &Issue,
+    depth: u8,
+    id_width: usize,
+    width: usize,
+    selected: bool,
+    columns: Columns,
+    th: &Theme,
+) -> Line<'static> {
+    let show_labels = width >= 110;
+    let show_project = width >= 90 && columns.project;
+    let show_estimate = width >= 80;
+    let show_date = width >= 64;
+    let show_assignee = width >= 44 && columns.assignee;
+
+    // Right-hand cluster, built first so the title gets whatever is left.
+    let mut right: Vec<Span<'static>> = Vec::new();
+    if show_labels && let Some(labels) = &issue.labels {
+        for label in labels.nodes.iter().take(2) {
+            let mut chip = label_chip(label, th);
+            if let Some(name) = chip.get_mut(1) {
+                name.content = format!(" {} ", truncate(&label.name, 14)).into();
+            }
+            right.extend(chip);
+        }
+        if labels.nodes.len() > 2 {
+            right.push(Span::styled(
+                format!("+{} ", labels.nodes.len() - 2),
                 Style::default().fg(th.muted),
             ));
-            Line::from(spans)
         }
-        InputMode::Comment | InputMode::NewIssue | InputMode::Normal => {
-            if let Some(msg) = &app.status_message {
-                Line::from(Span::styled(
-                    format!(" {msg}"),
-                    Style::default().fg(th.warning),
-                ))
-            } else {
-                Line::from(vec![
-                    Span::styled(" j/k", Style::default().fg(th.accent)),
-                    Span::raw(":move "),
-                    Span::styled("Enter", Style::default().fg(th.accent)),
-                    Span::raw(":detail "),
-                    Span::styled("/", Style::default().fg(th.accent)),
-                    Span::raw(":search "),
-                    Span::styled("t", Style::default().fg(th.accent)),
-                    Span::raw(":team "),
-                    Span::styled("f", Style::default().fg(th.accent)),
-                    Span::raw(":filter "),
-                    Span::styled("c", Style::default().fg(th.accent)),
-                    Span::raw(":new "),
-                    Span::styled("o", Style::default().fg(th.accent)),
-                    Span::raw(":open "),
-                    Span::styled("?", Style::default().fg(th.accent)),
-                    Span::raw(":help "),
-                    Span::styled("q", Style::default().fg(th.accent)),
-                    Span::raw(":quit"),
-                ])
+    }
+    if show_project && let Some(project) = &issue.project {
+        let dot = project
+            .color
+            .as_deref()
+            .and_then(hex_color)
+            .unwrap_or(th.secondary);
+        right.push(Span::styled("\u{25a3} ", Style::default().fg(dot)));
+        right.push(Span::styled(
+            format!("{} ", truncate(&project.name, 18)),
+            Style::default().fg(th.text_dim),
+        ));
+    }
+    if show_estimate {
+        let est = issue
+            .estimate
+            .map(|e| {
+                if e.fract() == 0.0 {
+                    format!("{e:.0}")
+                } else {
+                    format!("{e}")
+                }
+            })
+            .unwrap_or_default();
+        right.push(Span::styled(
+            format!("{est:>2} "),
+            Style::default().fg(th.muted),
+        ));
+    }
+    if show_assignee {
+        match &issue.assignee {
+            Some(user) => {
+                let name = user_name(user);
+                right.push(Span::styled(
+                    initials(name),
+                    Style::default()
+                        .fg(ratatui::style::Color::Black)
+                        .bg(person_color(name))
+                        .add_modifier(Modifier::BOLD),
+                ));
             }
+            None => right.push(Span::styled("\u{25cc} ", Style::default().fg(th.muted))),
         }
+        right.push(Span::raw(" "));
+    }
+    if show_date {
+        right.push(Span::styled(
+            format!("{:>6} ", short_date(issue.created_at.as_deref())),
+            Style::default().fg(th.muted),
+        ));
+    }
+    let right_w: usize = right.iter().map(|s| s.width()).sum();
+
+    let marker = if selected {
+        Span::styled("\u{258c}", Style::default().fg(th.accent))
+    } else {
+        Span::raw(" ")
     };
-    f.render_widget(Paragraph::new(content), area);
+    // A sub-issue shifts its whole row right under a hook, as Linear nests it.
+    let nest = if depth > 0 {
+        Span::styled(
+            format!("{}\u{2570} ", "  ".repeat(depth as usize - 1)),
+            Style::default().fg(th.border),
+        )
+    } else {
+        Span::raw("")
+    };
+    let mut spans = vec![
+        marker,
+        nest,
+        priority_glyph(issue.priority, th),
+        Span::raw("  "),
+        Span::styled(
+            fit(&issue.identifier, id_width),
+            Style::default().fg(th.muted),
+        ),
+        Span::raw("  "),
+        state_glyph(issue.state.as_ref(), th),
+        Span::raw(" "),
+    ];
+    let left_w: usize = spans.iter().map(|s| s.width()).sum();
+
+    // Parent reference on a sub-issue whose parent is not beside it.
+    let parent_hint = match (&issue.parent, depth) {
+        (Some(parent), 0) => format!(" \u{2190} {}", parent.identifier),
+        _ => String::new(),
+    };
+    let title_room = width.saturating_sub(left_w + right_w + 1);
+    let title = truncate(&issue.title, title_room.saturating_sub(parent_hint.width()));
+    let title_style = if selected {
+        Style::default().fg(th.text).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(th.text)
+    };
+    let title_w = title.width();
+    spans.push(Span::styled(title, title_style));
+    let hint = truncate(&parent_hint, title_room.saturating_sub(title_w));
+    let hint_w = hint.width();
+    spans.push(Span::styled(hint, Style::default().fg(th.muted)));
+    spans.push(Span::raw(
+        " ".repeat(width.saturating_sub(left_w + title_w + hint_w + right_w)),
+    ));
+    spans.extend(right);
+
+    if selected {
+        for span in &mut spans {
+            span.style = span.style.bg(th.selection_bg);
+        }
+    }
+    Line::from(spans)
 }

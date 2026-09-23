@@ -3,9 +3,11 @@ use ratatui::{
     layout::{Constraint, Flex, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState},
+    widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState},
 };
 
+use super::widgets::{initials, person_color, priority_glyph, state_glyph, user_name};
+use crate::api::types::Priority;
 use crate::app::{App, FilterKind, Popup};
 use crate::config::Theme;
 
@@ -30,15 +32,10 @@ fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     horizontal[0]
 }
 
-fn render_popup_list(
-    f: &mut Frame,
-    title: &str,
-    items: Vec<ListItem>,
-    popup_index: usize,
-    width: u16,
-    th: &Theme,
-) {
-    let height = (items.len() as u16 + 2).min(20);
+fn render_popup_list(f: &mut Frame, app: &mut App, title: &str, items: Vec<ListItem>, width: u16) {
+    let th = app.theme;
+    let height = (items.len() as u16 + 2).min(22).min(f.area().height);
+    let width = width.min(f.area().width.saturating_sub(2));
     let area = centered_rect(width, height, f.area());
 
     f.render_widget(Clear, area);
@@ -46,92 +43,141 @@ fn render_popup_list(
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(title.to_string())
-                .title_style(Style::default().fg(th.accent)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(th.border))
+                .title(Span::styled(
+                    format!(" {title} "),
+                    Style::default().fg(th.text).add_modifier(Modifier::BOLD),
+                ))
+                .title_bottom(Line::from(Span::styled(
+                    " 1-9 pick \u{00b7} Enter apply \u{00b7} Esc close ",
+                    Style::default().fg(th.muted),
+                ))),
         )
         .highlight_style(
             Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .fg(th.accent),
+                .bg(th.selection_bg)
+                .add_modifier(Modifier::BOLD),
         )
-        .highlight_symbol("> ");
+        .highlight_symbol("\u{258c}");
 
-    let mut state = ListState::default();
-    state.select(Some(popup_index));
+    let mut state = ListState::default().with_offset(app.popup_offset);
+    state.select(Some(app.popup_index));
     f.render_stateful_widget(list, area, &mut state);
+    app.popup_offset = state.offset();
+    app.popup_area = Rect {
+        x: area.x + 1,
+        y: area.y + 1,
+        width: area.width.saturating_sub(2),
+        height: area.height.saturating_sub(2),
+    };
 }
 
-fn numbered_item(index: usize, text: &str, is_current: bool, th: &Theme) -> ListItem<'static> {
-    ListItem::new(Line::from(vec![
-        Span::styled(format!("{}. ", index + 1), Style::default().fg(th.muted)),
-        Span::raw(text.to_string()),
-        if is_current {
-            Span::styled(" *", Style::default().fg(th.success))
+fn numbered_item(
+    index: usize,
+    lead: Vec<Span<'static>>,
+    text: &str,
+    is_current: bool,
+    th: &Theme,
+) -> ListItem<'static> {
+    let mut spans = vec![Span::styled(
+        if index < 9 {
+            format!("{} ", index + 1)
         } else {
-            Span::raw("")
+            "  ".to_string()
         },
-    ]))
+        Style::default().fg(th.muted),
+    )];
+    spans.extend(lead);
+    spans.push(Span::styled(text.to_string(), Style::default().fg(th.text)));
+    if is_current {
+        spans.push(Span::styled("  \u{2713}", Style::default().fg(th.success)));
+    }
+    ListItem::new(Line::from(spans))
 }
 
 fn draw_team_select(f: &mut Frame, app: &mut App) {
-    let th = &app.theme;
+    let th = app.theme;
     let items: Vec<ListItem> = app
         .teams
         .iter()
         .enumerate()
         .map(|(i, team)| {
+            let color = team
+                .color
+                .as_deref()
+                .and_then(crate::api::types::hex_color)
+                .unwrap_or(th.accent);
             numbered_item(
                 i,
-                &format!("{} [{}]", team.name, team.key),
+                vec![Span::styled("\u{25cf} ", Style::default().fg(color))],
+                &format!("{}  {}", team.name, team.key),
                 i == app.selected_team_index,
-                th,
+                &th,
             )
         })
         .collect();
-    render_popup_list(f, " Select Team ", items, app.popup_index, 40, th);
+    render_popup_list(f, app, "Switch team", items, 44);
 }
 
 fn draw_filter(f: &mut Frame, app: &mut App) {
-    let th = &app.theme;
+    let th = app.theme;
     let (title, items) = match app.filter_kind {
         FilterKind::Status => {
-            let mut items = vec![numbered_item(0, "All", app.filters.status.is_none(), th)];
+            let mut items = vec![numbered_item(
+                0,
+                vec![],
+                "Any status",
+                app.filters.status.is_none(),
+                &th,
+            )];
             for (i, state) in app.workflow_states.iter().enumerate() {
                 let is_current = app
                     .filters
                     .status
                     .as_ref()
                     .is_some_and(|s| s == &state.name);
-                items.push(numbered_item(i + 1, &state.name, is_current, th));
+                items.push(numbered_item(
+                    i + 1,
+                    vec![state_glyph(Some(state), &th), Span::raw(" ")],
+                    &state.name,
+                    is_current,
+                    &th,
+                ));
             }
-            (" Filter: Status ", items)
+            ("Filter \u{2014} status", items)
         }
         FilterKind::Priority => {
-            let labels = ["All", "Urgent", "High", "Medium", "Low", "None"];
-            let items: Vec<ListItem> = labels
-                .iter()
-                .enumerate()
-                .map(|(i, label)| {
-                    let is_current = if i == 0 {
-                        app.filters.priority.is_none()
-                    } else {
-                        app.filters.priority == Some(crate::api::types::Priority::from_index(i))
-                    };
-                    numbered_item(i, label, is_current, th)
-                })
-                .collect();
-            (" Filter: Priority ", items)
+            let mut items = vec![numbered_item(
+                0,
+                vec![],
+                "Any priority",
+                app.filters.priority.is_none(),
+                &th,
+            )];
+            for i in 1..=5 {
+                // Index 5 is the "no priority" row: Priority::from_index maps it to None.
+                let p = Priority::from_index(i);
+                items.push(numbered_item(
+                    i,
+                    vec![priority_glyph(p, &th), Span::raw(" ")],
+                    p.label(),
+                    app.filters.priority == Some(p),
+                    &th,
+                ));
+            }
+            ("Filter \u{2014} priority", items)
         }
     };
-    render_popup_list(f, title, items, app.popup_index, 35, th);
+    render_popup_list(f, app, title, items, 38);
 }
 
 fn draw_status_change(f: &mut Frame, app: &mut App) {
-    let th = &app.theme;
+    let th = app.theme;
     let current_state_id = app
         .focused_issue()
         .and_then(|i| i.state.as_ref())
-        .map(|s| s.id.as_str());
+        .map(|s| s.id.clone());
 
     let items: Vec<ListItem> = app
         .workflow_states
@@ -140,18 +186,18 @@ fn draw_status_change(f: &mut Frame, app: &mut App) {
         .map(|(i, state)| {
             numbered_item(
                 i,
+                vec![state_glyph(Some(state), &th), Span::raw(" ")],
                 &state.name,
-                current_state_id == Some(state.id.as_str()),
-                th,
+                current_state_id.as_deref() == Some(state.id.as_str()),
+                &th,
             )
         })
         .collect();
-    render_popup_list(f, " Change Status ", items, app.popup_index, 35, th);
+    render_popup_list(f, app, "Change status", items, 38);
 }
 
 fn draw_priority_change(f: &mut Frame, app: &mut App) {
-    use crate::api::types::Priority;
-    let th = &app.theme;
+    let th = app.theme;
     let current_pri = app.focused_issue().map(|i| i.priority);
     let priorities = [
         Priority::None,
@@ -163,35 +209,51 @@ fn draw_priority_change(f: &mut Frame, app: &mut App) {
     let items: Vec<ListItem> = priorities
         .iter()
         .enumerate()
-        .map(|(i, pri)| numbered_item(i, pri.label(), current_pri == Some(*pri), th))
+        .map(|(i, pri)| {
+            numbered_item(
+                i,
+                vec![priority_glyph(*pri, &th), Span::raw(" ")],
+                pri.label(),
+                current_pri == Some(*pri),
+                &th,
+            )
+        })
         .collect();
-    render_popup_list(f, " Change Priority ", items, app.popup_index, 30, th);
+    render_popup_list(f, app, "Change priority", items, 34);
 }
 
 fn draw_assignee_change(f: &mut Frame, app: &mut App) {
-    let th = &app.theme;
+    let th = app.theme;
     let current_assignee_id = app
         .focused_issue()
         .and_then(|i| i.assignee.as_ref())
-        .map(|a| a.id.as_str());
+        .map(|a| a.id.clone());
 
     let mut items = vec![numbered_item(
         0,
-        "Unassign",
+        vec![Span::styled("\u{25cc}  ", Style::default().fg(th.muted))],
+        "No assignee",
         current_assignee_id.is_none(),
-        th,
+        &th,
     )];
     for (i, member) in app.team_members.iter().enumerate() {
-        let display = member
-            .display_name
-            .as_deref()
-            .unwrap_or(member.name.as_str());
+        let name = user_name(member).to_string();
         items.push(numbered_item(
             i + 1,
-            display,
-            current_assignee_id == Some(member.id.as_str()),
-            th,
+            vec![
+                Span::styled(
+                    initials(&name),
+                    Style::default()
+                        .fg(ratatui::style::Color::Black)
+                        .bg(person_color(&name))
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(" "),
+            ],
+            &name,
+            current_assignee_id.as_deref() == Some(member.id.as_str()),
+            &th,
         ));
     }
-    render_popup_list(f, " Change Assignee ", items, app.popup_index, 40, th);
+    render_popup_list(f, app, "Assign to", items, 44);
 }

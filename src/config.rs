@@ -27,6 +27,15 @@ pub struct UiConfig {
     pub items_per_page: u32,
     #[serde(default)]
     pub theme: ThemeName,
+    /// Show the navigation sidebar. It hides itself on narrow terminals
+    /// regardless, so this is the preference, not the current state.
+    #[serde(default = "default_true")]
+    pub sidebar: bool,
+    #[serde(default = "default_sidebar_width")]
+    pub sidebar_width: u16,
+    /// How a list groups its issues out of the box.
+    #[serde(default)]
+    pub group_by: GroupByName,
 }
 
 impl Default for UiConfig {
@@ -35,12 +44,34 @@ impl Default for UiConfig {
             default_team: None,
             items_per_page: default_items_per_page(),
             theme: ThemeName::default(),
+            sidebar: default_true(),
+            sidebar_width: default_sidebar_width(),
+            group_by: GroupByName::default(),
         }
     }
 }
 
 fn default_items_per_page() -> u32 {
     50
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_sidebar_width() -> u16 {
+    26
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GroupByName {
+    #[default]
+    Status,
+    Assignee,
+    Priority,
+    Project,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
@@ -67,6 +98,18 @@ pub struct Theme {
     pub border: Color,
     pub highlight_fg: Color,
 
+    /// Background of the selected row. A tinted band reads far better than the
+    /// reverse-video block a terminal gives you by default, and it leaves the
+    /// row's own colours (status, priority, labels) legible instead of
+    /// inverting them into mud.
+    pub selection_bg: Color,
+    /// Background of a group header band and of the sidebar's active entry.
+    pub surface: Color,
+    /// Background behind inline code and fenced blocks.
+    pub code_bg: Color,
+    /// Background of a label chip.
+    pub chip_bg: Color,
+
     // Priority colors
     pub pri_urgent: Color,
     pub pri_high: Color,
@@ -85,16 +128,20 @@ impl Theme {
 
     fn dark() -> Self {
         Self {
-            accent: Color::Cyan,
-            secondary: Color::Magenta,
-            muted: Color::DarkGray,
+            accent: Color::Rgb(126, 138, 240),
+            secondary: Color::Rgb(180, 140, 255),
+            muted: Color::Rgb(110, 114, 126),
             warning: Color::Yellow,
             error: Color::Red,
             success: Color::Green,
             text: Color::White,
             text_dim: Color::Gray,
-            border: Color::White,
+            border: Color::Rgb(60, 62, 70),
             highlight_fg: Color::White,
+            selection_bg: Color::Rgb(40, 42, 54),
+            surface: Color::Rgb(28, 28, 32),
+            code_bg: Color::Rgb(38, 38, 44),
+            chip_bg: Color::Rgb(45, 45, 52),
             pri_urgent: Color::Red,
             pri_high: Color::Rgb(255, 165, 0),
             pri_medium: Color::Yellow,
@@ -112,8 +159,12 @@ impl Theme {
             success: Color::Green,
             text: Color::Black,
             text_dim: Color::DarkGray,
-            border: Color::DarkGray,
+            border: Color::Rgb(205, 205, 210),
             highlight_fg: Color::Black,
+            selection_bg: Color::Rgb(225, 228, 240),
+            surface: Color::Rgb(240, 240, 244),
+            code_bg: Color::Rgb(233, 233, 238),
+            chip_bg: Color::Rgb(228, 228, 234),
             pri_urgent: Color::Red,
             pri_high: Color::Rgb(200, 100, 0),
             pri_medium: Color::Rgb(180, 150, 0),
@@ -131,8 +182,12 @@ impl Theme {
             success: Color::Rgb(100, 220, 150),
             text: Color::Rgb(220, 230, 240),
             text_dim: Color::Rgb(140, 150, 170),
-            border: Color::Rgb(80, 100, 130),
+            border: Color::Rgb(55, 72, 96),
             highlight_fg: Color::Rgb(240, 245, 255),
+            selection_bg: Color::Rgb(30, 48, 70),
+            surface: Color::Rgb(21, 32, 46),
+            code_bg: Color::Rgb(28, 42, 60),
+            chip_bg: Color::Rgb(34, 50, 70),
             pri_urgent: Color::Rgb(255, 80, 80),
             pri_high: Color::Rgb(255, 165, 80),
             pri_medium: Color::Rgb(255, 220, 80),

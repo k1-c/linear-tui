@@ -3,6 +3,7 @@ mod app;
 mod auth;
 mod config;
 mod event;
+mod grouping;
 mod keys;
 mod logging;
 mod message;
@@ -367,10 +368,20 @@ async fn execute_request(client: &LinearClient, req: Request, per_page: u32) -> 
                 }
             }
         }
-        Request::Issues { team_id, after } => {
+        Request::Issues {
+            team_id,
+            after,
+            preset,
+        } => {
             let append = after.is_some();
-            match client.issues(&team_id, after.as_deref(), per_page).await {
-                Ok((issues, info)) => Message::Issues(Page::new(issues, info, append)),
+            match client
+                .issues(&team_id, preset.state_filter(), after.as_deref(), per_page)
+                .await
+            {
+                Ok((issues, info)) => Message::Issues {
+                    preset,
+                    page: Page::new(issues, info, append),
+                },
                 Err(e) => Message::Error(format!("Failed to load issues: {e}")),
             }
         }
@@ -388,6 +399,27 @@ async fn execute_request(client: &LinearClient, req: Request, per_page: u32) -> 
             {
                 Ok((issues, _)) => Message::SearchResults { term, issues },
                 Err(e) => Message::Error(format!("Search failed: {e}")),
+            }
+        }
+        Request::CustomViews => match client.custom_views().await {
+            Ok(views) => Message::CustomViews(views),
+            Err(e) => Message::Error(format!("Failed to load views: {e}")),
+        },
+        Request::Favorites => match client.favorites().await {
+            Ok(favorites) => Message::Favorites(favorites),
+            Err(e) => Message::Error(format!("Failed to load favorites: {e}")),
+        },
+        Request::ViewIssues { view_id, after } => {
+            let append = after.is_some();
+            match client
+                .custom_view_issues(&view_id, after.as_deref(), per_page)
+                .await
+            {
+                Ok((issues, info)) => Message::ViewIssues {
+                    view_id,
+                    page: Page::new(issues, info, append),
+                },
+                Err(e) => Message::Error(format!("Failed to load view issues: {e}")),
             }
         }
         Request::Projects { team_id, after } => {
