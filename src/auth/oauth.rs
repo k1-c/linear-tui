@@ -3,39 +3,40 @@ use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::Rng;
 use sha2::{Digest, Sha256};
 
-use super::server::start_callback_server;
+use super::server::{CALLBACK_PORTS, start_callback_server};
 use super::token::{OAuthTokens, TokenStore};
 
 const AUTHORIZE_URL: &str = "https://linear.app/oauth/authorize";
 const TOKEN_URL: &str = "https://api.linear.app/oauth/token";
 
-// Users must register their own OAuth app at https://linear.app/settings/api
-// and set these values via `linear-tui auth set-oauth`, environment variables, or config.
+/// linear-tui's own Linear application, registered as `k1-c/tui`.
+///
+/// Linear's PKCE flow makes `client_secret` optional, so this ships as a public
+/// client: only the id is baked in, and nothing secret travels in the binary.
+/// Anyone who would rather authorize against their own application can override
+/// it with `LINEAR_CLIENT_ID` or `auth.oauth_client_id`.
+const DEFAULT_CLIENT_ID: &str = "10a4dc40b91ad9015b7b95cf703a54e3";
+
+const SCOPES: &str = "read,write";
+
 fn client_id() -> Result<String> {
     if let Ok(id) = std::env::var("LINEAR_CLIENT_ID") {
         return Ok(id);
     }
     let config = crate::config::Config::load()?;
-    config.auth.oauth_client_id.ok_or_else(|| {
-        anyhow::anyhow!(
-            "OAuth client_id not configured.\n\
-             Register an OAuth app at https://linear.app/settings/api, then run:\n  \
-             linear-tui auth set-oauth <client-id> <client-secret>"
-        )
-    })
+    Ok(config
+        .auth
+        .oauth_client_id
+        .unwrap_or_else(|| DEFAULT_CLIENT_ID.to_string()))
 }
 
-fn client_secret() -> Result<String> {
+/// A secret is only involved when the user brought their own application —
+/// the bundled client is public and sends none.
+fn client_secret() -> Result<Option<String>> {
     if let Ok(secret) = std::env::var("LINEAR_CLIENT_SECRET") {
-        return Ok(secret);
+        return Ok(Some(secret));
     }
-    let config = crate::config::Config::load()?;
-    config.auth.oauth_client_secret.ok_or_else(|| {
-        anyhow::anyhow!(
-            "OAuth client_secret not configured.\n\
-             Run: linear-tui auth set-oauth <client-id> <client-secret>"
-        )
-    })
+    Ok(crate::config::Config::load()?.auth.oauth_client_secret)
 }
 
 fn generate_code_verifier() -> String {
@@ -54,6 +55,21 @@ fn generate_state() -> String {
     URL_SAFE_NO_PAD.encode(&random_bytes)
 }
 
+/// Percent-encode everything outside the unreserved set, so a value survives
+/// being embedded in the authorize URL's query string.
+fn percent_encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                out.push(byte as char);
+            }
+            _ => out.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    out
+}
+
 /// Run the full OAuth2 + PKCE login flow.
 pub async fn login(token_store: &TokenStore) -> Result<()> {
     let client_id = client_id()?;
@@ -61,86 +77,112 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
     let code_challenge = generate_code_challenge(&code_verifier);
     let state = generate_state();
 
-    // Start local callback server
+    // Bind the callback port first: Linear matches the redirect URI exactly, so
+    // the authorize URL cannot be built until the port is known.
     let (port, code_rx) = start_callback_server(state.clone()).await?;
     let redirect_uri = format!("http://localhost:{port}/callback");
 
-    // Build authorization URL
     let auth_url = format!(
-        "{AUTHORIZE_URL}?client_id={client_id}&response_type=code&redirect_uri={redirect_uri}&scope=read,write&state={state}&code_challenge={code_challenge}&code_challenge_method=S256",
+        "{AUTHORIZE_URL}?client_id={client_id}&response_type=code&redirect_uri={}&scope={SCOPES}&state={state}&code_challenge={code_challenge}&code_challenge_method=S256",
+        percent_encode(&redirect_uri),
     );
 
     tracing::info!(redirect_uri = %redirect_uri, "starting OAuth login flow");
-    println!("Opening browser for Linear authentication...");
-    open::that(&auth_url).context("Failed to open browser")?;
-    println!("Waiting for authorization...");
+    match open::that(&auth_url) {
+        Ok(()) => println!("Opening your browser to authorize linear-tui..."),
+        Err(e) => {
+            tracing::warn!(error = %e, "could not open a browser");
+            println!("Could not open a browser. Visit this URL to authorize:\n\n{auth_url}\n");
+        }
+    }
+    println!("Waiting for the response on {redirect_uri}");
 
-    // Wait for the callback
     let code = code_rx
         .await
-        .context("Failed to receive authorization code")?;
+        .context("Authorization finished without returning a code")?;
 
-    // Exchange code for tokens
     tracing::debug!("exchanging authorization code for tokens");
     let tokens = exchange_code(&code, &code_verifier, &redirect_uri).await?;
     token_store.save(&tokens)?;
 
     tracing::info!("OAuth login successful");
-    println!("Authentication successful!");
     Ok(())
 }
 
 async fn exchange_code(code: &str, code_verifier: &str, redirect_uri: &str) -> Result<OAuthTokens> {
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(TOKEN_URL)
-        .form(&[
-            ("grant_type", "authorization_code"),
-            ("client_id", &client_id()?),
-            ("client_secret", &client_secret()?),
-            ("code", code),
-            ("redirect_uri", redirect_uri),
-            ("code_verifier", code_verifier),
-        ])
-        .send()
-        .await
-        .context("Token exchange request failed")?;
-
-    if !resp.status().is_success() {
-        let body = resp.text().await.unwrap_or_default();
-        tracing::error!(body = %body, "token exchange failed");
-        anyhow::bail!("Token exchange failed: {body}");
+    let mut form = vec![
+        ("grant_type", "authorization_code".to_string()),
+        ("client_id", client_id()?),
+        ("code", code.to_string()),
+        ("redirect_uri", redirect_uri.to_string()),
+        ("code_verifier", code_verifier.to_string()),
+    ];
+    if let Some(secret) = client_secret()? {
+        form.push(("client_secret", secret));
     }
-
-    let token_resp: TokenResponse = resp.json().await?;
-    tracing::debug!("token exchange successful");
-    Ok(OAuthTokens::from_response(token_resp))
+    post_token(&form).await
 }
 
 pub async fn refresh_token(refresh_token: &str) -> Result<OAuthTokens> {
     tracing::debug!("refreshing OAuth token");
+    let mut form = vec![
+        ("grant_type", "refresh_token".to_string()),
+        ("client_id", client_id()?),
+        ("refresh_token", refresh_token.to_string()),
+    ];
+    if let Some(secret) = client_secret()? {
+        form.push(("client_secret", secret));
+    }
+
+    let mut tokens = post_token(&form).await?;
+    // A refresh response may leave the refresh token out, which means the old
+    // one stays valid. Losing it here would force a full re-login next time.
+    if tokens.refresh_token.is_empty() {
+        tokens.refresh_token = refresh_token.to_string();
+    }
+    Ok(tokens)
+}
+
+async fn post_token(form: &[(&str, String)]) -> Result<OAuthTokens> {
     let client = reqwest::Client::new();
     let resp = client
         .post(TOKEN_URL)
-        .form(&[
-            ("grant_type", "refresh_token"),
-            ("client_id", &client_id()?),
-            ("client_secret", &client_secret()?),
-            ("refresh_token", refresh_token),
-        ])
+        .form(form)
         .send()
         .await
-        .context("Token refresh request failed")?;
+        .context("Could not reach Linear's token endpoint")?;
 
-    if !resp.status().is_success() {
+    let status = resp.status();
+    if !status.is_success() {
         let body = resp.text().await.unwrap_or_default();
-        tracing::error!(body = %body, "token refresh failed");
-        anyhow::bail!("Token refresh failed: {body}");
+        tracing::error!(%status, body = %body, "token request failed");
+        anyhow::bail!("Linear rejected the token request ({status}): {body}");
     }
 
-    let token_resp: TokenResponse = resp.json().await?;
-    tracing::debug!("token refresh successful");
+    let token_resp: TokenResponse = resp
+        .json()
+        .await
+        .context("Linear returned a token response that could not be parsed")?;
     Ok(OAuthTokens::from_response(token_resp))
+}
+
+/// Human-readable summary of which application the flow will authorize against,
+/// for `auth status`.
+pub fn application_summary() -> Result<String> {
+    let id = client_id()?;
+    let origin = if std::env::var("LINEAR_CLIENT_ID").is_ok() {
+        "from LINEAR_CLIENT_ID"
+    } else if id == DEFAULT_CLIENT_ID {
+        "k1-c/tui, bundled"
+    } else {
+        "from config.toml"
+    };
+    Ok(format!("{id} ({origin})"))
+}
+
+/// The ports the callback server may listen on, for error messages and `auth status`.
+pub fn callback_ports() -> &'static [u16] {
+    &CALLBACK_PORTS
 }
 
 #[derive(serde::Deserialize)]
@@ -148,4 +190,43 @@ pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: Option<String>,
     pub expires_in: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn percent_encode_escapes_a_redirect_uri() {
+        assert_eq!(
+            percent_encode("http://localhost:53681/callback"),
+            "http%3A%2F%2Flocalhost%3A53681%2Fcallback"
+        );
+    }
+
+    #[test]
+    fn percent_encode_leaves_unreserved_characters_alone() {
+        assert_eq!(percent_encode("aZ0-._~"), "aZ0-._~");
+    }
+
+    #[test]
+    fn code_challenge_matches_the_rfc_7636_example() {
+        // RFC 7636 appendix B: this verifier hashes to this challenge.
+        assert_eq!(
+            generate_code_challenge("dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"),
+            "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+        );
+    }
+
+    #[test]
+    fn verifier_and_state_are_url_safe() {
+        for value in [generate_code_verifier(), generate_state()] {
+            assert!(
+                value
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'),
+                "not URL-safe: {value}"
+            );
+        }
+    }
 }
