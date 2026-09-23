@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-09-23
+
+### Documentation
+
+- Describe the sidebar, favorites, list display, and mouse
+
+### Features
+
+- **ui**: Rebuild navigation around a sidebar, favorites, and views
+
+
+
 ## [0.3.1] - 2026-09-23
 
 ### Bug Fixes
