@@ -45,6 +45,11 @@ impl Priority {
         }
     }
 
+    /// Index of this priority in the priority popup list (inverse of `from_index`).
+    pub fn as_index(self) -> usize {
+        self.as_u8() as usize
+    }
+
     pub fn from_index(index: usize) -> Self {
         match index {
             1 => Self::Urgent,
@@ -159,6 +164,12 @@ pub struct Issue {
     pub comments: Option<Connection<Comment>>,
     pub project: Option<Project>,
     pub cycle: Option<Cycle>,
+    /// Permalink to the issue on linear.app.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Branch name Linear suggests for this issue.
+    #[serde(default, rename = "branchName")]
+    pub branch_name: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -206,6 +217,8 @@ pub struct Project {
     pub target_date: Option<String>,
     pub lead: Option<User>,
     pub issues: Option<Connection<Issue>>,
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 #[allow(dead_code)]
@@ -278,6 +291,37 @@ mod tests {
             resp.issues.page_info.end_cursor.as_deref(),
             Some("cursor-abc123")
         );
+    }
+
+    #[test]
+    fn deserialize_issue_url_and_branch_name() {
+        #[derive(Deserialize)]
+        struct Resp {
+            issues: Connection<Issue>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("issues.json")).unwrap();
+        let issue = &resp.issues.nodes[0];
+        assert_eq!(
+            issue.url.as_deref(),
+            Some("https://linear.app/acme/issue/ENG-100")
+        );
+        assert_eq!(
+            issue.branch_name.as_deref(),
+            Some("test-user/eng-100-fix-login-bug")
+        );
+    }
+
+    /// `url`/`branchName` are absent from older cached payloads; they must not
+    /// break deserialization.
+    #[test]
+    fn deserialize_issue_without_url_fields() {
+        let issue: Issue = serde_json::from_str(
+            r#"{"id":"i1","identifier":"ENG-1","title":"t","state":null,"assignee":null,
+                "description":null,"comments":null,"project":null,"cycle":null}"#,
+        )
+        .unwrap();
+        assert!(issue.url.is_none());
+        assert!(issue.branch_name.is_none());
     }
 
     #[test]

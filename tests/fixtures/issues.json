@@ -7,12 +7,31 @@
         "title": "Fix login bug",
         "priority": 2,
         "priorityLabel": "High",
-        "state": { "id": "state-001", "name": "In Progress", "color": "#f2c94c", "type": "started" },
-        "assignee": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
-        "labels": { "nodes": [{ "id": "label-001", "name": "bug", "color": "#eb5757" }] },
+        "state": {
+          "id": "state-001",
+          "name": "In Progress",
+          "color": "#f2c94c",
+          "type": "started"
+        },
+        "assignee": {
+          "id": "user-001",
+          "name": "Test User",
+          "displayName": "test.user"
+        },
+        "labels": {
+          "nodes": [
+            {
+              "id": "label-001",
+              "name": "bug",
+              "color": "#eb5757"
+            }
+          ]
+        },
         "description": "Some description",
         "createdAt": "2026-01-01T00:00:00.000Z",
-        "updatedAt": "2026-01-02T00:00:00.000Z"
+        "updatedAt": "2026-01-02T00:00:00.000Z",
+        "url": "https://linear.app/acme/issue/ENG-100",
+        "branchName": "test-user/eng-100-fix-login-bug"
       },
       {
         "id": "issue-002",
@@ -20,14 +39,26 @@
         "title": "Null fields issue",
         "priority": 0,
         "priorityLabel": "No priority",
-        "state": { "id": "state-002", "name": "Canceled", "color": "#95a2b3", "type": "canceled" },
+        "state": {
+          "id": "state-002",
+          "name": "Canceled",
+          "color": "#95a2b3",
+          "type": "canceled"
+        },
         "assignee": null,
-        "labels": { "nodes": [] },
+        "labels": {
+          "nodes": []
+        },
         "description": null,
         "createdAt": "2026-01-01T00:00:00.000Z",
-        "updatedAt": "2026-01-02T00:00:00.000Z"
+        "updatedAt": "2026-01-02T00:00:00.000Z",
+        "url": "https://linear.app/acme/issue/ENG-101",
+        "branchName": "test-user/eng-101-null-fields-issue"
       }
     ],
-    "pageInfo": { "hasNextPage": true, "endCursor": "cursor-abc123" }
+    "pageInfo": {
+      "hasNextPage": true,
+      "endCursor": "cursor-abc123"
+    }
   }
 }

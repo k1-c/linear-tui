@@ -5,6 +5,27 @@ use super::types::*;
 
 const API_URL: &str = "https://api.linear.app/graphql";
 
+/// Fields selected for every issue, list row or detail alike, so that an issue
+/// coming from any query is equally usable everywhere in the UI.
+const ISSUE_FIELDS: &str = r#"
+    id
+    identifier
+    title
+    priority
+    priorityLabel
+    url
+    branchName
+    state { id name color type }
+    assignee { id name displayName }
+    labels { nodes { id name color } }
+    description
+    createdAt
+    updatedAt
+"#;
+
+/// Default page size for the sub-lists that hang off a project or cycle.
+const SUBLIST_PAGE_SIZE: u32 = 100;
+
 pub struct LinearClient {
     http: reqwest::Client,
     token: String,
@@ -124,34 +145,20 @@ impl LinearClient {
             "after": after,
             "first": first,
         });
-        let resp: Resp = self
-            .query(
-                r#"query($teamId: ID!, $after: String, $first: Int!) {
-                    issues(
-                        filter: { team: { id: { eq: $teamId } } }
-                        first: $first
-                        after: $after
-                        orderBy: updatedAt
-                    ) {
-                        nodes {
-                            id
-                            identifier
-                            title
-                            priority
-                            priorityLabel
-                            state { id name color type }
-                            assignee { id name displayName }
-                            labels { nodes { id name color } }
-                            description
-                            createdAt
-                            updatedAt
-                        }
-                        pageInfo { hasNextPage endCursor }
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
+        let query = format!(
+            r#"query($teamId: ID!, $after: String, $first: Int!) {{
+                issues(
+                    filter: {{ team: {{ id: {{ eq: $teamId }} }} }}
+                    first: $first
+                    after: $after
+                    orderBy: updatedAt
+                ) {{
+                    nodes {{ {ISSUE_FIELDS} }}
+                    pageInfo {{ hasNextPage endCursor }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
         Ok((resp.issues.nodes, resp.issues.page_info))
     }
 
@@ -161,36 +168,24 @@ impl LinearClient {
             issue: Issue,
         }
         let variables = serde_json::json!({ "id": issue_id });
-        let resp: Resp = self
-            .query(
-                r#"query($id: String!) {
-                    issue(id: $id) {
-                        id
-                        identifier
-                        title
-                        priority
-                        priorityLabel
-                        state { id name color type }
-                        assignee { id name displayName }
-                        labels { nodes { id name color } }
-                        description
-                        createdAt
-                        updatedAt
-                        comments {
-                            nodes {
-                                id
-                                body
-                                createdAt
-                                user { id name displayName }
-                            }
-                        }
-                        project { id name }
-                        cycle { id name number }
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
+        let query = format!(
+            r#"query($id: String!) {{
+                issue(id: $id) {{
+                    {ISSUE_FIELDS}
+                    comments {{
+                        nodes {{
+                            id
+                            body
+                            createdAt
+                            user {{ id name displayName }}
+                        }}
+                    }}
+                    project {{ id name url }}
+                    cycle {{ id name number }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
         Ok(resp.issue)
     }
 
@@ -265,38 +260,57 @@ impl LinearClient {
             "after": after,
             "first": first,
         });
-        let resp: Resp = self
-            .query(
-                r#"query($userId: ID!, $after: String, $first: Int!) {
-                    issues(
-                        filter: { assignee: { id: { eq: $userId } }, completedAt: { null: true } }
-                        first: $first
-                        after: $after
-                        orderBy: updatedAt
-                    ) {
-                        nodes {
-                            id
-                            identifier
-                            title
-                            priority
-                            priorityLabel
-                            state { id name color type }
-                            assignee { id name displayName }
-                            labels { nodes { id name color } }
-                            description
-                            createdAt
-                            updatedAt
-                        }
-                        pageInfo { hasNextPage endCursor }
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
+        let query = format!(
+            r#"query($userId: ID!, $after: String, $first: Int!) {{
+                issues(
+                    filter: {{ assignee: {{ id: {{ eq: $userId }} }} }}
+                    first: $first
+                    after: $after
+                    orderBy: updatedAt
+                ) {{
+                    nodes {{ {ISSUE_FIELDS} }}
+                    pageInfo {{ hasNextPage endCursor }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
         Ok((resp.issues.nodes, resp.issues.page_info))
     }
 
-    pub async fn projects(&self, team_id: &str) -> Result<Vec<Project>> {
+    /// Workspace-wide full-text search, optionally scoped to one team.
+    pub async fn search_issues(
+        &self,
+        term: &str,
+        team_id: Option<&str>,
+        first: u32,
+    ) -> Result<(Vec<Issue>, PageInfo)> {
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(rename = "searchIssues")]
+            search_issues: Connection<Issue>,
+        }
+        let variables = serde_json::json!({
+            "term": term,
+            "teamId": team_id,
+            "first": first,
+        });
+        let query = format!(
+            r#"query($term: String!, $teamId: String, $first: Int!) {{
+                searchIssues(term: $term, teamId: $teamId, first: $first) {{
+                    nodes {{ {ISSUE_FIELDS} }}
+                    pageInfo {{ hasNextPage endCursor }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
+        Ok((resp.search_issues.nodes, resp.search_issues.page_info))
+    }
+
+    pub async fn projects(
+        &self,
+        team_id: &str,
+        after: Option<&str>,
+    ) -> Result<(Vec<Project>, PageInfo)> {
         #[derive(Deserialize)]
         struct TeamResp {
             team: TeamWithProjects,
@@ -305,12 +319,16 @@ impl LinearClient {
         struct TeamWithProjects {
             projects: Connection<Project>,
         }
-        let variables = serde_json::json!({ "id": team_id });
+        let variables = serde_json::json!({
+            "id": team_id,
+            "after": after,
+            "first": SUBLIST_PAGE_SIZE,
+        });
         let resp: TeamResp = self
             .query(
-                r#"query($id: String!) {
+                r#"query($id: String!, $after: String, $first: Int!) {
                     team(id: $id) {
-                        projects {
+                        projects(first: $first, after: $after) {
                             nodes {
                                 id
                                 name
@@ -318,18 +336,24 @@ impl LinearClient {
                                 progress
                                 startDate
                                 targetDate
+                                url
                                 lead { id name displayName }
                             }
+                            pageInfo { hasNextPage endCursor }
                         }
                     }
                 }"#,
                 Some(variables),
             )
             .await?;
-        Ok(resp.team.projects.nodes)
+        Ok((resp.team.projects.nodes, resp.team.projects.page_info))
     }
 
-    pub async fn project_issues(&self, project_id: &str) -> Result<Vec<Issue>> {
+    pub async fn project_issues(
+        &self,
+        project_id: &str,
+        after: Option<&str>,
+    ) -> Result<(Vec<Issue>, PageInfo)> {
         #[derive(Deserialize)]
         struct Resp {
             project: ProjectWithIssues,
@@ -338,49 +362,48 @@ impl LinearClient {
         struct ProjectWithIssues {
             issues: Connection<Issue>,
         }
-        let variables = serde_json::json!({ "id": project_id });
-        let resp: Resp = self
-            .query(
-                r#"query($id: String!) {
-                    project(id: $id) {
-                        issues {
-                            nodes {
-                                id
-                                identifier
-                                title
-                                priority
-                                priorityLabel
-                                state { id name color type }
-                                assignee { id name displayName }
-                                labels { nodes { id name color } }
-                                description
-                                createdAt
-                                updatedAt
-                            }
-                        }
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
-        Ok(resp.project.issues.nodes)
+        let variables = serde_json::json!({
+            "id": project_id,
+            "after": after,
+            "first": SUBLIST_PAGE_SIZE,
+        });
+        let query = format!(
+            r#"query($id: String!, $after: String, $first: Int!) {{
+                project(id: $id) {{
+                    issues(first: $first, after: $after) {{
+                        nodes {{ {ISSUE_FIELDS} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
+        Ok((resp.project.issues.nodes, resp.project.issues.page_info))
     }
 
-    pub async fn cycles(&self, team_id: &str) -> Result<Vec<super::types::Cycle>> {
+    pub async fn cycles(
+        &self,
+        team_id: &str,
+        after: Option<&str>,
+    ) -> Result<(Vec<Cycle>, PageInfo)> {
         #[derive(Deserialize)]
         struct TeamResp {
             team: TeamWithCycles,
         }
         #[derive(Deserialize)]
         struct TeamWithCycles {
-            cycles: Connection<super::types::Cycle>,
+            cycles: Connection<Cycle>,
         }
-        let variables = serde_json::json!({ "id": team_id });
+        let variables = serde_json::json!({
+            "id": team_id,
+            "after": after,
+            "first": SUBLIST_PAGE_SIZE,
+        });
         let resp: TeamResp = self
             .query(
-                r#"query($id: String!) {
+                r#"query($id: String!, $after: String, $first: Int!) {
                     team(id: $id) {
-                        cycles(orderBy: createdAt) {
+                        cycles(orderBy: createdAt, first: $first, after: $after) {
                             nodes {
                                 id
                                 name
@@ -389,16 +412,21 @@ impl LinearClient {
                                 endsAt
                                 progress
                             }
+                            pageInfo { hasNextPage endCursor }
                         }
                     }
                 }"#,
                 Some(variables),
             )
             .await?;
-        Ok(resp.team.cycles.nodes)
+        Ok((resp.team.cycles.nodes, resp.team.cycles.page_info))
     }
 
-    pub async fn cycle_issues(&self, cycle_id: &str) -> Result<Vec<Issue>> {
+    pub async fn cycle_issues(
+        &self,
+        cycle_id: &str,
+        after: Option<&str>,
+    ) -> Result<(Vec<Issue>, PageInfo)> {
         #[derive(Deserialize)]
         struct Resp {
             cycle: CycleWithIssues,
@@ -407,32 +435,23 @@ impl LinearClient {
         struct CycleWithIssues {
             issues: Connection<Issue>,
         }
-        let variables = serde_json::json!({ "id": cycle_id });
-        let resp: Resp = self
-            .query(
-                r#"query($id: String!) {
-                    cycle(id: $id) {
-                        issues {
-                            nodes {
-                                id
-                                identifier
-                                title
-                                priority
-                                priorityLabel
-                                state { id name color type }
-                                assignee { id name displayName }
-                                labels { nodes { id name color } }
-                                description
-                                createdAt
-                                updatedAt
-                            }
-                        }
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
-        Ok(resp.cycle.issues.nodes)
+        let variables = serde_json::json!({
+            "id": cycle_id,
+            "after": after,
+            "first": SUBLIST_PAGE_SIZE,
+        });
+        let query = format!(
+            r#"query($id: String!, $after: String, $first: Int!) {{
+                cycle(id: $id) {{
+                    issues(first: $first, after: $after) {{
+                        nodes {{ {ISSUE_FIELDS} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
+        Ok((resp.cycle.issues.nodes, resp.cycle.issues.page_info))
     }
 
     // --- Mutations ---
@@ -531,5 +550,53 @@ impl LinearClient {
             )
             .await?;
         Ok(())
+    }
+
+    /// Create an issue and return it, fully populated, for optimistic insertion.
+    pub async fn create_issue(
+        &self,
+        team_id: &str,
+        title: &str,
+        description: Option<&str>,
+        priority: u8,
+    ) -> Result<Issue> {
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(rename = "issueCreate")]
+            issue_create: IssueCreatePayload,
+        }
+        #[derive(Deserialize)]
+        struct IssueCreatePayload {
+            success: bool,
+            issue: Option<Issue>,
+        }
+        let variables = serde_json::json!({
+            "teamId": team_id,
+            "title": title,
+            "description": description,
+            "priority": priority,
+        });
+        let query = format!(
+            r#"mutation($teamId: String!, $title: String!, $description: String, $priority: Int) {{
+                issueCreate(
+                    input: {{
+                        teamId: $teamId
+                        title: $title
+                        description: $description
+                        priority: $priority
+                    }}
+                ) {{
+                    success
+                    issue {{ {ISSUE_FIELDS} }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
+        if !resp.issue_create.success {
+            anyhow::bail!("Linear rejected the issue");
+        }
+        resp.issue_create
+            .issue
+            .context("issueCreate returned no issue")
     }
 }
