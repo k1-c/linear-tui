@@ -15,6 +15,9 @@ readme = "README.md"
 # TUI
 ratatui = "0.29"
 crossterm = "0.28"
+# Already in the tree through ratatui; used directly to truncate titles by
+# display width, since CJK text takes two cells per character.
+unicode-width = "0.2"
 
 # Async
 tokio = { version = "1", features = ["full"] }

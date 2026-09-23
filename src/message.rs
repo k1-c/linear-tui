@@ -5,6 +5,7 @@
 //! thread never awaits a network call, so input and animation stay responsive.
 
 use crate::api::types::*;
+use crate::grouping::Preset;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Request {
@@ -16,6 +17,10 @@ pub enum Request {
     Issues {
         team_id: String,
         after: Option<String>,
+        /// Which slice to fetch. Linear filters by workflow category on the
+        /// server, so Active means every active issue, not the active ones
+        /// among the latest page.
+        preset: Preset,
     },
     MyIssues {
         user_id: String,
@@ -25,6 +30,17 @@ pub enum Request {
     Search {
         term: String,
         team_id: Option<String>,
+    },
+    /// The saved views the user can open. Fetched once at startup, because the
+    /// sidebar shows them whatever destination is on screen.
+    CustomViews,
+    /// The user's Favorites, for the sidebar.
+    Favorites,
+    /// One saved view's issues. Linear evaluates the view's filter, so this is
+    /// a plain page request rather than a filter rebuilt on the client.
+    ViewIssues {
+        view_id: String,
+        after: Option<String>,
     },
     Projects {
         team_id: String,
@@ -98,11 +114,22 @@ pub enum Message {
         states: Vec<WorkflowState>,
         members: Vec<User>,
     },
-    Issues(Page<Issue>),
+    Issues {
+        /// Echoed back so a page fetched for another preset can be dropped.
+        preset: Preset,
+        page: Page<Issue>,
+    },
     MyIssues(Page<Issue>),
     SearchResults {
         term: String,
         issues: Vec<Issue>,
+    },
+    CustomViews(Vec<CustomView>),
+    Favorites(Vec<Favorite>),
+    ViewIssues {
+        /// Echoed back so a late page cannot be filed under the wrong view.
+        view_id: String,
+        page: Page<Issue>,
     },
     Projects(Page<Project>),
     Cycles(Page<Cycle>),

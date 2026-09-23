@@ -1,0 +1,65 @@
+{
+  "issue": {
+    "id": "issue-002",
+    "identifier": "ENG-157",
+    "title": "Merge the dashboard and the report",
+    "priority": 2,
+    "priorityLabel": "High",
+    "estimate": 3,
+    "dueDate": "2026-10-01",
+    "state": {
+      "id": "state-001",
+      "name": "In Progress",
+      "color": "#f2c94c",
+      "type": "started",
+      "position": 2
+    },
+    "assignee": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
+    "creator": { "id": "user-002", "name": "Other Person", "displayName": "other" },
+    "labels": { "nodes": [ { "id": "label-1", "name": "frontend", "color": "#5e6ad2" } ] },
+    "parent": {
+      "id": "issue-001",
+      "identifier": "ENG-151",
+      "title": "Polish the dialog UI",
+      "state": { "id": "state-001", "name": "In Progress", "color": "#f2c94c", "type": "started" }
+    },
+    "children": {
+      "nodes": [
+        {
+          "id": "issue-003",
+          "identifier": "ENG-160",
+          "title": "Child",
+          "state": { "id": "state-9", "name": "Done", "color": "#5e6ad2", "type": "completed" }
+        }
+      ]
+    },
+    "description": "**Bold** and `code`",
+    "createdAt": "2026-01-01T00:00:00.000Z",
+    "updatedAt": "2026-01-02T00:00:00.000Z",
+    "comments": {
+      "nodes": [
+        {
+          "id": "comment-001",
+          "body": "Root comment",
+          "createdAt": "2026-01-01T12:00:00.000Z",
+          "editedAt": null,
+          "user": { "id": "user-001", "name": "Test User", "displayName": "test.user" },
+          "parent": null
+        },
+        {
+          "id": "comment-002",
+          "body": "A reply",
+          "createdAt": "2026-01-01T13:00:00.000Z",
+          "editedAt": "2026-01-01T13:05:00.000Z",
+          "user": { "id": "user-002", "name": "Other Person", "displayName": "other" },
+          "parent": { "id": "comment-001" }
+        }
+      ]
+    },
+    "project": { "id": "project-001", "name": "Q1 Release", "color": "#26b5ce", "state": "started" },
+    "projectMilestone": { "id": "ms-1", "name": "Beta" },
+    "cycle": { "id": "cycle-001", "name": null, "number": 3 },
+    "url": "https://linear.app/acme/issue/ENG-157",
+    "branchName": "test-user/eng-157"
+  }
+}

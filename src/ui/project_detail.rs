@@ -1,108 +1,90 @@
+//! A project's page: its summary card over its issues, grouped like any list.
+
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Row, Table},
+    widgets::Paragraph,
 };
 
-use super::issue_list::issue_row;
+use super::issue_list::{draw_list, draw_toolbar};
+use super::project_list::{health, project_state_color};
+use super::widgets::{person, progress_bar, short_date, truncate};
+use crate::api::types::hex_color;
 use crate::app::App;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    let Some(project) = &app.current_project else {
+    let Some(project) = app.current_project.clone() else {
         return;
     };
-    let th = &app.theme;
-
+    let th = app.theme;
     let chunks = Layout::vertical([
-        Constraint::Length(3), // project info
-        Constraint::Min(0),    // issues table
-        Constraint::Length(1), // footer
+        Constraint::Length(4), // summary
+        Constraint::Length(1), // toolbar
+        Constraint::Length(1), // gap
+        Constraint::Min(0),    // issues
     ])
     .split(area);
 
-    // Project info
-    let state = project.state.as_deref().unwrap_or("-");
-    let progress = project
-        .progress
-        .map(|p| format!("{:.0}%", p * 100.0))
-        .unwrap_or_else(|| "-".to_string());
-    let lead = project
-        .lead
-        .as_ref()
-        .and_then(|u| u.display_name.as_deref().or(Some(u.name.as_str())))
-        .unwrap_or("-");
+    let color = project
+        .color
+        .as_deref()
+        .and_then(hex_color)
+        .unwrap_or_else(|| project_state_color(project.state.as_deref()));
+    let width = chunks[0].width as usize;
+    let progress = project.progress.unwrap_or(0.0);
 
-    let meta = Paragraph::new(vec![Line::from(vec![
-        Span::styled(" Status: ", Style::default().fg(th.text_dim)),
-        Span::styled(state, Style::default().fg(th.warning)),
-        Span::raw("    "),
-        Span::styled("Progress: ", Style::default().fg(th.text_dim)),
-        Span::styled(progress, Style::default().fg(th.success)),
-        Span::raw("    "),
-        Span::styled("Lead: ", Style::default().fg(th.text_dim)),
-        Span::styled(lead, Style::default().fg(th.accent)),
-    ])])
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title(format!(" {} ", project.name))
-            .title_style(Style::default().fg(th.accent).add_modifier(Modifier::BOLD)),
-    );
-    f.render_widget(meta, chunks[0]);
-
-    // Issues table
-    let loading = if app.loading() {
-        format!(" ({} Loading...)", app.spinner_symbol())
-    } else {
-        String::new()
-    };
-    let rows: Vec<Row> = app
-        .project_issues
-        .iter()
-        .map(|issue| issue_row(issue, th))
-        .collect();
-
-    let header = Row::new(vec!["ID", "Title", "Status", "Priority", "Assignee"])
-        .style(Style::default().fg(th.accent).add_modifier(Modifier::BOLD));
-
-    let widths = [
-        Constraint::Length(10),
-        Constraint::Min(20),
-        Constraint::Length(14),
-        Constraint::Length(10),
-        Constraint::Length(16),
+    let mut meta = vec![
+        Span::styled(
+            format!(" {} ", project.state.as_deref().unwrap_or("-")),
+            Style::default().fg(project_state_color(project.state.as_deref())),
+        ),
+        Span::styled("\u{00b7} ", Style::default().fg(th.muted)),
     ];
+    meta.extend(progress_bar(progress, 16, color, &th));
+    meta.push(Span::styled(
+        format!(" {:.0}%  \u{00b7}  ", progress * 100.0),
+        Style::default().fg(th.text_dim),
+    ));
+    let h = health(&project, &th);
+    if !h.content.is_empty() {
+        meta.push(h);
+        meta.push(Span::styled("  \u{00b7}  ", Style::default().fg(th.muted)));
+    }
+    meta.push(Span::styled("Lead ", Style::default().fg(th.muted)));
+    meta.extend(person(project.lead.as_ref(), &th));
+    meta.push(Span::styled(
+        format!(
+            "  \u{00b7}  {} \u{2192} {}",
+            short_date(project.start_date.as_deref()),
+            short_date(project.target_date.as_deref())
+        ),
+        Style::default().fg(th.muted),
+    ));
 
-    let table = Table::new(rows, widths)
-        .header(header)
-        .block(Block::default().borders(Borders::ALL).title(format!(
-            " Issues ({}){}",
-            app.project_issues.len(),
-            loading
-        )))
-        .row_highlight_style(
-            Style::default()
-                .add_modifier(Modifier::REVERSED)
-                .fg(th.highlight_fg),
-        )
-        .highlight_symbol(" > ");
+    let lines = vec![
+        Line::from(vec![
+            Span::styled(" \u{25a3} ", Style::default().fg(color)),
+            Span::styled(
+                project.name.clone(),
+                Style::default().fg(th.text).add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(meta),
+        Line::from(Span::styled(
+            format!(
+                " {}",
+                truncate(
+                    project.description.as_deref().unwrap_or(""),
+                    width.saturating_sub(2)
+                )
+            ),
+            Style::default().fg(th.text_dim),
+        )),
+    ];
+    f.render_widget(Paragraph::new(lines), chunks[0]);
 
-    app.list_viewport = chunks[1].height.saturating_sub(3);
-    app.tables
-        .project_issues
-        .select(Some(app.selected_project_issue_index));
-    f.render_stateful_widget(table, chunks[1], &mut app.tables.project_issues);
-
-    // Footer
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled(" Esc/q", Style::default().fg(th.accent)),
-        Span::raw(":back "),
-        Span::styled("j/k", Style::default().fg(th.accent)),
-        Span::raw(":move "),
-        Span::styled("Enter", Style::default().fg(th.accent)),
-        Span::raw(":detail "),
-    ]));
-    f.render_widget(footer, chunks[2]);
+    draw_toolbar(f, app, chunks[1]);
+    draw_list(f, app, chunks[3]);
 }

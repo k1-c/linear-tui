@@ -1,0 +1,37 @@
+{
+  "favorites": {
+    "nodes": [
+      {
+        "id": "fav-1", "type": "project", "title": "Q1 Release", "url": "https://linear.app/acme/project/q1",
+        "color": "#26b5ce", "sortOrder": 1, "parent": null, "folderName": null,
+        "predefinedViewType": null, "predefinedViewTeam": null, "customView": null, "issue": null,
+        "project": { "id": "project-001", "name": "Q1 Release", "state": "started", "color": "#26b5ce", "progress": 0.4, "lead": null },
+        "cycle": null
+      },
+      {
+        "id": "fav-2", "type": "customView", "title": "Today's issues", "url": "https://linear.app/acme/view/x",
+        "color": "#f2994a", "sortOrder": 2, "parent": null, "folderName": null,
+        "predefinedViewType": null, "predefinedViewTeam": null,
+        "customView": { "id": "view-001" }, "issue": null, "project": null, "cycle": null
+      },
+      {
+        "id": "fav-3", "type": "folder", "title": null, "url": null, "color": null, "sortOrder": 3,
+        "parent": null, "folderName": "Ops"
+      },
+      {
+        "id": "fav-4", "type": "issue", "title": "Fix login bug", "url": "https://linear.app/acme/issue/ENG-100",
+        "sortOrder": 1, "parent": { "id": "fav-3" },
+        "issue": { "id": "issue-001", "identifier": "ENG-100", "title": "Fix login bug",
+                   "state": { "id": "state-001", "name": "In Progress", "color": "#f2c94c", "type": "started" } }
+      },
+      {
+        "id": "fav-5", "type": "predefinedView", "title": "Projects", "sortOrder": 5,
+        "predefinedViewType": "projects", "predefinedViewTeam": null
+      },
+      {
+        "id": "fav-6", "type": "document", "title": "Onboarding doc", "url": "https://linear.app/acme/document/y",
+        "sortOrder": 6
+      }
+    ]
+  }
+}

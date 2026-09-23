@@ -1,7 +1,7 @@
 use std::time::Duration;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyEventKind, MouseEventKind};
+use crossterm::event::{self, Event, KeyEventKind, MouseButton, MouseEventKind};
 
 use crate::app::App;
 use crate::keys::handle_key;
@@ -26,8 +26,9 @@ pub fn poll_and_handle(app: &mut App) -> Result<bool> {
             }
             Event::Mouse(mouse) => {
                 match mouse.kind {
-                    MouseEventKind::ScrollDown => app.scroll_list_or_detail(1),
-                    MouseEventKind::ScrollUp => app.scroll_list_or_detail(-1),
+                    MouseEventKind::ScrollDown => app.wheel(mouse.column, mouse.row, 1),
+                    MouseEventKind::ScrollUp => app.wheel(mouse.column, mouse.row, -1),
+                    MouseEventKind::Down(MouseButton::Left) => app.click(mouse.column, mouse.row),
                     _ => continue,
                 }
                 dirty = true;

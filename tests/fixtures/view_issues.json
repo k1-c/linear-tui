@@ -1,0 +1,24 @@
+{
+  "customView": {
+    "issues": {
+      "nodes": [
+        {
+          "id": "issue-001",
+          "identifier": "ENG-100",
+          "title": "Fix login bug",
+          "priority": 1,
+          "state": { "id": "state-001", "name": "In Progress", "color": "#f2c94c", "type": "started", "position": 2 },
+          "assignee": null,
+          "creator": null,
+          "labels": { "nodes": [] },
+          "project": null,
+          "parent": null,
+          "description": null,
+          "createdAt": "2026-01-01T00:00:00.000Z",
+          "updatedAt": "2026-01-02T00:00:00.000Z"
+        }
+      ],
+      "pageInfo": { "hasNextPage": true, "endCursor": "view-cursor-1" }
+    }
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "customViews": {
+    "nodes": [
+      {
+        "id": "view-001",
+        "name": "Today's issues",
+        "description": "Due today",
+        "color": "#f2994a",
+        "shared": false,
+        "modelName": "Issue",
+        "team": null,
+        "owner": { "id": "user-001", "name": "Test User", "displayName": "test.user" }
+      },
+      {
+        "id": "view-002",
+        "name": "Overdue",
+        "description": null,
+        "color": null,
+        "shared": true,
+        "modelName": "Project",
+        "team": { "id": "team-001", "name": "Engineering", "key": "ENG", "color": "#5e6ad2", "cyclesEnabled": false },
+        "owner": { "id": "user-001", "name": "Test User", "displayName": "test.user" }
+      }
+      ,{ "id": "view-003", "name": "Legacy", "shared": true }
+    ]
+  }
+}
