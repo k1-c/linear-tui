@@ -50,6 +50,9 @@ cd linear-tui
 cargo install --path .
 ```
 
+Building needs only a Rust toolchain — see [Development](#development) for the
+mise setup.
+
 ## Getting Started
 
 Just run it:
@@ -212,6 +215,26 @@ theme = "default"            # "default" | "light" | "ocean"
 | `default` | Dark theme with cyan accents |
 | `light` | Light background with blue accents |
 | `ocean` | Dark blue palette with soft colors |
+
+## Development
+
+The Rust toolchain is pinned in `mise.toml`, so [mise](https://mise.jdx.dev/)
+is all you need to install:
+
+```sh
+git clone https://github.com/k1-c/linear-tui.git
+cd linear-tui
+mise install       # fetch the pinned toolchain
+mise run dev       # run the TUI from source
+mise run verify    # format, lint, test, build
+```
+
+`mise run fmt`, `lint`, `test`, and `build` run the steps individually. Without
+mise, any stable rustup toolchain works — `cargo run`, `cargo test`, and the
+rest behave the same.
+
+There is nothing else to install: TLS goes through rustls, so no system OpenSSL
+or `pkg-config` is involved.
 
 ## License
 

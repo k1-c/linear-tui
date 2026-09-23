@@ -6,10 +6,15 @@ allowed-tools: Bash, Read, Edit
 
 Run the following checks sequentially, stopping on first failure:
 
-1. **Format**: `cargo fmt --all`
-2. **Lint**: `cargo clippy --all-targets -- -D warnings 2>&1`
-3. **Test**: `cargo test 2>&1`
-4. **Build**: `cargo build 2>&1`
+1. **Format**: `mise run fmt`
+2. **Lint**: `mise run lint 2>&1`
+3. **Test**: `mise run test 2>&1`
+4. **Build**: `mise run build 2>&1`
+
+`mise run verify` chains all four in this order, which is equivalent when
+nothing fails. The tasks wrap `cargo fmt --all`, `cargo clippy --all-targets --
+-D warnings`, `cargo test`, and `cargo build`; call those directly only when
+mise is unavailable, and note that `cargo` may not be on `PATH` without it.
 
 ## Behavior
 
