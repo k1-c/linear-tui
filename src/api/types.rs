@@ -84,16 +84,44 @@ impl<'de> Deserialize<'de> for Priority {
 }
 
 /// Workflow state type categories from the Linear API.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
+///
+/// `WorkflowState.type` is a plain `String` in Linear's schema, so the set of
+/// values is not something the schema pins down and Linear can add to it at any
+/// time. An unrecognised value therefore has to fall back rather than fail:
+/// rejecting one would fail the whole query, and a single state a workspace
+/// happens to use would empty every issue list.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum StateType {
     Triage,
     Backlog,
     Unstarted,
     Started,
     Completed,
-    #[serde(alias = "canceled")]
     Cancelled,
+    Duplicate,
+    Unknown,
+}
+
+impl<'de> Deserialize<'de> for StateType {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let raw = String::deserialize(deserializer)?;
+        Ok(match raw.as_str() {
+            "triage" => Self::Triage,
+            "backlog" => Self::Backlog,
+            "unstarted" => Self::Unstarted,
+            "started" => Self::Started,
+            "completed" => Self::Completed,
+            "canceled" | "cancelled" => Self::Cancelled,
+            "duplicate" => Self::Duplicate,
+            other => {
+                tracing::debug!(state_type = %other, "unrecognised workflow state type");
+                Self::Unknown
+            }
+        })
+    }
 }
 
 impl StateType {
@@ -101,10 +129,11 @@ impl StateType {
         match self {
             Self::Started => Color::Yellow,
             Self::Completed => Color::Green,
-            Self::Cancelled => Color::DarkGray,
+            Self::Cancelled | Self::Duplicate => Color::DarkGray,
             Self::Backlog => Color::DarkGray,
             Self::Unstarted => Color::White,
             Self::Triage => Color::Magenta,
+            Self::Unknown => Color::White,
         }
     }
 }
@@ -381,6 +410,32 @@ mod tests {
         assert!(types.contains(&StateType::Unstarted));
         assert!(types.contains(&StateType::Completed));
         assert!(types.contains(&StateType::Triage));
+        assert!(types.contains(&StateType::Duplicate));
+        // A category this client does not know still parses, and a state
+        // without one at all stays None.
+        assert!(types.contains(&StateType::Unknown));
+        assert_eq!(resp.workflow_states.nodes.len(), 9);
+        assert!(
+            resp.workflow_states
+                .nodes
+                .iter()
+                .any(|s| s.state_type.is_none())
+        );
+    }
+
+    #[test]
+    fn unknown_state_type_does_not_fail_the_query() {
+        // Linear types `WorkflowState.type` as a String and has added values
+        // over time. Rejecting an unfamiliar one would fail the whole response
+        // and empty every list, so it degrades to Unknown instead.
+        assert_eq!(
+            serde_json::from_str::<StateType>("\"duplicate\"").unwrap(),
+            StateType::Duplicate
+        );
+        assert_eq!(
+            serde_json::from_str::<StateType>("\"somethingNewIn2027\"").unwrap(),
+            StateType::Unknown
+        );
     }
 
     #[test]

@@ -3,11 +3,13 @@
     "nodes": [
       { "id": "state-001", "name": "In Review", "color": "#4cb782", "type": "started" },
       { "id": "state-002", "name": "Backlog", "color": "#bec2c8", "type": "backlog" },
-      { "id": "state-003", "name": "Duplicate", "color": "#95a2b3", "type": "canceled" },
+      { "id": "state-003", "name": "Duplicate", "color": "#95a2b3", "type": "duplicate" },
       { "id": "state-004", "name": "Todo", "color": "#e2e2e2", "type": "unstarted" },
       { "id": "state-005", "name": "Canceled", "color": "#95a2b3", "type": "canceled" },
       { "id": "state-006", "name": "Done", "color": "#5e6ad2", "type": "completed" },
-      { "id": "state-007", "name": "Triage", "color": "#a855f7", "type": "triage" }
+      { "id": "state-007", "name": "Triage", "color": "#a855f7", "type": "triage" },
+      { "id": "state-008", "name": "Paused", "color": "#f2994a", "type": "someFutureType" },
+      { "id": "state-009", "name": "No Category", "color": "#bec2c8" }
     ]
   }
 }
