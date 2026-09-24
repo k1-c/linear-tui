@@ -377,15 +377,9 @@ fn handle_project_detail_keys(app: &mut App, key: KeyEvent) {
     }
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.leave_container(),
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            if let Some(issue) = app
-                .project_issues
-                .get(app.selected_project_issue_index)
-                .cloned()
-            {
-                app.open_issue_from_list(&issue);
-            }
-        }
+        // The cursor counts rows in display order, which grouping reorders,
+        // so the issue has to be looked up in that order too.
+        KeyCode::Enter | KeyCode::Char(' ') => app.open_issue_detail(),
         _ => {}
     }
 }
@@ -408,15 +402,9 @@ fn handle_cycle_detail_keys(app: &mut App, key: KeyEvent) {
     }
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => app.leave_container(),
-        KeyCode::Enter | KeyCode::Char(' ') => {
-            if let Some(issue) = app
-                .cycle_issues
-                .get(app.selected_cycle_issue_index)
-                .cloned()
-            {
-                app.open_issue_from_list(&issue);
-            }
-        }
+        // The cursor counts rows in display order, which grouping reorders,
+        // so the issue has to be looked up in that order too.
+        KeyCode::Enter | KeyCode::Char(' ') => app.open_issue_detail(),
         _ => {}
     }
 }
@@ -528,5 +516,118 @@ fn handle_new_issue_mode(app: &mut App, key: KeyEvent) {
             KeyCode::Char('k') | KeyCode::Up | KeyCode::Left => app.new_issue_cycle_priority(-1),
             _ => {}
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::types::Issue;
+    use crate::app::Screen;
+    use crate::config::Config;
+    use crossterm::event::{KeyEventKind, KeyEventState};
+
+    fn press(app: &mut App, code: KeyCode) {
+        handle_key(
+            app,
+            KeyEvent {
+                code,
+                modifiers: KeyModifiers::NONE,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            },
+        );
+    }
+
+    fn stated(id: &str, state_id: &str, name: &str, kind: &str) -> Issue {
+        serde_json::from_str(&format!(
+            r#"{{"id":"{id}","identifier":"ENG-{id}","title":"t{id}","priority":0,
+                "state":{{"id":"{state_id}","name":"{name}","type":"{kind}","position":1}},
+                "assignee":null,"description":null,"comments":null,"project":null,"cycle":null}}"#
+        ))
+        .unwrap()
+    }
+
+    /// The API returns these as Todo, In Progress, Todo; grouping shows In
+    /// Progress first, so the second row on screen is raw index 0.
+    fn reordered() -> Vec<Issue> {
+        vec![
+            stated("1", "s-todo", "Todo", "unstarted"),
+            stated("2", "s-prog", "In Progress", "started"),
+            stated("3", "s-todo", "Todo", "unstarted"),
+        ]
+    }
+
+    fn app() -> App {
+        let mut app = App::new(&Config::default());
+        app.requests.clear();
+        app
+    }
+
+    /// Regression: Enter on a project's issue opened whichever issue sat at the
+    /// cursor's position in the raw API order, not the one highlighted.
+    #[test]
+    fn enter_on_a_project_issue_opens_the_highlighted_one() {
+        let mut app = app();
+        app.project_issues = reordered();
+        app.screen = Screen::ProjectDetail;
+        press(&mut app, KeyCode::Char('j'));
+        let highlighted = app.focused_issue().unwrap().id.clone();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.screen, Screen::IssueDetail);
+        assert_eq!(app.current_issue.as_ref().unwrap().id, highlighted);
+        assert_eq!(highlighted, "1");
+    }
+
+    #[test]
+    fn enter_on_a_cycle_issue_opens_the_highlighted_one() {
+        let mut app = app();
+        app.cycle_issues = reordered();
+        app.screen = Screen::CycleDetail;
+        press(&mut app, KeyCode::Char('j'));
+        press(&mut app, KeyCode::Char('j'));
+        let highlighted = app.focused_issue().unwrap().id.clone();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.current_issue.as_ref().unwrap().id, highlighted);
+        assert_eq!(highlighted, "3");
+    }
+
+    /// Every list screen: keyboard Enter and the highlighted row agree.
+    #[test]
+    fn enter_on_every_issue_list_opens_the_highlighted_issue() {
+        use crate::app::Nav;
+        for (screen, nav) in [
+            (Screen::IssueList, None),
+            (Screen::IssueList, Some(Nav::MyIssues)),
+            (Screen::ProjectDetail, None),
+            (Screen::CycleDetail, None),
+        ] {
+            let mut app = app();
+            app.issues = reordered();
+            app.my_issues = reordered();
+            app.project_issues = reordered();
+            app.cycle_issues = reordered();
+            app.set_preset(crate::grouping::Preset::All);
+            app.requests.clear();
+            if let Some(nav) = nav {
+                app.nav = nav;
+            }
+            app.screen = screen;
+            for downs in 0..3 {
+                app.screen = screen;
+                app.set_selected_index(0);
+                for _ in 0..downs {
+                    press(&mut app, KeyCode::Char('j'));
+                }
+                let highlighted = app.focused_issue().unwrap().id.clone();
+                press(&mut app, KeyCode::Enter);
+                assert_eq!(
+                    app.current_issue.as_ref().unwrap().id,
+                    highlighted,
+                    "{screen:?} {nav:?} row {downs}"
+                );
+                app.close_detail();
+            }
+        }
     }
 }
