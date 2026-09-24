@@ -124,14 +124,20 @@ pub enum InputMode {
     NewIssue,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+/// The open popup, and what it acts on.
+///
+/// The change popups hold the issue they were opened on by id: the cursor
+/// can move under an open popup when a page lands, and Enter must change the
+/// issue the user picked, not whichever one is under the cursor by then.
+#[derive(Debug, Clone, PartialEq)]
 pub enum Popup {
     None,
     TeamSelect,
-    Filter,
-    StatusChange,
-    PriorityChange,
-    AssigneeChange,
+    /// The filter popup asks for a status, then a priority.
+    Filter(FilterKind),
+    StatusChange(IssueId),
+    PriorityChange(IssueId),
+    AssigneeChange(IssueId),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -179,10 +185,6 @@ pub struct App {
     // Popup
     pub popup: Popup,
     pub popup_index: usize,
-    /// The issue a status, priority, or assignee popup was opened on. Held
-    /// by id, because the cursor can move under an open popup when a page
-    /// lands, and Enter must change the issue the user picked.
-    popup_issue: Option<IssueId>,
 
     // Teams
     pub teams: Vec<Team>,
@@ -192,7 +194,6 @@ pub struct App {
     // Issues
 
     // Filters
-    pub filter_kind: FilterKind,
     pub workflow_states: Vec<WorkflowState>,
 
     // Saved views
@@ -331,11 +332,9 @@ impl App {
             lists: IssueLists::default(),
             popup: Popup::None,
             popup_index: 0,
-            popup_issue: None,
             teams: Vec::new(),
             selected_team_index: 0,
             team_members: Vec::new(),
-            filter_kind: FilterKind::Status,
             workflow_states: Vec::new(),
             custom_views: Vec::new(),
             views_loaded: false,
@@ -1014,47 +1013,44 @@ impl App {
     }
 
     pub fn open_filter(&mut self) {
-        self.popup = Popup::Filter;
+        self.popup = Popup::Filter(FilterKind::Status);
         self.popup_index = 0;
-        self.filter_kind = FilterKind::Status;
     }
 
     pub fn open_status_change(&mut self) {
-        if self.focused_issue().is_some() {
-            // Start on the issue's current state so Enter is a no-op, not a surprise.
-            let current = self
-                .focused_issue()
-                .and_then(|i| i.state.as_ref())
-                .map(|s| s.id.clone());
-            self.popup_index = current
-                .and_then(|id| self.workflow_states.iter().position(|s| s.id == id))
-                .unwrap_or(0);
-            self.popup_issue = self.focused_issue().map(|i| i.id.clone());
-            self.popup = Popup::StatusChange;
-        }
+        let Some(issue) = self.focused_issue() else {
+            return;
+        };
+        // Start on the issue's current state so Enter is a no-op, not a surprise.
+        let index = issue
+            .state
+            .as_ref()
+            .and_then(|state| self.workflow_states.iter().position(|s| s.id == state.id))
+            .unwrap_or(0);
+        self.popup = Popup::StatusChange(issue.id.clone());
+        self.popup_index = index;
     }
 
     pub fn open_priority_change(&mut self) {
-        if let Some((id, priority)) = self.focused_issue().map(|i| (i.id.clone(), i.priority)) {
-            self.popup_index = priority.as_index();
-            self.popup_issue = Some(id);
-            self.popup = Popup::PriorityChange;
+        if let Some(issue) = self.focused_issue() {
+            let index = issue.priority.as_index();
+            self.popup = Popup::PriorityChange(issue.id.clone());
+            self.popup_index = index;
         }
     }
 
     pub fn open_assignee_change(&mut self) {
-        if self.focused_issue().is_some() {
-            let current = self
-                .focused_issue()
-                .and_then(|i| i.assignee.as_ref())
-                .map(|u| u.id.clone());
-            self.popup_index = current
-                .and_then(|id| self.team_members.iter().position(|u| u.id == id))
-                .map(|i| i + 1)
-                .unwrap_or(0);
-            self.popup_issue = self.focused_issue().map(|i| i.id.clone());
-            self.popup = Popup::AssigneeChange;
-        }
+        let Some(issue) = self.focused_issue() else {
+            return;
+        };
+        // Row 0 is Unassign, so a member's row is one past their index.
+        let index = issue
+            .assignee
+            .as_ref()
+            .and_then(|user| self.team_members.iter().position(|u| u.id == user.id))
+            .map_or(0, |i| i + 1);
+        self.popup = Popup::AssigneeChange(issue.id.clone());
+        self.popup_index = index;
     }
 
     /// Linear's `I` — assign the focused issue to the current user.
@@ -1133,7 +1129,7 @@ impl App {
     }
 
     pub fn apply_status_selection(&mut self) {
-        if let Some(issue_id) = self.popup_issue.take()
+        if let Popup::StatusChange(issue_id) = self.take_popup()
             && let Some(state) = self.workflow_states.get(self.popup_index)
         {
             let state = state.clone();
@@ -1141,11 +1137,10 @@ impl App {
             self.patch_issue(&issue_id, |i| i.state = Some(state.clone()));
             self.request(Request::UpdateStatus { issue_id, state_id });
         }
-        self.popup = Popup::None;
     }
 
     pub fn apply_priority_selection(&mut self) {
-        if let Some(issue_id) = self.popup_issue.take() {
+        if let Popup::PriorityChange(issue_id) = self.take_popup() {
             let priority = Priority::from_index(self.popup_index);
             self.patch_issue(&issue_id, |i| {
                 i.priority = priority;
@@ -1153,11 +1148,10 @@ impl App {
             });
             self.request(Request::UpdatePriority { issue_id, priority });
         }
-        self.popup = Popup::None;
     }
 
     pub fn apply_assignee_selection(&mut self) {
-        if let Some(issue_id) = self.popup_issue.take() {
+        if let Popup::AssigneeChange(issue_id) = self.take_popup() {
             let assignee = if self.popup_index == 0 {
                 None // Unassign
             } else {
@@ -1170,14 +1164,29 @@ impl App {
                 assignee_id,
             });
         }
-        self.popup = Popup::None;
     }
 
     // ------------------------------------------------------------------ popups
 
     pub fn close_popup(&mut self) {
         self.popup = Popup::None;
-        self.popup_issue = None;
+    }
+
+    /// The issue the open change popup acts on.
+    pub fn popup_issue(&self) -> Option<&Issue> {
+        let id = match &self.popup {
+            Popup::StatusChange(id) | Popup::PriorityChange(id) | Popup::AssigneeChange(id) => id,
+            _ => return None,
+        };
+        self.current_issue
+            .iter()
+            .chain(IssueSource::ALL.iter().flat_map(|&s| &self.lists[s].issues))
+            .find(|issue| &issue.id == id)
+    }
+
+    /// Close the popup, handing back what it was open for.
+    fn take_popup(&mut self) -> Popup {
+        std::mem::replace(&mut self.popup, Popup::None)
     }
 
     pub fn popup_next(&mut self) {
@@ -1196,19 +1205,22 @@ impl App {
     pub fn popup_list_len(&self) -> usize {
         match self.popup {
             Popup::TeamSelect => self.teams.len(),
-            Popup::Filter => match self.filter_kind {
-                FilterKind::Status => self.workflow_states.len() + 1,
-                FilterKind::Priority => 6,
-            },
-            Popup::StatusChange => self.workflow_states.len(),
-            Popup::PriorityChange => 5, // None, Urgent, High, Medium, Low
-            Popup::AssigneeChange => self.team_members.len() + 1, // +1 for Unassign
+            // Each filter list starts with an "any" row.
+            Popup::Filter(FilterKind::Status) => self.workflow_states.len() + 1,
+            Popup::Filter(FilterKind::Priority) => Priority::ALL.len() + 1,
+            Popup::StatusChange(_) => self.workflow_states.len(),
+            Popup::PriorityChange(_) => Priority::ALL.len(),
+            // +1 for Unassign
+            Popup::AssigneeChange(_) => self.team_members.len() + 1,
             Popup::None => 0,
         }
     }
 
     pub fn apply_filter_selection(&mut self) {
-        match self.filter_kind {
+        let Popup::Filter(kind) = self.popup else {
+            return;
+        };
+        match kind {
             FilterKind::Status => {
                 if self.popup_index == 0 {
                     self.list_mut().filters.status = None;
@@ -1216,7 +1228,7 @@ impl App {
                     let name = state.name.clone();
                     self.list_mut().filters.status = Some(name);
                 }
-                self.filter_kind = FilterKind::Priority;
+                self.popup = Popup::Filter(FilterKind::Priority);
                 self.popup_index = 0;
             }
             FilterKind::Priority => {
@@ -1506,10 +1518,10 @@ impl App {
     pub fn apply_popup(&mut self) {
         match self.popup {
             Popup::TeamSelect => self.select_team(),
-            Popup::Filter => self.apply_filter_selection(),
-            Popup::StatusChange => self.apply_status_selection(),
-            Popup::PriorityChange => self.apply_priority_selection(),
-            Popup::AssigneeChange => self.apply_assignee_selection(),
+            Popup::Filter(_) => self.apply_filter_selection(),
+            Popup::StatusChange(_) => self.apply_status_selection(),
+            Popup::PriorityChange(_) => self.apply_priority_selection(),
+            Popup::AssigneeChange(_) => self.apply_assignee_selection(),
             Popup::None => {}
         }
     }

@@ -14,10 +14,10 @@ use crate::config::Theme;
 pub fn draw(f: &mut Frame, app: &mut App) {
     match app.popup {
         Popup::TeamSelect => draw_team_select(f, app),
-        Popup::Filter => draw_filter(f, app),
-        Popup::StatusChange => draw_status_change(f, app),
-        Popup::PriorityChange => draw_priority_change(f, app),
-        Popup::AssigneeChange => draw_assignee_change(f, app),
+        Popup::Filter(kind) => draw_filter(f, app, kind),
+        Popup::StatusChange(_) => draw_status_change(f, app),
+        Popup::PriorityChange(_) => draw_priority_change(f, app),
+        Popup::AssigneeChange(_) => draw_assignee_change(f, app),
         Popup::None => {}
     }
 }
@@ -120,9 +120,9 @@ fn draw_team_select(f: &mut Frame, app: &mut App) {
     render_popup_list(f, app, "Switch team", items, 44);
 }
 
-fn draw_filter(f: &mut Frame, app: &mut App) {
+fn draw_filter(f: &mut Frame, app: &mut App, kind: FilterKind) {
     let th = app.theme;
-    let (title, items) = match app.filter_kind {
+    let (title, items) = match kind {
         FilterKind::Status => {
             let mut items = vec![numbered_item(
                 0,
@@ -176,7 +176,7 @@ fn draw_filter(f: &mut Frame, app: &mut App) {
 fn draw_status_change(f: &mut Frame, app: &mut App) {
     let th = app.theme;
     let current_state_id = app
-        .focused_issue()
+        .popup_issue()
         .and_then(|i| i.state.as_ref())
         .map(|s| s.id.clone());
 
@@ -199,15 +199,8 @@ fn draw_status_change(f: &mut Frame, app: &mut App) {
 
 fn draw_priority_change(f: &mut Frame, app: &mut App) {
     let th = app.theme;
-    let current_pri = app.focused_issue().map(|i| i.priority);
-    let priorities = [
-        Priority::None,
-        Priority::Urgent,
-        Priority::High,
-        Priority::Medium,
-        Priority::Low,
-    ];
-    let items: Vec<ListItem> = priorities
+    let current_pri = app.popup_issue().map(|i| i.priority);
+    let items: Vec<ListItem> = Priority::ALL
         .iter()
         .enumerate()
         .map(|(i, pri)| {
@@ -226,7 +219,7 @@ fn draw_priority_change(f: &mut Frame, app: &mut App) {
 fn draw_assignee_change(f: &mut Frame, app: &mut App) {
     let th = app.theme;
     let current_assignee_id = app
-        .focused_issue()
+        .popup_issue()
         .and_then(|i| i.assignee.as_ref())
         .map(|a| a.id.clone());
 
