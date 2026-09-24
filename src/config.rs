@@ -208,14 +208,11 @@ impl Config {
         }
     }
 
+    /// Write the config back. It can hold an API key and a client secret, so
+    /// it is written owner-only.
     pub fn save(&self) -> Result<()> {
-        let path = Self::config_path()?;
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let contents = toml::to_string_pretty(self)?;
-        fs::write(&path, contents)?;
-        Ok(())
+        crate::private_file::write(&Self::config_path()?, contents.as_bytes())
     }
 
     pub fn config_dir() -> Result<PathBuf> {
