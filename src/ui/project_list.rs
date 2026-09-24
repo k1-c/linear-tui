@@ -57,10 +57,12 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     app.list_area = list;
     app.list_viewport = list.height;
 
-    if app.projects.is_empty() {
+    if app.project_rows().is_empty() {
         app.row_targets.clear();
         let message = if app.loading() {
             format!("{} Loading projects\u{2026}", app.spinner_symbol())
+        } else if matches!(app.nav, crate::app::Nav::View(_)) {
+            "No projects in this view".to_string()
         } else {
             "No projects in this team".to_string()
         };
@@ -77,17 +79,17 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let height = list.height as usize;
-    let mut offset = app.tables.projects.offset();
-    let sel = app.selected_project_index;
+    let mut offset = app.project_table().offset();
+    let sel = app.project_cursor();
     if sel < offset {
         offset = sel;
     } else if height > 0 && sel >= offset + height {
         offset = sel + 1 - height;
     }
-    *app.tables.projects.offset_mut() = offset;
+    *app.project_table().offset_mut() = offset;
 
     let lines: Vec<Line> = app
-        .projects
+        .project_rows()
         .iter()
         .enumerate()
         .skip(offset)

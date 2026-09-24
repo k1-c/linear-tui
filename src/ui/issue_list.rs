@@ -20,7 +20,7 @@ use super::widgets::{
     user_name,
 };
 use crate::api::types::{Issue, hex_color};
-use crate::app::{App, IssueSource, ListRow};
+use crate::app::{App, Chip, IssueSource, ListRow};
 use crate::config::Theme;
 use crate::grouping::{GroupBy, Preset};
 
@@ -60,7 +60,7 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
                 width,
                 height: 1,
             },
-            *preset,
+            Chip::Preset(*preset),
         ));
         spans.push(Span::styled(label, style));
         spans.push(Span::raw(" "));

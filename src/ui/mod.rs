@@ -225,14 +225,18 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
         // The page itself (project, cycle, issue) is added below.
         Nav::Favorite(_) => crumbs.push(dim("Favorites".into())),
         Nav::View(i) => {
+            let view = app.custom_views.get(i);
+            // A team's view sits under that team, as in Linear.
+            if let Some(team) = view.and_then(|v| v.team.as_ref()) {
+                if let Some(color) = team.color.as_deref().and_then(crate::api::types::hex_color) {
+                    crumbs.push(Span::styled("\u{25cf} ", Style::default().fg(color)));
+                }
+                crumbs.push(dim(team.name.clone()));
+                crumbs.push(sep());
+            }
             crumbs.push(dim("Views".into()));
             crumbs.push(sep());
-            crumbs.push(strong(
-                app.custom_views
-                    .get(i)
-                    .map(|v| v.name.clone())
-                    .unwrap_or_default(),
-            ));
+            crumbs.push(strong(view.map(|v| v.name.clone()).unwrap_or_default()));
         }
         Nav::Team(_, section) => {
             if let Some(color) = app
@@ -248,6 +252,7 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
                 TeamSection::Issues => "Issues",
                 TeamSection::Cycles => "Cycles",
                 TeamSection::Projects => "Projects",
+                TeamSection::Views => "Views",
             };
             crumbs.push(strong(label.into()));
             if let Some(term) = &app.global_search {
@@ -439,7 +444,15 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
                 ("y", "copy ID"),
                 ("?", "help"),
             ],
-            Screen::ProjectList | Screen::CycleList | Screen::ViewList => &[
+            Screen::ViewList => &[
+                ("Enter", "open"),
+                ("S-Tab", "issues/projects"),
+                ("j/k", "move"),
+                ("Tab", "sidebar"),
+                ("^R", "refresh"),
+                ("?", "help"),
+            ],
+            Screen::ProjectList | Screen::CycleList => &[
                 ("Enter", "open"),
                 ("j/k", "move"),
                 ("Tab", "sidebar"),
