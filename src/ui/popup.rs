@@ -12,7 +12,7 @@ use crate::app::{App, FilterKind, Popup};
 use crate::config::Theme;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    match app.popup {
+    match app.view.popup {
         Popup::TeamSelect => draw_team_select(f, app),
         Popup::Filter(kind) => draw_filter(f, app, kind),
         Popup::StatusChange(_) => draw_status_change(f, app),
@@ -51,11 +51,11 @@ fn render_popup_list(f: &mut Frame, app: &mut App, title: &str, items: Vec<ListI
         )
         .highlight_symbol("\u{258c}");
 
-    let mut state = ListState::default().with_offset(app.popup_offset);
-    state.select(Some(app.popup_index));
+    let mut state = ListState::default().with_offset(app.frame.popup_offset);
+    state.select(Some(app.view.popup_index));
     f.render_stateful_widget(list, area, &mut state);
-    app.popup_offset = state.offset();
-    app.popup_area = Rect {
+    app.frame.popup_offset = state.offset();
+    app.frame.popup_area = Rect {
         x: area.x + 1,
         y: area.y + 1,
         width: area.width.saturating_sub(2),
@@ -89,6 +89,7 @@ fn numbered_item(
 fn draw_team_select(f: &mut Frame, app: &mut App) {
     let th = app.theme;
     let items: Vec<ListItem> = app
+        .store
         .teams
         .iter()
         .enumerate()
@@ -102,7 +103,7 @@ fn draw_team_select(f: &mut Frame, app: &mut App) {
                 i,
                 vec![Span::styled("\u{25cf} ", Style::default().fg(color))],
                 &format!("{}  {}", team.name, team.key),
-                i == app.selected_team_index,
+                i == app.nav.team,
                 &th,
             )
         })

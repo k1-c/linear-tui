@@ -97,17 +97,18 @@ impl App {
             ),
         ];
 
-        if !self.favorites.is_empty() {
+        if !self.store.favorites.is_empty() {
             rows.push(SidebarRow::Gap);
             rows.push(SidebarRow::Header("Favorites".into()));
             // Top-level entries in order, each folder followed by its contents.
-            for (index, fav) in self.favorites.iter().enumerate() {
+            for (index, fav) in self.store.favorites.iter().enumerate() {
                 if fav.parent.is_some() {
                     continue;
                 }
                 rows.push(self.favorite_row(index, 0));
-                if fav.is_folder() && !self.collapsed_folders.contains(&fav.id) {
+                if fav.is_folder() && !self.view.sidebar.collapsed_folders.contains(&fav.id) {
                     for (child, _) in self
+                        .store
                         .favorites
                         .iter()
                         .enumerate()
@@ -122,7 +123,7 @@ impl App {
         // The team is a switcher: one row naming the current team, and only
         // that team's pages beneath it.
         if let Some(team) = self.current_team() {
-            let index = self.selected_team_index;
+            let index = self.nav.team;
             rows.push(SidebarRow::Gap);
             rows.push(SidebarRow::Header("Team".into()));
             rows.push(SidebarRow::Item(SidebarItem {
@@ -132,7 +133,7 @@ impl App {
                 depth: 0,
                 action: SidebarAction::SwitchTeam,
                 expanded: None,
-                trailing: (self.teams.len() > 1).then(|| "t \u{21c5}".to_string()),
+                trailing: (self.store.teams.len() > 1).then(|| "t \u{21c5}".to_string()),
                 tone: Tone::Strong,
             }));
             rows.push(item(
@@ -174,7 +175,7 @@ impl App {
 
     /// The sidebar row for one favorite.
     fn favorite_row(&self, index: usize, depth: u8) -> SidebarRow {
-        let fav = &self.favorites[index];
+        let fav = &self.store.favorites[index];
         let color = fav
             .color
             .as_deref()
@@ -211,7 +212,7 @@ impl App {
             action: self.favorite_action(index),
             expanded: fav
                 .is_folder()
-                .then(|| !self.collapsed_folders.contains(&fav.id)),
+                .then(|| !self.view.sidebar.collapsed_folders.contains(&fav.id)),
             trailing: None,
             tone: Tone::Strong,
         })
@@ -221,12 +222,12 @@ impl App {
     /// destination, so opening one lights the same row as getting there any
     /// other way.
     pub(super) fn favorite_action(&self, index: usize) -> SidebarAction {
-        let fav = &self.favorites[index];
+        let fav = &self.store.favorites[index];
         if fav.is_folder() {
             return SidebarAction::Fold(index);
         }
         if let Some(view) = &fav.custom_view
-            && let Some(i) = self.custom_views.iter().position(|v| v.id == view.id)
+            && let Some(i) = self.store.custom_views.iter().position(|v| v.id == view.id)
         {
             return SidebarAction::Go(Nav::View(i));
         }
@@ -237,7 +238,7 @@ impl App {
             let team = fav
                 .predefined_view_team
                 .as_ref()
-                .and_then(|t| self.teams.iter().position(|x| x.id == t.id));
+                .and_then(|t| self.store.teams.iter().position(|x| x.id == t.id));
             let section = match fav.predefined_view_type.as_deref() {
                 Some("issues" | "allIssues" | "activeIssues" | "backlog") => {
                     Some(TeamSection::Issues)
@@ -257,15 +258,15 @@ impl App {
     /// or issue in place, and anything this client has no page for — a
     /// document, a label, a workspace-wide page — on linear.app.
     pub(super) fn open_favorite(&mut self, index: usize) {
-        let Some(fav) = self.favorites.get(index).cloned() else {
+        let Some(fav) = self.store.favorites.get(index).cloned() else {
             return;
         };
-        self.sidebar_focus = false;
+        self.view.sidebar.focus = false;
         if let Some(project) = fav.project {
-            self.nav = Nav::Favorite(index);
+            self.nav.dest = Nav::Favorite(index);
             self.open_project(project);
         } else if let Some(cycle) = fav.cycle {
-            self.nav = Nav::Favorite(index);
+            self.nav.dest = Nav::Favorite(index);
             self.open_cycle(cycle);
         } else if let Some(issue) = fav.issue {
             // Just enough to draw the header; the detail fetch fills the rest.
@@ -277,7 +278,7 @@ impl App {
                 ..Issue::default()
             };
             self.open_issue_from_list(&stub);
-            self.nav = Nav::Favorite(index);
+            self.nav.dest = Nav::Favorite(index);
         } else if let Some(url) = fav.url {
             self.request(Request::OpenUrl(url));
         } else {
@@ -287,7 +288,8 @@ impl App {
 
     /// Indices of the sidebar rows the cursor may land on.
     fn sidebar_stops(&self) -> Vec<usize> {
-        self.sidebar_rows
+        self.frame
+            .sidebar_rows
             .iter()
             .enumerate()
             .filter(|(_, row)| matches!(row, SidebarRow::Item(_)))
@@ -302,15 +304,15 @@ impl App {
         }
         let current = stops
             .iter()
-            .position(|i| *i == self.sidebar_index)
+            .position(|i| *i == self.view.sidebar.index)
             .unwrap_or(0);
         let mut next = current;
         Self::nav_by(stops.len(), &mut next, delta);
-        self.sidebar_index = stops[next];
+        self.view.sidebar.index = stops[next];
     }
 
     fn sidebar_item(&self, index: usize) -> Option<&SidebarItem> {
-        match self.sidebar_rows.get(index) {
+        match self.frame.sidebar_rows.get(index) {
             Some(SidebarRow::Item(item)) => Some(item),
             _ => None,
         }
@@ -318,7 +320,7 @@ impl App {
 
     /// Enter on the sidebar.
     pub fn sidebar_activate(&mut self) {
-        if let Some(action) = self.sidebar_item(self.sidebar_index).map(|i| i.action) {
+        if let Some(action) = self.sidebar_item(self.view.sidebar.index).map(|i| i.action) {
             self.run_sidebar_action(action);
         }
     }
@@ -334,43 +336,43 @@ impl App {
     /// `h`/`l` on the sidebar: fold or unfold the folder under the cursor.
     pub fn sidebar_toggle(&mut self) {
         if let Some(SidebarAction::Fold(index)) =
-            self.sidebar_item(self.sidebar_index).map(|i| i.action)
+            self.sidebar_item(self.view.sidebar.index).map(|i| i.action)
         {
             self.toggle_folder(index);
         }
     }
 
     pub fn toggle_folder(&mut self, index: usize) {
-        let Some(id) = self.favorites.get(index).map(|f| f.id.clone()) else {
+        let Some(id) = self.store.favorites.get(index).map(|f| f.id.clone()) else {
             return;
         };
-        if !self.collapsed_folders.remove(&id) {
-            self.collapsed_folders.insert(id);
+        if !self.view.sidebar.collapsed_folders.remove(&id) {
+            self.view.sidebar.collapsed_folders.insert(id);
         }
-        self.sidebar_rows = self.sidebar_layout();
+        self.frame.sidebar_rows = self.sidebar_layout();
     }
 
     /// Move focus between the sidebar and the content pane.
     pub fn focus_sidebar(&mut self, focused: bool) {
-        if focused && !self.sidebar_visible {
+        if focused && !self.view.sidebar.visible {
             return;
         }
-        self.sidebar_focus = focused;
+        self.view.sidebar.focus = focused;
         if focused {
             // Start on the row matching where the content pane already is, so
             // the sidebar opens pointing at you rather than at the top.
-            if let Some(index) = self.sidebar_rows.iter().position(
-                |row| matches!(row, SidebarRow::Item(item) if item.nav() == Some(self.nav)),
+            if let Some(index) = self.frame.sidebar_rows.iter().position(
+                |row| matches!(row, SidebarRow::Item(item) if item.nav() == Some(self.nav.dest)),
             ) {
-                self.sidebar_index = index;
+                self.view.sidebar.index = index;
             }
         }
     }
 
     pub fn toggle_sidebar(&mut self) {
-        self.sidebar_visible = !self.sidebar_visible;
-        if !self.sidebar_visible {
-            self.sidebar_focus = false;
+        self.view.sidebar.visible = !self.view.sidebar.visible;
+        if !self.view.sidebar.visible {
+            self.view.sidebar.focus = false;
         }
     }
 }

@@ -28,6 +28,15 @@ use crate::keys;
 /// needs every column, and `Tab` has nothing to focus.
 const SIDEBAR_MIN_WIDTH: u16 = 100;
 
+/// What the renderer keeps from one frame to the next for its own sake —
+/// never read by `app`. The main loop owns it, next to the `App`, so the
+/// model does not depend on the view.
+#[derive(Debug, Default)]
+pub struct Cache {
+    /// The detail view's rendered Markdown.
+    pub detail_markdown: issue_detail::Memo,
+}
+
 /// Days since the Unix epoch for a civil (proleptic Gregorian) date.
 /// Howard Hinnant's `days_from_civil`.
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -139,20 +148,24 @@ pub fn input_lines(input: &Input, theme: &Theme) -> Vec<Line<'static>> {
 const MIN_WIDTH: u16 = 20;
 const MIN_HEIGHT: u16 = 5;
 
-pub fn draw(f: &mut Frame, app: &mut App) {
+pub fn draw(f: &mut Frame, app: &mut App, cache: &mut Cache) {
     let area = f.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         draw_too_small(f, app);
         return;
     }
-    let show_sidebar = app.sidebar_visible && area.width >= SIDEBAR_MIN_WIDTH;
+    let show_sidebar = app.view.sidebar.visible && area.width >= SIDEBAR_MIN_WIDTH;
     if !show_sidebar {
-        app.sidebar_focus = false;
-        app.sidebar_area = Rect::ZERO;
+        app.view.sidebar.focus = false;
+        app.frame.sidebar_area = Rect::ZERO;
     }
 
     let cols = if show_sidebar {
-        Layout::horizontal([Constraint::Length(app.sidebar_width), Constraint::Min(0)]).split(area)
+        Layout::horizontal([
+            Constraint::Length(app.view.sidebar.width),
+            Constraint::Min(0),
+        ])
+        .split(area)
     } else {
         Layout::horizontal([Constraint::Length(0), Constraint::Min(0)]).split(area)
     };
@@ -180,37 +193,37 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Each screen resets these as it draws; clear them so a screen without
     // clickable rows does not leave stale targets from the last one behind.
-    app.list_rows.clear();
-    app.row_targets.clear();
-    app.chip_areas.clear();
-    app.list_area = Rect::ZERO;
+    app.frame.list_rows.clear();
+    app.frame.row_targets.clear();
+    app.frame.chip_areas.clear();
+    app.frame.list_area = Rect::ZERO;
 
     let content = rows[2];
-    match app.screen {
+    match app.nav.screen {
         Screen::IssueList => issue_list::draw(f, app, content),
         Screen::ProjectList => project_list::draw(f, app, content),
         Screen::CycleList => cycle_list::draw(f, app, content),
         Screen::ViewList => view_list::draw(f, app, content),
-        Screen::IssueDetail => issue_detail::draw(f, app, content),
+        Screen::IssueDetail => issue_detail::draw(f, app, &mut cache.detail_markdown, content),
         Screen::ProjectDetail => project_detail::draw(f, app, content),
         Screen::CycleDetail => cycle_detail::draw(f, app, content),
     }
 
     draw_status_bar(f, app, rows[3]);
 
-    app.popup_area = Rect::ZERO;
-    if app.popup != Popup::None {
+    app.frame.popup_area = Rect::ZERO;
+    if app.view.popup != Popup::None {
         popup::draw(f, app);
     } else {
-        app.popup_offset = 0;
+        app.frame.popup_offset = 0;
     }
-    if app.input_mode == InputMode::NewIssue {
+    if app.view.input_mode == InputMode::NewIssue {
         new_issue::draw(f, app);
     }
-    if app.show_help {
+    if app.view.show_help {
         draw_help(f, app);
     }
-    if let Some(err) = app.error_popup.clone() {
+    if let Some(err) = app.view.error_popup.clone() {
         draw_error_popup(f, &err, app);
     }
 }
@@ -229,13 +242,13 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
         .map(|t| t.name.clone())
         .unwrap_or_else(|| "No team".into());
     let mut crumbs: Vec<Span> = vec![Span::raw(" ")];
-    match app.nav {
+    match app.nav.dest {
         Nav::MyIssues => crumbs.push(strong("My Issues".into())),
         Nav::Views => crumbs.push(strong("Views".into())),
         // The page itself (project, cycle, issue) is added below.
         Nav::Favorite(_) => crumbs.push(dim("Favorites".into())),
         Nav::View(i) => {
-            let view = app.custom_views.get(i);
+            let view = app.store.custom_views.get(i);
             // A team's view sits under that team, as in Linear.
             if let Some(team) = view.and_then(|v| v.team.as_ref()) {
                 if let Some(color) = team.color.as_deref().and_then(crate::api::types::hex_color) {
@@ -265,7 +278,7 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
                 TeamSection::Views => "Views",
             };
             crumbs.push(strong(label.into()));
-            if let Some(term) = &app.global_search {
+            if let Some(term) = &app.nav.global_search {
                 crumbs.push(sep());
                 crumbs.push(Span::styled(
                     format!("Search \u{201c}{term}\u{201d}"),
@@ -274,30 +287,30 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
             }
         }
     }
-    match app.screen {
+    match app.nav.screen {
         Screen::ProjectDetail => {
-            if let Some(p) = &app.current_project {
+            if let Some(p) = &app.nav.current_project {
                 crumbs.push(sep());
                 crumbs.push(strong(p.name.clone()));
             }
         }
         Screen::CycleDetail => {
-            if let Some(c) = &app.current_cycle {
+            if let Some(c) = &app.nav.current_cycle {
                 crumbs.push(sep());
                 crumbs.push(strong(cycle_list::cycle_name(c)));
             }
         }
         Screen::IssueDetail => {
-            if let Some(issue) = &app.current_issue {
-                match app.detail_return {
+            if let Some(issue) = &app.store.current_issue {
+                match app.nav.detail_return {
                     Screen::ProjectDetail => {
-                        if let Some(p) = &app.current_project {
+                        if let Some(p) = &app.nav.current_project {
                             crumbs.push(sep());
                             crumbs.push(dim(p.name.clone()));
                         }
                     }
                     Screen::CycleDetail => {
-                        if let Some(c) = &app.current_cycle {
+                        if let Some(c) = &app.nav.current_cycle {
                             crumbs.push(sep());
                             crumbs.push(dim(cycle_list::cycle_name(c)));
                         }
@@ -323,7 +336,7 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(th.accent),
         ));
     }
-    if app.screen == Screen::IssueDetail
+    if app.nav.screen == Screen::IssueDetail
         && let Some((index, total)) = app.detail_position()
     {
         right.push(Span::styled(
@@ -376,7 +389,7 @@ fn hint(key: &str, what: &str, th: &Theme) -> Vec<Span<'static>> {
 /// message if there is one, otherwise the keys that matter on this screen.
 fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     let th = &app.theme;
-    if app.input_mode == InputMode::Search {
+    if app.view.input_mode == InputMode::Search {
         let mut spans = vec![Span::styled(
             " / ",
             Style::default().fg(th.warning).add_modifier(Modifier::BOLD),
@@ -390,7 +403,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         f.render_widget(Paragraph::new(Line::from(spans)), area);
         return;
     }
-    if let Some(msg) = &app.status_message {
+    if let Some(msg) = &app.view.status_message {
         f.render_widget(
             Paragraph::new(Span::styled(
                 format!(" {msg}"),
@@ -400,7 +413,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         );
         return;
     }
-    if let Some(chord) = app.pending_chord {
+    if let Some(chord) = app.view.pending_chord {
         let mut spans = vec![Span::styled(
             format!(" {chord} \u{2026} "),
             Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
@@ -421,12 +434,12 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_too_small(f: &mut Frame, app: &mut App) {
     // Nothing on screen is clickable, so nothing from a larger frame may be.
-    app.list_rows.clear();
-    app.row_targets.clear();
-    app.chip_areas.clear();
-    app.list_area = Rect::ZERO;
-    app.sidebar_area = Rect::ZERO;
-    app.popup_area = Rect::ZERO;
+    app.frame.list_rows.clear();
+    app.frame.row_targets.clear();
+    app.frame.chip_areas.clear();
+    app.frame.list_area = Rect::ZERO;
+    app.frame.sidebar_area = Rect::ZERO;
+    app.frame.popup_area = Rect::ZERO;
     let area = f.area();
     f.render_widget(
         Paragraph::new("Terminal too small")
@@ -505,11 +518,12 @@ fn draw_help(f: &mut Frame, app: &mut App) {
     let width = 52.min(f.area().width.saturating_sub(4));
     let area = widgets::centered_rect(width, height, f.area());
     let scroll = app
+        .view
         .help_scroll
         .min(total.saturating_sub(height.saturating_sub(2)));
     // Written back, like the detail view's measurements, so the offset never
     // runs past what the overlay can show.
-    app.help_scroll = scroll;
+    app.view.help_scroll = scroll;
 
     f.render_widget(Clear, area);
     let help = Paragraph::new(help_text).scroll((scroll, 0)).block(

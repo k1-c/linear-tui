@@ -10,7 +10,9 @@ mod keys;
 mod logging;
 mod message;
 mod private_file;
+mod store;
 mod ui;
+mod usecase;
 
 use std::io::{self, Write};
 use std::sync::Arc;
@@ -137,14 +139,15 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
 
     // `App::new` seeds the initial Teams/Viewer requests.
     let mut app = App::new(&config);
+    let mut cache = ui::Cache::default();
     let mut last_tick = Instant::now();
     let mut dirty = true;
 
     loop {
         // Spawn everything the UI has queued since the last pass. Each request
         // runs on the tokio runtime, so the UI never blocks on the network.
-        while let Some(req) = app.requests.pop_front() {
-            app.inflight += 1;
+        while let Some(req) = app.outbox.requests.pop_front() {
+            app.outbox.inflight += 1;
             let client = Arc::clone(&client);
             let tx = tx.clone();
             let per_page = app.items_per_page;
@@ -156,18 +159,18 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
         }
 
         if dirty {
-            terminal.draw(|f| ui::draw(f, &mut app))?;
+            terminal.draw(|f| ui::draw(f, &mut app, &mut cache))?;
             dirty = false;
         }
 
         // Drain completed requests without blocking.
         while let Ok(msg) = rx.try_recv() {
-            app.inflight = app.inflight.saturating_sub(1);
+            app.outbox.inflight = app.outbox.inflight.saturating_sub(1);
             app.handle_message(msg);
             dirty = true;
         }
 
-        if let Some(text) = app.pending_clipboard.take() {
+        if let Some(text) = app.outbox.clipboard.take() {
             copy_to_clipboard(&text)?;
         }
 

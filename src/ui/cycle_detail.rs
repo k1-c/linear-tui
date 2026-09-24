@@ -14,7 +14,7 @@ use super::widgets::{progress_bar, short_date};
 use crate::app::App;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    let Some(cycle) = app.current_cycle.clone() else {
+    let Some(cycle) = app.nav.current_cycle.clone() else {
         return;
     };
     let th = app.theme;

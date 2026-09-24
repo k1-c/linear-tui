@@ -23,16 +23,16 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         height: area.height.saturating_sub(2),
         ..area
     };
-    app.list_area = area;
-    app.list_viewport = area.height;
+    app.frame.list_area = area;
+    app.frame.list_viewport = area.height;
 
     let listed = app.listed_views();
     if listed.is_empty() {
-        app.row_targets.clear();
-        let message = if !app.views_loaded {
+        app.frame.row_targets.clear();
+        let message = if !app.store.views_loaded {
             "Loading views\u{2026}".to_string()
         } else {
-            let (this, other) = match app.view_kind {
+            let (this, other) = match app.view.view_kind {
                 ViewKind::Issues => ("issue", "project"),
                 ViewKind::Projects => ("project", "issue"),
             };
@@ -46,15 +46,16 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let shared_caption = match app.nav {
+    let shared_caption = match app.nav.dest {
         Nav::Team(index, TeamSection::Views) => app
+            .store
             .teams
             .get(index)
             .map(|t| (t.name.clone(), "Shared with the team"))
             .unwrap_or_else(|| ("Team".into(), "Shared with the team")),
         _ => ("Workspace".into(), "Shared with everyone"),
     };
-    let icon = match app.view_kind {
+    let icon = match app.view.view_kind {
         ViewKind::Issues => "\u{2261}",
         ViewKind::Projects => "\u{25a3}",
     };
@@ -64,7 +65,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let mut rows: Vec<(Line<'static>, Option<usize>)> = Vec::new();
     let mut last_scope = None;
     for (position, &index) in listed.iter().enumerate() {
-        let view = &app.custom_views[index];
+        let view = &app.store.custom_views[index];
         if last_scope != Some(view.shared) {
             last_scope = Some(view.shared);
             let (title, note) = if view.shared {
@@ -90,7 +91,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             rows.push((Line::from(caption), None));
         }
 
-        let selected = position == app.selected_view_index;
+        let selected = position == app.view.selected_view_index;
         let color = view
             .color
             .as_deref()
@@ -143,19 +144,19 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let height = area.height as usize;
     let sel_row = rows
         .iter()
-        .position(|(_, t)| *t == Some(app.selected_view_index))
+        .position(|(_, t)| *t == Some(app.view.selected_view_index))
         .unwrap_or(0);
-    let mut offset = app.tables.views.offset();
+    let mut offset = app.frame.offsets.views;
     if sel_row < offset {
         offset = sel_row.saturating_sub(1);
     } else if height > 0 && sel_row >= offset + height {
         offset = sel_row + 1 - height;
     }
     offset = offset.min(rows.len().saturating_sub(height));
-    *app.tables.views.offset_mut() = offset;
+    app.frame.offsets.views = offset;
 
     let visible: Vec<_> = rows.into_iter().skip(offset).take(height).collect();
-    app.row_targets = visible.iter().map(|(_, t)| *t).collect();
+    app.frame.row_targets = visible.iter().map(|(_, t)| *t).collect();
     f.render_widget(
         Paragraph::new(visible.into_iter().map(|(l, _)| l).collect::<Vec<_>>()),
         area,
@@ -170,7 +171,7 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
     for kind in [ViewKind::Issues, ViewKind::Projects] {
         let label = format!(" {} ", kind.label());
         let width = label.width() as u16;
-        let style = if kind == app.view_kind {
+        let style = if kind == app.view.view_kind {
             Style::default()
                 .fg(th.text)
                 .bg(th.selection_bg)
@@ -178,7 +179,7 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Style::default().fg(th.muted)
         };
-        app.chip_areas.push((
+        app.frame.chip_areas.push((
             Rect {
                 x,
                 y: area.y,
