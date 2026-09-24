@@ -67,7 +67,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     // A team's view lights its team's Views row; any other, the workspace's.
     let fallback = match app.nav {
         Nav::View(i) if !exact => Some(
-            match app.custom_views.get(i).and_then(|v| v.team.as_ref()) {
+            match app.store.custom_views.get(i).and_then(|v| v.team.as_ref()) {
                 Some(team) if app.current_team().is_some_and(|t| t.id == team.id) => {
                     Nav::Team(app.selected_team_index, TeamSection::Views)
                 }

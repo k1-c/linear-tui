@@ -1,10 +1,11 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 
 use crate::api::ids::*;
 use crate::api::types::*;
 use crate::config::{Config, Theme};
 use crate::grouping::{GroupBy, Preset, Section, group};
 use crate::message::{Message, Page, Request};
+pub use crate::store::{IssueSource, PerSource, Store, TeamContext};
 
 mod frame;
 mod input;
@@ -145,14 +146,6 @@ pub enum FilterKind {
     Priority,
 }
 
-/// One team's workflow states and members — what its issues can be moved to
-/// and assigned to.
-#[derive(Debug, Clone, Default)]
-pub struct TeamContext {
-    pub states: Vec<WorkflowState>,
-    pub members: Vec<User>,
-}
-
 /// Identifies one of the paginated sub-lists, for index clamping.
 #[derive(Debug, Clone, Copy)]
 enum Field {
@@ -180,7 +173,9 @@ pub struct App {
     /// What the last frame drew, for hit-testing and page-sized moves.
     pub frame: FrameState,
 
-    /// The five issue lists, addressed by [`IssueSource`].
+    /// Everything Linear has told us.
+    pub store: Store,
+    /// How each of the five issue lists is shaped on screen.
     pub lists: IssueLists,
 
     // Popup
@@ -188,28 +183,15 @@ pub struct App {
     pub popup_index: usize,
 
     // Teams
-    pub teams: Vec<Team>,
     pub selected_team_index: usize,
-    /// States and members of every team loaded so far. A status or assignee
-    /// must come from the issue's own team, and My Issues, views, projects
-    /// and cycles can hold issues of teams other than the selected one.
-    pub team_contexts: HashMap<TeamId, TeamContext>,
     /// Teams whose context is in flight, so each one is asked for once.
     team_contexts_pending: HashSet<TeamId>,
 
     // Saved views
-    pub custom_views: Vec<CustomView>,
-    pub views_loaded: bool,
     pub selected_view_index: usize,
-    /// Which view `view_issues` belongs to, so switching views refetches.
-    pub loaded_view_id: Option<CustomViewId>,
     /// Which tab the Views pages show.
     pub view_kind: ViewKind,
-    // Saved project views
-    pub view_projects: Vec<Project>,
-    pub view_projects_page_info: PageInfo,
     pub selected_view_project_index: usize,
-    pub loaded_view_projects_id: Option<CustomViewId>,
 
     // Sidebar
     pub sidebar_visible: bool,
@@ -217,8 +199,6 @@ pub struct App {
     /// True while the cursor is in the sidebar rather than the content pane.
     pub sidebar_focus: bool,
     pub sidebar_index: usize,
-    /// Favorites, in the order Linear's sidebar shows them.
-    pub favorites: Vec<Favorite>,
     /// Favorites folders the user has folded, by favorite id.
     pub collapsed_folders: HashSet<FavoriteId>,
 
@@ -228,7 +208,6 @@ pub struct App {
     pub collapsed_groups: HashSet<String>,
 
     // Issue detail
-    pub current_issue: Option<Issue>,
     /// Screen to return to when the detail view is closed.
     pub detail_return: Screen,
     /// Destination to return to with it — an issue opened from Favorites
@@ -249,24 +228,13 @@ pub struct App {
     /// Text the main loop should push to the system clipboard via OSC 52.
     pub pending_clipboard: Option<String>,
 
-    // Viewer (current user)
-    pub viewer_id: Option<UserId>,
-
-    // My Issues
-
     // Projects
-    pub projects: Vec<Project>,
     pub selected_project_index: usize,
     pub current_project: Option<Project>,
-    pub projects_loaded: bool,
-    pub projects_page_info: PageInfo,
 
     // Cycles
-    pub cycles: Vec<Cycle>,
     pub selected_cycle_index: usize,
     pub current_cycle: Option<Cycle>,
-    pub cycles_loaded: bool,
-    pub cycles_page_info: PageInfo,
 
     // Status
     pub status_message: Option<String>,
@@ -301,31 +269,22 @@ impl App {
             prefetched: HashSet::new(),
             nav: Nav::Team(0, TeamSection::Issues),
             frame: FrameState::default(),
+            store: Store::default(),
             lists: PerSource::from_fn(IssueList::new),
             popup: Popup::None,
             popup_index: 0,
-            teams: Vec::new(),
             selected_team_index: 0,
-            team_contexts: HashMap::new(),
             team_contexts_pending: HashSet::new(),
-            custom_views: Vec::new(),
-            views_loaded: false,
             selected_view_index: 0,
-            loaded_view_id: None,
             view_kind: ViewKind::default(),
-            view_projects: Vec::new(),
-            view_projects_page_info: PageInfo::default(),
             selected_view_project_index: 0,
-            loaded_view_projects_id: None,
             sidebar_visible: config.ui.sidebar,
             sidebar_width: config.ui.sidebar_width,
             sidebar_focus: false,
             sidebar_index: 0,
-            favorites: Vec::new(),
             collapsed_folders: HashSet::new(),
             group_by: GroupBy::from_config(config.ui.group_by),
             collapsed_groups: HashSet::new(),
-            current_issue: None,
             detail_return: Screen::IssueList,
             detail_return_nav: Nav::Team(0, TeamSection::Issues),
             detail_scroll: 0,
@@ -333,17 +292,10 @@ impl App {
             comment: Input::default(),
             new_issue: None,
             pending_clipboard: None,
-            viewer_id: None,
-            projects: Vec::new(),
             selected_project_index: 0,
             current_project: None,
-            projects_loaded: false,
-            projects_page_info: PageInfo::default(),
-            cycles: Vec::new(),
             selected_cycle_index: 0,
             current_cycle: None,
-            cycles_loaded: false,
-            cycles_page_info: PageInfo::default(),
             status_message: None,
             spinner_frame: 0,
             error_popup: None,
@@ -388,7 +340,7 @@ impl App {
     pub fn reload_current_tab(&mut self) {
         match self.nav {
             Nav::MyIssues => {
-                if let Some(user_id) = self.viewer_id.clone() {
+                if let Some(user_id) = self.store.viewer_id.clone() {
                     self.request(Request::MyIssues {
                         user_id,
                         after: None,
@@ -396,12 +348,12 @@ impl App {
                 }
             }
             Nav::Views | Nav::Team(_, TeamSection::Views) => {
-                if !self.views_loaded {
+                if !self.store.views_loaded {
                     self.request(Request::CustomViews);
                 }
             }
             Nav::View(index) => {
-                if let Some(view) = self.custom_views.get(index) {
+                if let Some(view) = self.store.custom_views.get(index) {
                     let view_id = view.id.clone();
                     self.request(match ViewKind::of(view) {
                         ViewKind::Issues => Request::ViewIssues {
@@ -447,21 +399,21 @@ impl App {
         self.global_search = None;
         self.prefetched.clear();
         match self.nav {
-            Nav::MyIssues => self.lists[IssueSource::My].loaded = false,
-            Nav::Views | Nav::Team(_, TeamSection::Views) => self.views_loaded = false,
+            Nav::MyIssues => self.store.issues[IssueSource::My].loaded = false,
+            Nav::Views | Nav::Team(_, TeamSection::Views) => self.store.views_loaded = false,
             Nav::View(_) => {
-                self.loaded_view_id = None;
-                self.loaded_view_projects_id = None;
+                self.store.loaded_view_id = None;
+                self.store.loaded_view_projects_id = None;
             }
-            Nav::Team(_, TeamSection::Projects) => self.projects_loaded = false,
-            Nav::Team(_, TeamSection::Cycles) => self.cycles_loaded = false,
+            Nav::Team(_, TeamSection::Projects) => self.store.projects.loaded = false,
+            Nav::Team(_, TeamSection::Cycles) => self.store.cycles.loaded = false,
             Nav::Team(_, TeamSection::Issues) | Nav::Favorite(_) => {}
         }
         if self.screen == Screen::ProjectDetail {
-            self.lists[IssueSource::Project].loaded = false;
+            self.store.issues[IssueSource::Project].loaded = false;
         }
         if self.screen == Screen::CycleDetail {
-            self.lists[IssueSource::Cycle].loaded = false;
+            self.store.issues[IssueSource::Cycle].loaded = false;
         }
         self.reload_current_tab();
         self.queue_detail_fetches();
@@ -471,7 +423,7 @@ impl App {
     pub fn queue_detail_fetches(&mut self) {
         match self.screen {
             Screen::IssueDetail => {
-                if let Some(issue) = &self.current_issue
+                if let Some(issue) = &self.store.current_issue
                     && issue.comments.is_none()
                 {
                     let issue_id = issue.id.clone();
@@ -479,7 +431,7 @@ impl App {
                 }
             }
             Screen::ProjectDetail => {
-                if !self.lists[IssueSource::Project].loaded
+                if !self.store.issues[IssueSource::Project].loaded
                     && let Some(project) = &self.current_project
                 {
                     let project_id = project.id.clone();
@@ -490,7 +442,7 @@ impl App {
                 }
             }
             Screen::CycleDetail => {
-                if !self.lists[IssueSource::Cycle].loaded
+                if !self.store.issues[IssueSource::Cycle].loaded
                     && let Some(cycle) = &self.current_cycle
                 {
                     let cycle_id = cycle.id.clone();
@@ -516,7 +468,7 @@ impl App {
                 {
                     self.selected_team_index = idx;
                 }
-                self.teams = teams;
+                self.store.teams = teams;
                 self.nav = Nav::Team(self.selected_team_index, TeamSection::Issues);
                 if let Some(team_id) = self.team_id() {
                     self.ensure_team_context(team_id.clone());
@@ -528,7 +480,7 @@ impl App {
                 }
             }
             Message::Viewer(id) => {
-                self.viewer_id = Some(id);
+                self.store.viewer_id = Some(id);
                 if self.nav == Nav::MyIssues {
                     self.reload_current_tab();
                 }
@@ -542,7 +494,8 @@ impl App {
                 // team, so it can only ever be offered for that team's issues.
                 self.team_contexts_pending.remove(&team_id);
                 let waiting = self.popup_team_id() == Some(&team_id);
-                self.team_contexts
+                self.store
+                    .team_contexts
                     .insert(team_id, TeamContext { states, members });
                 // A popup opened while this was loading starts on the
                 // issue's current value, as it would have if it were cached.
@@ -580,8 +533,8 @@ impl App {
                 }
                 self.nav = Nav::Team(self.selected_team_index, TeamSection::Issues);
                 self.screen = Screen::IssueList;
-                self.lists[IssueSource::Team].issues = issues;
-                self.lists[IssueSource::Team].page_info = PageInfo::default();
+                self.store.issues[IssueSource::Team].items = issues;
+                self.store.issues[IssueSource::Team].page_info = PageInfo::default();
                 self.lists[IssueSource::Team].filters.clear();
                 // Search answers "where is it", done or not; the Active slice
                 // would quietly hide half the matches. Set without refetching,
@@ -596,53 +549,39 @@ impl App {
                     return;
                 }
                 let append = page.append;
-                Self::merge(
-                    &mut self.view_projects,
-                    page,
-                    &mut self.view_projects_page_info,
-                );
+                self.store.view_projects.accept(page);
                 if !append {
                     self.selected_view_project_index = 0;
                 }
-                self.loaded_view_projects_id = Some(view_id);
+                self.store.loaded_view_projects_id = Some(view_id);
                 self.clear_status();
             }
             Message::Projects { team_id, page } => {
                 if !self.is_current_team(&team_id) {
                     return;
                 }
-                Self::merge(&mut self.projects, page, &mut self.projects_page_info);
+                self.store.projects.accept(page);
                 self.clamp(Field::Projects);
-                self.projects_loaded = true;
                 self.clear_status();
             }
             Message::Cycles { team_id, page } => {
                 if !self.is_current_team(&team_id) {
                     return;
                 }
-                Self::merge(&mut self.cycles, page, &mut self.cycles_page_info);
+                self.store.cycles.accept(page);
                 self.clamp(Field::Cycles);
-                self.cycles_loaded = true;
                 self.clear_status();
             }
             Message::CustomViews(views) => {
                 // Keep the open view pointing at the same view across a refetch;
                 // the index alone would silently swap which one is on screen.
                 let open = match self.nav {
-                    Nav::View(i) => self.custom_views.get(i).map(|v| v.id.clone()),
+                    Nav::View(i) => self.store.custom_views.get(i).map(|v| v.id.clone()),
                     _ => None,
                 };
-                let mut views = views;
-                // Linear's Views page lists personal views above workspace ones.
-                views.sort_by(|a, b| {
-                    a.shared
-                        .cmp(&b.shared)
-                        .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-                });
-                self.custom_views = views;
-                self.views_loaded = true;
+                self.store.set_custom_views(views);
                 if let Some(id) = open {
-                    match self.custom_views.iter().position(|v| v.id == id) {
+                    match self.store.custom_views.iter().position(|v| v.id == id) {
                         Some(i) => self.nav = Nav::View(i),
                         None => self.activate(Nav::Views),
                     }
@@ -651,19 +590,16 @@ impl App {
                     .selected_view_index
                     .min(self.listed_views().len().saturating_sub(1));
             }
-            Message::Favorites(mut favorites) => {
-                favorites.sort_by(|a, b| a.sort_order.total_cmp(&b.sort_order));
-                self.favorites = favorites;
-            }
+            Message::Favorites(favorites) => self.store.set_favorites(favorites),
             Message::ViewIssues { view_id, page } => {
                 if !self.accepts_view_page(&view_id, page.append, ViewKind::Issues) {
                     return;
                 }
-                self.loaded_view_id = Some(view_id);
+                self.store.loaded_view_id = Some(view_id);
                 self.accept_issue_page(IssueSource::View, page);
                 self.clear_status();
             }
-            Message::IssueDetail(issue) => self.refresh_issue(*issue),
+            Message::IssueDetail(issue) => self.store.refresh_issue(*issue),
             Message::ProjectIssues { project_id, page } => {
                 if self.current_project.as_ref().map(|p| &p.id) != Some(&project_id) {
                     return;
@@ -687,7 +623,7 @@ impl App {
                 // the cursor on it — found by id, since grouping decides where
                 // in the list it lands.
                 let id = issue.id.clone();
-                self.lists[IssueSource::Team].issues.insert(0, *issue);
+                self.store.issues[IssueSource::Team].items.insert(0, *issue);
                 if self.issue_source() == IssueSource::Team && self.screen == Screen::IssueList {
                     self.restore_issue_selection(Some(&id));
                 }
@@ -729,12 +665,12 @@ impl App {
     fn accepts_view_page(&self, view_id: &CustomViewId, append: bool, kind: ViewKind) -> bool {
         if append {
             let loaded = match kind {
-                ViewKind::Issues => &self.loaded_view_id,
-                ViewKind::Projects => &self.loaded_view_projects_id,
+                ViewKind::Issues => &self.store.loaded_view_id,
+                ViewKind::Projects => &self.store.loaded_view_projects_id,
             };
             return loaded.as_ref() == Some(view_id);
         }
-        matches!(self.nav, Nav::View(i) if self.custom_views.get(i).is_some_and(|v| &v.id == view_id))
+        matches!(self.nav, Nav::View(i) if self.store.custom_views.get(i).is_some_and(|v| &v.id == view_id))
     }
 
     /// Fold a page into one of the issue lists, keeping the cursor on the
@@ -751,9 +687,7 @@ impl App {
             None
         };
         let append = page.append;
-        let list = &mut self.lists[source];
-        Self::merge_issues(&mut list.issues, page, &mut list.page_info);
-        list.loaded = true;
+        self.store.issues[source].accept_issues(page);
         if on_screen {
             self.restore_issue_selection(keep.as_ref());
         } else if !append {
@@ -761,58 +695,17 @@ impl App {
         }
     }
 
-    /// Take a freshly fetched issue as the truth for every copy we hold.
-    ///
-    /// List copies keep their own `comments`: whether a copy has its thread
-    /// loaded is what decides that opening it fetches the detail.
-    fn refresh_issue(&mut self, fresh: Issue) {
-        let id = fresh.id.clone();
-        self.patch_issue(&id, |issue| {
-            let comments = issue.comments.take();
-            *issue = fresh.clone();
-            issue.comments = comments;
-        });
-        if let Some(current) = &mut self.current_issue
-            && current.id == id
-        {
-            *current = fresh;
-        }
-    }
-
-    /// [`Self::merge`] for issue lists, dropping any issue already held.
-    ///
-    /// Pages are ordered by `updatedAt`, so an issue touched between two page
-    /// fetches moves and can come back on both; without this it would be
-    /// listed twice.
-    fn merge_issues(dst: &mut Vec<Issue>, page: Page<Issue>, info: &mut PageInfo) {
-        let append = page.append;
-        Self::merge(dst, page, info);
-        if append {
-            let mut seen = HashSet::new();
-            dst.retain(|issue| seen.insert(issue.id.clone()));
-        }
-    }
-
-    /// Fold one page into a list, either replacing it or extending it.
-    fn merge<T>(dst: &mut Vec<T>, page: Page<T>, info: &mut PageInfo) {
-        let Page {
-            mut items,
-            page_info,
-            append,
-        } = page;
-        if append {
-            dst.append(&mut items);
-        } else {
-            *dst = items;
-        }
-        *info = page_info;
-    }
-
     /// Keep a selection index inside its (possibly shrunken) list.
     fn clamp(&mut self, field: Field) {
         let (len, index) = match field {
-            Field::Projects => (self.projects.len(), &mut self.selected_project_index),
-            Field::Cycles => (self.cycles.len(), &mut self.selected_cycle_index),
+            Field::Projects => (
+                self.store.projects.items.len(),
+                &mut self.selected_project_index,
+            ),
+            Field::Cycles => (
+                self.store.cycles.items.len(),
+                &mut self.selected_cycle_index,
+            ),
         };
         *index = (*index).min(len.saturating_sub(1));
     }
@@ -820,7 +713,7 @@ impl App {
     // -------------------------------------------------------------- selections
 
     pub fn current_team(&self) -> Option<&Team> {
-        self.teams.get(self.selected_team_index)
+        self.store.teams.get(self.selected_team_index)
     }
 
     fn selected_issue_id(&self) -> Option<IssueId> {
@@ -846,15 +739,15 @@ impl App {
     /// Whether the project list on screen is a saved project view's rather
     /// than the team's.
     fn in_project_view(&self) -> bool {
-        matches!(self.nav, Nav::View(i) if self.custom_views.get(i).is_some_and(|v| ViewKind::of(v) == ViewKind::Projects))
+        matches!(self.nav, Nav::View(i) if self.store.custom_views.get(i).is_some_and(|v| ViewKind::of(v) == ViewKind::Projects))
     }
 
     /// The projects the project list is showing.
     pub fn project_rows(&self) -> &[Project] {
         if self.in_project_view() {
-            &self.view_projects
+            &self.store.view_projects.items
         } else {
-            &self.projects
+            &self.store.projects.items
         }
     }
 
@@ -889,7 +782,7 @@ impl App {
     /// page.
     fn views_scope(&self) -> Option<&TeamId> {
         match self.nav {
-            Nav::Team(index, TeamSection::Views) => self.teams.get(index).map(|t| &t.id),
+            Nav::Team(index, TeamSection::Views) => self.store.teams.get(index).map(|t| &t.id),
             _ => None,
         }
     }
@@ -901,7 +794,8 @@ impl App {
     /// or project views.
     pub fn listed_views(&self) -> Vec<usize> {
         let scope = self.views_scope();
-        self.custom_views
+        self.store
+            .custom_views
             .iter()
             .enumerate()
             .filter(|(_, v)| v.team.as_ref().map(|t| &t.id) == scope)
@@ -929,6 +823,7 @@ impl App {
         match nav {
             Nav::View(i)
                 if self
+                    .store
                     .custom_views
                     .get(i)
                     .is_some_and(|v| ViewKind::of(v) == ViewKind::Projects) =>
@@ -940,14 +835,15 @@ impl App {
     }
 
     fn maybe_prefetch_cycles(&mut self) {
-        if self.selected_cycle_index + PREFETCH_MARGIN < self.cycles.len()
-            || !self.cycles_page_info.has_next_page
+        if self.selected_cycle_index + PREFETCH_MARGIN < self.store.cycles.items.len()
+            || !self.store.cycles.page_info.has_next_page
         {
             return;
         }
-        if let (Some(team_id), Some(cursor)) =
-            (self.team_id(), self.cycles_page_info.end_cursor.clone())
-            && self.prefetched.insert(cursor.clone())
+        if let (Some(team_id), Some(cursor)) = (
+            self.team_id(),
+            self.store.cycles.page_info.end_cursor.clone(),
+        ) && self.prefetched.insert(cursor.clone())
         {
             self.request(Request::Cycles {
                 team_id,
@@ -972,7 +868,7 @@ impl App {
     /// Cycles, Projects) when already on one of the team's pages.
     pub fn select_team(&mut self) {
         self.popup = Popup::None;
-        if self.popup_index >= self.teams.len() {
+        if self.popup_index >= self.store.teams.len() {
             return;
         }
         let section = match self.nav {
@@ -1033,16 +929,13 @@ impl App {
     /// The team `issue` belongs to. An issue that does not say is taken to be
     /// the selected team's.
     pub fn issue_team_id<'a>(&'a self, issue: &'a Issue) -> Option<&'a TeamId> {
-        issue
-            .team
-            .as_ref()
-            .map(|team| &team.id)
-            .or_else(|| self.current_team().map(|t| &t.id))
+        self.store
+            .issue_team_id(issue, self.current_team().map(|t| &t.id))
     }
 
     /// Ask for a team's states and members, unless they are loaded or on the way.
     fn ensure_team_context(&mut self, team_id: TeamId) {
-        if self.team_contexts.contains_key(&team_id)
+        if self.store.team_contexts.contains_key(&team_id)
             || !self.team_contexts_pending.insert(team_id.clone())
         {
             return;
@@ -1061,7 +954,7 @@ impl App {
     }
 
     fn popup_context(&self) -> Option<&TeamContext> {
-        self.team_contexts.get(self.popup_team_id()?)
+        self.store.team_contexts.get(self.popup_team_id()?)
     }
 
     /// True while a change popup waits for its issue's team to load.
@@ -1071,7 +964,7 @@ impl App {
             Popup::Filter(FilterKind::Status) => self
                 .list_team_ids()
                 .iter()
-                .any(|id| !self.team_contexts.contains_key(id)),
+                .any(|id| !self.store.team_contexts.contains_key(id)),
             _ => false,
         }
     }
@@ -1090,7 +983,7 @@ impl App {
     /// appearance; the selected team when the list is empty.
     fn list_team_ids(&self) -> Vec<TeamId> {
         let mut ids: Vec<TeamId> = Vec::new();
-        for issue in &self.list().issues {
+        for issue in &self.store.issues[self.issue_source()].items {
             if let Some(id) = self.issue_team_id(issue)
                 && !ids.contains(id)
             {
@@ -1108,7 +1001,7 @@ impl App {
     pub fn filter_states(&self) -> Vec<&WorkflowState> {
         let mut states: Vec<&WorkflowState> = Vec::new();
         for id in self.list_team_ids() {
-            let Some(context) = self.team_contexts.get(&id) else {
+            let Some(context) = self.store.team_contexts.get(&id) else {
                 continue;
             };
             for state in &context.states {
@@ -1136,21 +1029,16 @@ impl App {
 
     /// Linear's `I` — assign the focused issue to the current user.
     pub fn assign_to_me(&mut self) {
-        let Some(viewer_id) = self.viewer_id.clone() else {
+        let Some(viewer_id) = self.store.viewer_id.clone() else {
             self.set_status("Current user is not loaded yet");
             return;
         };
         let Some(issue_id) = self.focused_issue().map(|i| i.id.clone()) else {
             return;
         };
-        // The viewer is the same user in every team they belong to.
-        let me = self
-            .team_contexts
-            .values()
-            .flat_map(|c| &c.members)
-            .find(|u| u.id == viewer_id)
-            .cloned();
-        self.patch_issue(&issue_id, |i| i.assignee = me.clone());
+        let me = self.store.viewer().cloned();
+        self.store
+            .patch_issue(&issue_id, |i| i.assignee = me.clone());
         self.request(Request::UpdateAssignee {
             issue_id,
             assignee_id: Some(viewer_id),
@@ -1162,7 +1050,7 @@ impl App {
         let Some(issue_id) = self.focused_issue().map(|i| i.id.clone()) else {
             return;
         };
-        self.patch_issue(&issue_id, |i| {
+        self.store.patch_issue(&issue_id, |i| {
             i.priority = priority;
             i.priority_label = Some(priority.label().to_string());
         });
@@ -1184,7 +1072,7 @@ impl App {
             let body = self.comment.value.clone();
             // Drop the cached comments so the detail view refetches them once
             // the mutation lands.
-            if let Some(current) = &mut self.current_issue
+            if let Some(current) = &mut self.store.current_issue
                 && current.id == issue_id
             {
                 current.comments = None;
@@ -1197,20 +1085,6 @@ impl App {
 
     // -------------------------------------------------------------- mutations
 
-    /// Apply `f` to every copy of the issue we hold, so the UI updates without a refetch.
-    fn patch_issue(&mut self, issue_id: &IssueId, f: impl Fn(&mut Issue)) {
-        for list in self.lists.iter_mut().map(|l| &mut l.issues) {
-            for issue in list.iter_mut().filter(|i| &i.id == issue_id) {
-                f(issue);
-            }
-        }
-        if let Some(current) = &mut self.current_issue
-            && &current.id == issue_id
-        {
-            f(current);
-        }
-    }
-
     pub fn apply_status_selection(&mut self) {
         // Nothing to pick while the issue's team loads; the popup stays open.
         let Some(state) = self.popup_states().get(self.popup_index).cloned() else {
@@ -1218,7 +1092,8 @@ impl App {
         };
         if let Popup::StatusChange(issue_id) = self.take_popup() {
             let state_id = state.id.clone();
-            self.patch_issue(&issue_id, |i| i.state = Some(state.clone()));
+            self.store
+                .patch_issue(&issue_id, |i| i.state = Some(state.clone()));
             self.request(Request::UpdateStatus { issue_id, state_id });
         }
     }
@@ -1226,7 +1101,7 @@ impl App {
     pub fn apply_priority_selection(&mut self) {
         if let Popup::PriorityChange(issue_id) = self.take_popup() {
             let priority = Priority::from_index(self.popup_index);
-            self.patch_issue(&issue_id, |i| {
+            self.store.patch_issue(&issue_id, |i| {
                 i.priority = priority;
                 i.priority_label = Some(priority.label().to_string());
             });
@@ -1246,7 +1121,8 @@ impl App {
         };
         if let Popup::AssigneeChange(issue_id) = self.take_popup() {
             let assignee_id = assignee.as_ref().map(|u| u.id.clone());
-            self.patch_issue(&issue_id, |i| i.assignee = assignee.clone());
+            self.store
+                .patch_issue(&issue_id, |i| i.assignee = assignee.clone());
             self.request(Request::UpdateAssignee {
                 issue_id,
                 assignee_id,
@@ -1266,10 +1142,7 @@ impl App {
             Popup::StatusChange(id) | Popup::PriorityChange(id) | Popup::AssigneeChange(id) => id,
             _ => return None,
         };
-        self.current_issue
-            .iter()
-            .chain(IssueSource::ALL.iter().flat_map(|&s| &self.lists[s].issues))
-            .find(|issue| &issue.id == id)
+        self.store.issue(id)
     }
 
     /// Close the popup, handing back what it was open for.
@@ -1308,7 +1181,7 @@ impl App {
 
     pub fn popup_list_len(&self) -> usize {
         match self.popup {
-            Popup::TeamSelect => self.teams.len(),
+            Popup::TeamSelect => self.store.teams.len(),
             // Each filter list starts with an "any" row.
             Popup::Filter(FilterKind::Status) => self.filter_states().len() + 1,
             Popup::Filter(FilterKind::Priority) => Priority::ALL.len() + 1,
@@ -1394,7 +1267,11 @@ impl App {
                 self.maybe_prefetch_projects();
             }
             Screen::CycleList => {
-                Self::nav_by(self.cycles.len(), &mut self.selected_cycle_index, delta);
+                Self::nav_by(
+                    self.store.cycles.items.len(),
+                    &mut self.selected_cycle_index,
+                    delta,
+                );
                 self.maybe_prefetch_cycles();
             }
             Screen::ViewList => {
@@ -1419,7 +1296,7 @@ impl App {
         if self.screen != Screen::IssueDetail {
             return;
         }
-        let Some(current) = &self.current_issue else {
+        let Some(current) = &self.store.current_issue else {
             return;
         };
         // One grouping pass serves the position, the neighbour, and the count.
@@ -1442,7 +1319,7 @@ impl App {
 
     /// Where the open issue sits in the list it came from: `(index, total)`.
     pub fn detail_position(&self) -> Option<(usize, usize)> {
-        let current = self.current_issue.as_ref()?;
+        let current = self.store.current_issue.as_ref()?;
         let issues = self.visible_issues();
         let index = issues.iter().position(|i| i.id == current.id)?;
         Some((index, issues.len()))
@@ -1450,7 +1327,7 @@ impl App {
 
     /// Drop the cached issue detail and fetch it again.
     pub fn refresh_detail(&mut self) {
-        if let Some(issue) = &mut self.current_issue {
+        if let Some(issue) = &mut self.store.current_issue {
             issue.comments = None;
         }
         self.queue_detail_fetches();
@@ -1729,7 +1606,7 @@ impl App {
             self.detail_return = self.screen;
             self.detail_return_nav = self.nav;
         }
-        self.current_issue = Some(issue.clone());
+        self.store.current_issue = Some(issue.clone());
         self.detail_scroll = 0;
         self.screen = Screen::IssueDetail;
         self.queue_detail_fetches();
@@ -1763,7 +1640,7 @@ impl App {
         // crosses team boundaries without the team-switch popup.
         if let Nav::Team(index, _) = nav
             && index != self.selected_team_index
-            && index < self.teams.len()
+            && index < self.store.teams.len()
         {
             self.select_team_index(index);
         }
@@ -1780,18 +1657,18 @@ impl App {
         self.sidebar_focus = false;
 
         let cached = match nav {
-            Nav::MyIssues => self.lists[IssueSource::My].loaded,
-            Nav::Views | Nav::Team(_, TeamSection::Views) => self.views_loaded,
-            Nav::View(index) => self.custom_views.get(index).is_some_and(|view| {
+            Nav::MyIssues => self.store.issues[IssueSource::My].loaded,
+            Nav::Views | Nav::Team(_, TeamSection::Views) => self.store.views_loaded,
+            Nav::View(index) => self.store.custom_views.get(index).is_some_and(|view| {
                 let loaded = match ViewKind::of(view) {
-                    ViewKind::Issues => &self.loaded_view_id,
-                    ViewKind::Projects => &self.loaded_view_projects_id,
+                    ViewKind::Issues => &self.store.loaded_view_id,
+                    ViewKind::Projects => &self.store.loaded_view_projects_id,
                 };
                 loaded.as_ref() == Some(&view.id)
             }),
-            Nav::Team(_, TeamSection::Issues) => self.lists[IssueSource::Team].loaded,
-            Nav::Team(_, TeamSection::Projects) => self.projects_loaded,
-            Nav::Team(_, TeamSection::Cycles) => self.cycles_loaded,
+            Nav::Team(_, TeamSection::Issues) => self.store.issues[IssueSource::Team].loaded,
+            Nav::Team(_, TeamSection::Projects) => self.store.projects.loaded,
+            Nav::Team(_, TeamSection::Cycles) => self.store.cycles.loaded,
             Nav::Favorite(_) => true,
         };
         if let Nav::View(_) = nav
@@ -1799,9 +1676,9 @@ impl App {
         {
             // A different view's rows are still in the list; clear them so
             // the old results are not briefly attributed to the new view.
-            self.lists[IssueSource::View].reset();
-            self.view_projects.clear();
-            self.view_projects_page_info = PageInfo::default();
+            self.reset_list(IssueSource::View);
+            self.store.view_projects.items.clear();
+            self.store.view_projects.page_info = PageInfo::default();
             self.selected_view_project_index = 0;
         }
         if !cached {
@@ -1833,13 +1710,13 @@ impl App {
     fn select_team_index(&mut self, index: usize) {
         self.selected_team_index = index;
         // The old team's cursors mean nothing to the new team's lists.
-        self.lists[IssueSource::Team].reset();
-        self.projects_page_info = PageInfo::default();
-        self.cycles_page_info = PageInfo::default();
+        self.reset_list(IssueSource::Team);
+        self.store.projects.page_info = PageInfo::default();
+        self.store.cycles.page_info = PageInfo::default();
         // The old team's projects and cycles would otherwise sit on screen,
         // under the new team's name, until the refetch lands.
-        self.projects.clear();
-        self.cycles.clear();
+        self.store.projects.items.clear();
+        self.store.cycles.items.clear();
         self.selected_project_index = 0;
         self.selected_cycle_index = 0;
         self.lists[IssueSource::Team].filters.clear();
@@ -1850,12 +1727,12 @@ impl App {
     }
 
     pub fn invalidate_tab_caches(&mut self) {
-        self.lists[IssueSource::My].loaded = false;
-        self.loaded_view_id = None;
-        self.projects_loaded = false;
-        self.cycles_loaded = false;
-        self.lists[IssueSource::Project].loaded = false;
-        self.lists[IssueSource::Cycle].loaded = false;
+        self.store.issues[IssueSource::My].loaded = false;
+        self.store.loaded_view_id = None;
+        self.store.projects.loaded = false;
+        self.store.cycles.loaded = false;
+        self.store.issues[IssueSource::Project].loaded = false;
+        self.store.issues[IssueSource::Cycle].loaded = false;
     }
 
     // Project navigation
@@ -1867,21 +1744,27 @@ impl App {
 
     fn open_project(&mut self, project: Project) {
         self.current_project = Some(project);
-        self.lists[IssueSource::Project].reset();
+        self.reset_list(IssueSource::Project);
         self.screen = Screen::ProjectDetail;
         self.queue_detail_fetches();
     }
 
     // Cycle navigation
     pub fn open_cycle_detail(&mut self) {
-        if let Some(cycle) = self.cycles.get(self.selected_cycle_index).cloned() {
+        if let Some(cycle) = self
+            .store
+            .cycles
+            .items
+            .get(self.selected_cycle_index)
+            .cloned()
+        {
             self.open_cycle(cycle);
         }
     }
 
     fn open_cycle(&mut self, cycle: Cycle) {
         self.current_cycle = Some(cycle);
-        self.lists[IssueSource::Cycle].reset();
+        self.reset_list(IssueSource::Cycle);
         self.screen = Screen::CycleDetail;
         self.queue_detail_fetches();
     }

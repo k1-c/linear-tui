@@ -89,6 +89,7 @@ fn numbered_item(
 fn draw_team_select(f: &mut Frame, app: &mut App) {
     let th = app.theme;
     let items: Vec<ListItem> = app
+        .store
         .teams
         .iter()
         .enumerate()

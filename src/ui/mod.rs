@@ -244,7 +244,7 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
         // The page itself (project, cycle, issue) is added below.
         Nav::Favorite(_) => crumbs.push(dim("Favorites".into())),
         Nav::View(i) => {
-            let view = app.custom_views.get(i);
+            let view = app.store.custom_views.get(i);
             // A team's view sits under that team, as in Linear.
             if let Some(team) = view.and_then(|v| v.team.as_ref()) {
                 if let Some(color) = team.color.as_deref().and_then(crate::api::types::hex_color) {
@@ -297,7 +297,7 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
             }
         }
         Screen::IssueDetail => {
-            if let Some(issue) = &app.current_issue {
+            if let Some(issue) = &app.store.current_issue {
                 match app.detail_return {
                     Screen::ProjectDetail => {
                         if let Some(p) = &app.current_project {

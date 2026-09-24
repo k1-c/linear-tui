@@ -64,7 +64,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     app.frame.list_area = list;
     app.frame.list_viewport = list.height;
 
-    if app.cycles.is_empty() {
+    if app.store.cycles.items.is_empty() {
         app.frame.row_targets.clear();
         let message = if app.loading() {
             format!("{} Loading cycles\u{2026}", app.spinner_symbol())
@@ -95,7 +95,9 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 
     let now = now_iso();
     let lines: Vec<Line> = app
+        .store
         .cycles
+        .items
         .iter()
         .enumerate()
         .skip(offset)

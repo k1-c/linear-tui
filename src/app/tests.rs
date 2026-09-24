@@ -15,8 +15,8 @@ fn issue(id: &str, identifier: &str, title: &str) -> Issue {
 fn app_with(issues: Vec<Issue>) -> App {
     let mut app = App::new(&Config::default());
     // Every list response names the team it was fetched for.
-    app.teams = vec![team("t", "Core")];
-    app.lists[IssueSource::Team].issues = issues;
+    app.store.teams = vec![team("t", "Core")];
+    app.store.issues[IssueSource::Team].items = issues;
     app.requests.clear();
     app
 }
@@ -154,9 +154,9 @@ fn priority_filter_narrows_the_list() {
 #[test]
 fn a_priority_change_updates_every_copy_of_the_issue() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-    app.lists[IssueSource::My].issues = vec![issue("1", "ENG-1", "a")];
-    app.lists[IssueSource::View].issues = vec![issue("1", "ENG-1", "a")];
-    app.current_issue = Some(issue("1", "ENG-1", "a"));
+    app.store.issues[IssueSource::My].items = vec![issue("1", "ENG-1", "a")];
+    app.store.issues[IssueSource::View].items = vec![issue("1", "ENG-1", "a")];
+    app.store.current_issue = Some(issue("1", "ENG-1", "a"));
     app.screen = Screen::IssueDetail;
     app.open_priority_change();
     app.popup_index = Priority::High.as_index();
@@ -164,18 +164,21 @@ fn a_priority_change_updates_every_copy_of_the_issue() {
     app.apply_priority_selection();
 
     assert_eq!(
-        app.lists[IssueSource::Team].issues[0].priority,
+        app.store.issues[IssueSource::Team].items[0].priority,
         Priority::High
     );
     assert_eq!(
-        app.lists[IssueSource::My].issues[0].priority,
+        app.store.issues[IssueSource::My].items[0].priority,
         Priority::High
     );
     assert_eq!(
-        app.lists[IssueSource::View].issues[0].priority,
+        app.store.issues[IssueSource::View].items[0].priority,
         Priority::High
     );
-    assert_eq!(app.current_issue.as_ref().unwrap().priority, Priority::High);
+    assert_eq!(
+        app.store.current_issue.as_ref().unwrap().priority,
+        Priority::High
+    );
     assert_eq!(app.popup, Popup::None);
 }
 
@@ -218,7 +221,7 @@ fn appending_a_page_extends_the_list() {
         preset: Preset::Active,
         page: Page::new(vec![issue("2", "ENG-2", "b")], PageInfo::default(), true),
     });
-    assert_eq!(app.lists[IssueSource::Team].issues.len(), 2);
+    assert_eq!(app.store.issues[IssueSource::Team].items.len(), 2);
 }
 
 /// Regression: scrolling near the bottom while the next page was still in
@@ -230,8 +233,9 @@ fn a_page_is_requested_once_while_scrolling() {
             .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), "t"))
             .collect(),
     );
-    app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
-    app.lists[IssueSource::Team].page_info = PageInfo {
+    app.store.teams =
+        vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+    app.store.issues[IssueSource::Team].page_info = PageInfo {
         has_next_page: true,
         end_cursor: Some("c1".into()),
     };
@@ -258,8 +262,8 @@ fn an_appended_page_never_duplicates_an_issue() {
             true,
         ),
     });
-    let ids: Vec<_> = app.lists[IssueSource::Team]
-        .issues
+    let ids: Vec<_> = app.store.issues[IssueSource::Team]
+        .items
         .iter()
         .map(|i| i.id.as_str())
         .collect();
@@ -281,7 +285,7 @@ fn a_fresh_page_replaces_the_list_and_keeps_the_selection() {
             false,
         ),
     });
-    assert_eq!(app.lists[IssueSource::Team].issues.len(), 2);
+    assert_eq!(app.store.issues[IssueSource::Team].items.len(), 2);
     assert_eq!(app.lists[IssueSource::Team].selected, 0);
 }
 
@@ -325,7 +329,7 @@ fn a_short_body_cannot_scroll_at_all() {
 #[test]
 fn switching_to_a_cached_tab_does_not_refetch() {
     let mut app = app_with(vec![]);
-    app.projects_loaded = true;
+    app.store.projects.loaded = true;
     app.go_to_team_section(TeamSection::Projects);
     assert_eq!(app.screen, Screen::ProjectList);
     assert!(app.requests.is_empty());
@@ -334,7 +338,8 @@ fn switching_to_a_cached_tab_does_not_refetch() {
 #[test]
 fn switching_to_an_uncached_tab_fetches_it() {
     let mut app = app_with(vec![]);
-    app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+    app.store.teams =
+        vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
     app.go_to_team_section(TeamSection::Cycles);
     assert!(matches!(app.requests.front(), Some(Request::Cycles { .. })));
 }
@@ -342,20 +347,20 @@ fn switching_to_an_uncached_tab_fetches_it() {
 #[test]
 fn changing_team_invalidates_the_other_tabs() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-    app.teams = vec![
+    app.store.teams = vec![
         serde_json::from_str(r#"{"id":"t1","name":"Core","key":"ENG"}"#).unwrap(),
         serde_json::from_str(r#"{"id":"t2","name":"Ops","key":"OPS"}"#).unwrap(),
     ];
-    app.projects_loaded = true;
-    app.lists[IssueSource::My].loaded = true;
+    app.store.projects.loaded = true;
+    app.store.issues[IssueSource::My].loaded = true;
     app.popup_index = 1;
 
     app.select_team();
 
     assert_eq!(app.selected_team_index, 1);
-    assert!(!app.projects_loaded);
-    assert!(!app.lists[IssueSource::My].loaded);
-    assert!(app.lists[IssueSource::Team].issues.is_empty());
+    assert!(!app.store.projects.loaded);
+    assert!(!app.store.issues[IssueSource::My].loaded);
+    assert!(app.store.issues[IssueSource::Team].items.is_empty());
 }
 
 // ------------------------------------------------------------ new issue
@@ -363,7 +368,8 @@ fn changing_team_invalidates_the_other_tabs() {
 #[test]
 fn creating_an_issue_requires_a_title() {
     let mut app = app_with(vec![]);
-    app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+    app.store.teams =
+        vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
     app.start_new_issue();
     app.submit_new_issue();
     assert!(app.requests.is_empty());
@@ -373,7 +379,8 @@ fn creating_an_issue_requires_a_title() {
 #[test]
 fn a_completed_form_queues_a_create_request() {
     let mut app = app_with(vec![]);
-    app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+    app.store.teams =
+        vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
     app.start_new_issue();
     if let Some(form) = &mut app.new_issue {
         form.title.value = "Ship it".into();
@@ -411,7 +418,10 @@ fn a_created_issue_appears_at_the_top() {
         team_id: "t".into(),
         issue: Box::new(issue("2", "ENG-2", "new")),
     });
-    assert_eq!(app.lists[IssueSource::Team].issues[0].identifier, "ENG-2");
+    assert_eq!(
+        app.store.issues[IssueSource::Team].items[0].identifier,
+        "ENG-2"
+    );
     assert_eq!(app.lists[IssueSource::Team].selected, 0);
 }
 
@@ -437,8 +447,8 @@ fn copying_an_identifier_queues_the_clipboard_write() {
 #[test]
 fn assign_to_me_sets_the_viewer_as_assignee() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-    app.viewer_id = Some("u1".into());
-    app.team_contexts.insert(
+    app.store.viewer_id = Some("u1".into());
+    app.store.team_contexts.insert(
         "t".into(),
         TeamContext {
             states: Vec::new(),
@@ -449,7 +459,7 @@ fn assign_to_me_sets_the_viewer_as_assignee() {
     app.assign_to_me();
 
     assert_eq!(
-        app.lists[IssueSource::Team].issues[0]
+        app.store.issues[IssueSource::Team].items[0]
             .assignee
             .as_ref()
             .unwrap()
@@ -465,7 +475,7 @@ fn assign_to_me_sets_the_viewer_as_assignee() {
 #[test]
 fn assign_to_me_waits_for_the_viewer() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-    app.viewer_id = None;
+    app.store.viewer_id = None;
     app.assign_to_me();
     assert!(app.requests.is_empty());
     assert!(app.status_message.is_some());
@@ -477,7 +487,7 @@ fn set_priority_applies_without_a_popup() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.set_priority(Priority::Urgent);
     assert_eq!(
-        app.lists[IssueSource::Team].issues[0].priority,
+        app.store.issues[IssueSource::Team].items[0].priority,
         Priority::Urgent
     );
     assert_eq!(app.popup, Popup::None);
@@ -531,9 +541,9 @@ fn a_team_list_opens_on_active_and_hides_done_work() {
 #[test]
 fn a_saved_view_opens_on_all() {
     let mut app = app_with(vec![]);
-    app.custom_views = vec![view("v", "Mine", false)];
-    app.lists[IssueSource::View].issues = vec![stated("2", "s-done", "Done", "completed")];
-    app.loaded_view_id = Some("v".into());
+    app.store.custom_views = vec![view("v", "Mine", false)];
+    app.store.issues[IssueSource::View].items = vec![stated("2", "s-done", "Done", "completed")];
+    app.store.loaded_view_id = Some("v".into());
     app.activate(Nav::View(0));
     assert_eq!(app.preset(), Preset::All);
     assert_eq!(app.visible_issues().len(), 1);
@@ -591,7 +601,7 @@ fn folding_all_groups_then_again_unfolds_them() {
 #[test]
 fn switching_a_team_preset_refetches_that_slice() {
     let mut app = app_with(vec![]);
-    app.teams = vec![team("t1", "Core")];
+    app.store.teams = vec![team("t1", "Core")];
     app.set_preset(Preset::Backlog);
     assert!(matches!(
         app.requests.back(),
@@ -615,18 +625,18 @@ fn a_page_for_a_preset_already_left_is_dropped() {
             false,
         ),
     });
-    assert_eq!(app.lists[IssueSource::Team].issues[0].id, "1");
+    assert_eq!(app.store.issues[IssueSource::Team].items[0].id, "1");
 }
 
 #[test]
 fn a_sidebar_team_entry_switches_team() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-    app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+    app.store.teams = vec![team("t1", "Core"), team("t2", "Ops")];
     app.activate(Nav::Team(1, TeamSection::Cycles));
     assert_eq!(app.selected_team_index, 1);
     assert_eq!(app.screen, Screen::CycleList);
     assert!(
-        app.lists[IssueSource::Team].issues.is_empty(),
+        app.store.issues[IssueSource::Team].items.is_empty(),
         "the old team's issues are dropped"
     );
     assert!(
@@ -656,8 +666,8 @@ fn sidebar_navs(app: &App) -> Vec<Option<Nav>> {
 #[test]
 fn the_sidebar_shows_only_the_current_team() {
     let mut app = app_with(vec![]);
-    app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
-    app.custom_views = vec![view("v1", "Today", false)];
+    app.store.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+    app.store.custom_views = vec![view("v1", "Today", false)];
     app.frame.sidebar_rows = app.sidebar_layout();
 
     let navs = sidebar_navs(&app);
@@ -685,7 +695,7 @@ fn the_sidebar_shows_only_the_current_team() {
 #[test]
 fn the_team_switcher_goes_to_the_picked_team() {
     let mut app = app_with(vec![]);
-    app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+    app.store.teams = vec![team("t1", "Core"), team("t2", "Ops")];
     app.nav = Nav::MyIssues;
     app.run_sidebar_action(SidebarAction::SwitchTeam);
     assert_eq!(app.popup, Popup::TeamSelect);
@@ -698,7 +708,7 @@ fn the_team_switcher_goes_to_the_picked_team() {
 #[test]
 fn switching_team_keeps_the_page() {
     let mut app = app_with(vec![]);
-    app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
+    app.store.teams = vec![team("t1", "Core"), team("t2", "Ops")];
     app.go_to_team_section(TeamSection::Cycles);
     app.open_team_select();
     app.popup_index = 1;
@@ -739,7 +749,12 @@ fn favorites_are_listed_in_linear_order_with_folders() {
         ]
     );
 
-    let folder = app.favorites.iter().position(|f| f.id == "f").unwrap();
+    let folder = app
+        .store
+        .favorites
+        .iter()
+        .position(|f| f.id == "f")
+        .unwrap();
     app.toggle_folder(folder);
     assert!(
         !app.frame
@@ -752,8 +767,8 @@ fn favorites_are_listed_in_linear_order_with_folders() {
 #[test]
 fn a_view_favorite_opens_the_view_itself() {
     let mut app = app_with(vec![]);
-    app.custom_views = vec![view("v1", "Today", false)];
-    app.favorites = vec![fav(
+    app.store.custom_views = vec![view("v1", "Today", false)];
+    app.store.favorites = vec![fav(
         r#"{"id":"x","type":"customView","customView":{"id":"v1"},"sortOrder":1}"#,
     )];
     assert_eq!(app.favorite_action(0), SidebarAction::Go(Nav::View(0)));
@@ -762,7 +777,7 @@ fn a_view_favorite_opens_the_view_itself() {
 #[test]
 fn a_project_favorite_opens_the_project_and_esc_returns_to_the_sidebar() {
     let mut app = app_with(vec![]);
-    app.favorites = vec![fav(
+    app.store.favorites = vec![fav(
         r#"{"id":"x","type":"project","sortOrder":1,"project":{"id":"p1","name":"Launch","lead":null}}"#,
     )];
     app.activate(Nav::Favorite(0));
@@ -784,7 +799,7 @@ fn a_project_favorite_opens_the_project_and_esc_returns_to_the_sidebar() {
 #[test]
 fn an_issue_favorite_opens_the_detail_and_esc_restores_where_you_were() {
     let mut app = app_with(vec![]);
-    app.favorites = vec![fav(r#"{"id":"x","type":"issue","sortOrder":1,
+    app.store.favorites = vec![fav(r#"{"id":"x","type":"issue","sortOrder":1,
             "issue":{"id":"i1","identifier":"ENG-1","title":"Bug"}}"#)];
     app.nav = Nav::MyIssues;
     app.activate(Nav::Favorite(0));
@@ -802,7 +817,7 @@ fn an_issue_favorite_opens_the_detail_and_esc_restores_where_you_were() {
 #[test]
 fn a_favorite_with_no_page_here_opens_in_the_browser() {
     let mut app = app_with(vec![]);
-    app.favorites = vec![fav(
+    app.store.favorites = vec![fav(
         r#"{"id":"x","type":"document","sortOrder":1,"url":"https://linear.app/d"}"#,
     )];
     let before = app.nav;
@@ -816,14 +831,14 @@ fn a_favorite_with_no_page_here_opens_in_the_browser() {
 #[test]
 fn a_views_refetch_keeps_the_open_view_by_identity() {
     let mut app = app_with(vec![]);
-    app.custom_views = vec![view("a", "A", false), view("b", "B", false)];
+    app.store.custom_views = vec![view("a", "A", false), view("b", "B", false)];
     app.nav = Nav::View(1);
     app.handle_message(Message::CustomViews(vec![
         view("b", "B", false),
         view("z", "Z", true),
     ]));
     assert_eq!(app.nav, Nav::View(0));
-    assert_eq!(app.custom_views[0].id, "b");
+    assert_eq!(app.store.custom_views[0].id, "b");
 }
 
 fn scoped_view(id: &str, name: &str, team: Option<&str>, model: &str) -> CustomView {
@@ -840,7 +855,7 @@ fn scoped_view(id: &str, name: &str, team: Option<&str>, model: &str) -> CustomV
 #[test]
 fn views_pages_list_by_scope_and_kind() {
     let mut app = app_with(vec![]);
-    app.teams = vec![team("t1", "Core")];
+    app.store.teams = vec![team("t1", "Core")];
     app.handle_message(Message::CustomViews(vec![
         scoped_view("a", "Workspace bugs", None, "Issue"),
         scoped_view("b", "Core board", Some("t1"), "Issue"),
@@ -850,7 +865,7 @@ fn views_pages_list_by_scope_and_kind() {
     let names = |app: &App| -> Vec<String> {
         app.listed_views()
             .into_iter()
-            .map(|i| app.custom_views[i].name.clone())
+            .map(|i| app.store.custom_views[i].name.clone())
             .collect()
     };
 
@@ -869,7 +884,7 @@ fn views_pages_list_by_scope_and_kind() {
 #[test]
 fn a_project_view_opens_as_a_project_list() {
     let mut app = app_with(vec![]);
-    app.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
+    app.store.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
     app.activate(Nav::View(0));
     assert_eq!(app.screen, Screen::ProjectList);
     assert!(matches!(
@@ -897,8 +912,8 @@ fn a_project_view_opens_as_a_project_list() {
 #[test]
 fn opening_the_same_project_view_again_does_not_refetch() {
     let mut app = app_with(vec![]);
-    app.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
-    app.loaded_view_projects_id = Some("p".into());
+    app.store.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
+    app.store.loaded_view_projects_id = Some("p".into());
     app.activate(Nav::View(0));
     assert!(app.requests.is_empty());
 }
@@ -910,7 +925,7 @@ fn personal_views_sort_above_shared_ones() {
         view("1", "Team board", true),
         view("2", "zzz mine", false),
     ]));
-    assert!(!app.custom_views[0].shared);
+    assert!(!app.store.custom_views[0].shared);
 }
 
 #[test]
@@ -922,11 +937,11 @@ fn stepping_through_issues_from_the_detail_view() {
     app.open_issue_detail();
     assert_eq!(app.detail_position(), Some((0, 2)));
     app.step_issue(1);
-    assert_eq!(app.current_issue.as_ref().unwrap().id, "2");
+    assert_eq!(app.store.current_issue.as_ref().unwrap().id, "2");
     assert_eq!(app.lists[IssueSource::Team].selected, 1);
     app.step_issue(1);
     assert_eq!(
-        app.current_issue.as_ref().unwrap().id,
+        app.store.current_issue.as_ref().unwrap().id,
         "2",
         "clamped at the end"
     );
@@ -937,7 +952,7 @@ fn stepping_through_issues_from_the_detail_view() {
 #[test]
 fn the_detail_view_returns_to_the_project_it_came_from() {
     let mut app = app_with(vec![]);
-    app.lists[IssueSource::Project].issues = vec![stated("1", "s", "Todo", "unstarted")];
+    app.store.issues[IssueSource::Project].items = vec![stated("1", "s", "Todo", "unstarted")];
     app.screen = Screen::ProjectDetail;
     app.open_issue_detail();
     assert_eq!(app.screen, Screen::IssueDetail);
@@ -965,7 +980,7 @@ fn clicking_a_row_selects_it_and_clicking_again_opens_it() {
     assert_eq!(app.screen, Screen::IssueList);
     app.click(40, 7);
     assert_eq!(app.screen, Screen::IssueDetail);
-    assert_eq!(app.current_issue.as_ref().unwrap().id, "2");
+    assert_eq!(app.store.current_issue.as_ref().unwrap().id, "2");
 }
 
 #[test]
@@ -987,7 +1002,7 @@ fn clicking_a_preset_chip_switches_preset() {
 #[test]
 fn clicking_a_sidebar_entry_navigates() {
     let mut app = app_with(vec![]);
-    app.viewer_id = Some("u".into());
+    app.store.viewer_id = Some("u".into());
     app.frame.sidebar_rows = app.sidebar_layout();
     app.frame.sidebar_area = Rect::new(0, 2, 25, 30);
     // Row 0 is My Issues.
@@ -1007,7 +1022,7 @@ fn clicking_a_popup_entry_applies_it() {
     app.click(15, 11); // second entry: Urgent
     assert_eq!(app.popup, Popup::None);
     assert_eq!(
-        app.lists[IssueSource::Team].issues[0].priority,
+        app.store.issues[IssueSource::Team].items[0].priority,
         Priority::Urgent
     );
 }
@@ -1036,19 +1051,19 @@ fn a_page_for_a_team_already_left_is_dropped() {
         preset: Preset::Active,
         page: page(vec![issue("9", "OPS-9", "stale")], false),
     });
-    assert_eq!(app.lists[IssueSource::Team].issues[0].id, "1");
+    assert_eq!(app.store.issues[IssueSource::Team].items[0].id, "1");
 }
 
 #[test]
 fn switching_team_forgets_the_old_teams_cursors() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-    app.teams.push(team("t2", "Ops"));
-    app.lists[IssueSource::Team].page_info = PageInfo {
+    app.store.teams.push(team("t2", "Ops"));
+    app.store.issues[IssueSource::Team].page_info = PageInfo {
         has_next_page: true,
         end_cursor: Some("c1".into()),
     };
     app.activate(Nav::Team(1, TeamSection::Issues));
-    assert!(!app.lists[IssueSource::Team].page_info.has_next_page);
+    assert!(!app.store.issues[IssueSource::Team].page_info.has_next_page);
     assert!(app.requests.contains(&Request::TeamContext {
         team_id: "t2".into()
     }));
@@ -1085,14 +1100,14 @@ fn context_message(team_id: &str, states: &[(&str, &str)], members: Vec<User>) -
 /// Team A ("t") is selected; My Issues holds an issue of team B.
 fn my_issues_with_team_b_issue() -> App {
     let mut app = app_with(vec![]);
-    app.teams.push(team("b", "Ops"));
+    app.store.teams.push(team("b", "Ops"));
     app.handle_message(context_message(
         "t",
         &[("a-todo", "Todo"), ("a-done", "Done")],
         vec![member("ua", "Ann")],
     ));
     app.nav = Nav::MyIssues;
-    app.lists[IssueSource::My].issues = vec![of_team("1", "b", "b-doing")];
+    app.store.issues[IssueSource::My].items = vec![of_team("1", "b", "b-doing")];
     app.requests.clear();
     app
 }
@@ -1202,8 +1217,8 @@ fn assignee_popup_on_another_teams_issue_lists_that_teams_members() {
 #[test]
 fn status_filter_offers_the_states_of_the_teams_in_the_list() {
     let mut app = my_issues_with_team_b_issue();
-    app.lists[IssueSource::My]
-        .issues
+    app.store.issues[IssueSource::My]
+        .items
         .push(of_team("2", "t", "a-todo"));
     app.handle_message(context_message(
         "b",
@@ -1232,21 +1247,21 @@ fn issues_for_a_project_already_left_are_dropped() {
         project_id: "p1".into(),
         page: page(vec![issue("9", "ENG-9", "stale")], false),
     });
-    assert!(app.lists[IssueSource::Project].issues.is_empty());
-    assert!(!app.lists[IssueSource::Project].loaded);
+    assert!(app.store.issues[IssueSource::Project].items.is_empty());
+    assert!(!app.store.issues[IssueSource::Project].loaded);
 }
 
 #[test]
 fn a_first_page_for_a_view_no_longer_open_is_dropped() {
     let mut app = app_with(vec![]);
-    app.custom_views = vec![view("v1", "Mine", false), view("v2", "Theirs", false)];
+    app.store.custom_views = vec![view("v1", "Mine", false), view("v2", "Theirs", false)];
     app.nav = Nav::View(1);
     app.handle_message(Message::ViewIssues {
         view_id: "v1".into(),
         page: page(vec![issue("9", "ENG-9", "stale")], false),
     });
-    assert!(app.lists[IssueSource::View].issues.is_empty());
-    assert_eq!(app.loaded_view_id, None);
+    assert!(app.store.issues[IssueSource::View].items.is_empty());
+    assert_eq!(app.store.loaded_view_id, None);
 }
 
 #[test]
@@ -1257,7 +1272,7 @@ fn search_results_for_a_team_already_left_are_dropped() {
         team_id: Some("other".into()),
         issues: vec![issue("9", "OPS-9", "x")],
     });
-    assert_eq!(app.lists[IssueSource::Team].issues[0].id, "1");
+    assert_eq!(app.store.issues[IssueSource::Team].items[0].id, "1");
     assert_eq!(app.global_search, None);
 }
 
@@ -1281,7 +1296,7 @@ fn a_failed_mutation_rereads_the_issue_from_the_server() {
     // Linear's answer puts every copy back.
     app.handle_message(Message::IssueDetail(Box::new(issue("1", "ENG-1", "a"))));
     assert_eq!(
-        app.lists[IssueSource::Team].issues[0].priority,
+        app.store.issues[IssueSource::Team].items[0].priority,
         Priority::None
     );
 }
@@ -1293,7 +1308,7 @@ fn a_failed_page_can_be_requested_again() {
             .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), "t"))
             .collect(),
     );
-    app.lists[IssueSource::Team].page_info = PageInfo {
+    app.store.issues[IssueSource::Team].page_info = PageInfo {
         has_next_page: true,
         end_cursor: Some("c1".into()),
     };
@@ -1345,7 +1360,7 @@ fn a_filtered_list_still_prefetches_at_its_last_visible_row() {
             .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), &format!("t{i}")))
             .collect(),
     );
-    app.lists[IssueSource::Team].page_info = PageInfo {
+    app.store.issues[IssueSource::Team].page_info = PageInfo {
         has_next_page: true,
         end_cursor: Some("c1".into()),
     };
@@ -1363,7 +1378,8 @@ fn a_filtered_list_still_prefetches_at_its_last_visible_row() {
 fn filtering_resets_the_cursor_of_the_list_on_screen() {
     let mut app = app_with(vec![]);
     app.nav = Nav::MyIssues;
-    app.lists[IssueSource::My].issues = vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
+    app.store.issues[IssueSource::My].items =
+        vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
     app.lists[IssueSource::My].selected = 1;
     app.clear_filters();
     assert_eq!(app.lists[IssueSource::My].selected, 0);
@@ -1377,7 +1393,7 @@ fn each_list_keeps_its_own_search_and_filters() {
     app.current_project =
         Some(serde_json::from_str(r#"{"id":"p1","name":"P","lead":null}"#).unwrap());
     app.screen = Screen::ProjectDetail;
-    app.lists[IssueSource::Project].issues = vec![issue("2", "ENG-2", "beta")];
+    app.store.issues[IssueSource::Project].items = vec![issue("2", "ENG-2", "beta")];
     app.start_search();
     for c in "zzz".chars() {
         app.list_mut().search.insert(c);

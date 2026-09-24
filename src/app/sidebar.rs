@@ -97,17 +97,18 @@ impl App {
             ),
         ];
 
-        if !self.favorites.is_empty() {
+        if !self.store.favorites.is_empty() {
             rows.push(SidebarRow::Gap);
             rows.push(SidebarRow::Header("Favorites".into()));
             // Top-level entries in order, each folder followed by its contents.
-            for (index, fav) in self.favorites.iter().enumerate() {
+            for (index, fav) in self.store.favorites.iter().enumerate() {
                 if fav.parent.is_some() {
                     continue;
                 }
                 rows.push(self.favorite_row(index, 0));
                 if fav.is_folder() && !self.collapsed_folders.contains(&fav.id) {
                     for (child, _) in self
+                        .store
                         .favorites
                         .iter()
                         .enumerate()
@@ -132,7 +133,7 @@ impl App {
                 depth: 0,
                 action: SidebarAction::SwitchTeam,
                 expanded: None,
-                trailing: (self.teams.len() > 1).then(|| "t \u{21c5}".to_string()),
+                trailing: (self.store.teams.len() > 1).then(|| "t \u{21c5}".to_string()),
                 tone: Tone::Strong,
             }));
             rows.push(item(
@@ -174,7 +175,7 @@ impl App {
 
     /// The sidebar row for one favorite.
     fn favorite_row(&self, index: usize, depth: u8) -> SidebarRow {
-        let fav = &self.favorites[index];
+        let fav = &self.store.favorites[index];
         let color = fav
             .color
             .as_deref()
@@ -221,12 +222,12 @@ impl App {
     /// destination, so opening one lights the same row as getting there any
     /// other way.
     pub(super) fn favorite_action(&self, index: usize) -> SidebarAction {
-        let fav = &self.favorites[index];
+        let fav = &self.store.favorites[index];
         if fav.is_folder() {
             return SidebarAction::Fold(index);
         }
         if let Some(view) = &fav.custom_view
-            && let Some(i) = self.custom_views.iter().position(|v| v.id == view.id)
+            && let Some(i) = self.store.custom_views.iter().position(|v| v.id == view.id)
         {
             return SidebarAction::Go(Nav::View(i));
         }
@@ -237,7 +238,7 @@ impl App {
             let team = fav
                 .predefined_view_team
                 .as_ref()
-                .and_then(|t| self.teams.iter().position(|x| x.id == t.id));
+                .and_then(|t| self.store.teams.iter().position(|x| x.id == t.id));
             let section = match fav.predefined_view_type.as_deref() {
                 Some("issues" | "allIssues" | "activeIssues" | "backlog") => {
                     Some(TeamSection::Issues)
@@ -257,7 +258,7 @@ impl App {
     /// or issue in place, and anything this client has no page for — a
     /// document, a label, a workspace-wide page — on linear.app.
     pub(super) fn open_favorite(&mut self, index: usize) {
-        let Some(fav) = self.favorites.get(index).cloned() else {
+        let Some(fav) = self.store.favorites.get(index).cloned() else {
             return;
         };
         self.sidebar_focus = false;
@@ -342,7 +343,7 @@ impl App {
     }
 
     pub fn toggle_folder(&mut self, index: usize) {
-        let Some(id) = self.favorites.get(index).map(|f| f.id.clone()) else {
+        let Some(id) = self.store.favorites.get(index).map(|f| f.id.clone()) else {
             return;
         };
         if !self.collapsed_folders.remove(&id) {

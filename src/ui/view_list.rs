@@ -29,7 +29,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let listed = app.listed_views();
     if listed.is_empty() {
         app.frame.row_targets.clear();
-        let message = if !app.views_loaded {
+        let message = if !app.store.views_loaded {
             "Loading views\u{2026}".to_string()
         } else {
             let (this, other) = match app.view_kind {
@@ -48,6 +48,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 
     let shared_caption = match app.nav {
         Nav::Team(index, TeamSection::Views) => app
+            .store
             .teams
             .get(index)
             .map(|t| (t.name.clone(), "Shared with the team"))
@@ -64,7 +65,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let mut rows: Vec<(Line<'static>, Option<usize>)> = Vec::new();
     let mut last_scope = None;
     for (position, &index) in listed.iter().enumerate() {
-        let view = &app.custom_views[index];
+        let view = &app.store.custom_views[index];
         if last_scope != Some(view.shared) {
             last_scope = Some(view.shared);
             let (title, note) = if view.shared {

@@ -23,8 +23,9 @@ fn stated(id: &str, title: &str, state: &str, kind: &str) -> Issue {
 fn app() -> App {
     let mut app = App::new(&Config::default());
     app.requests.clear();
-    app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
-    app.lists[IssueSource::Team].issues = vec![
+    app.store.teams =
+        vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+    app.store.issues[IssueSource::Team].items = vec![
         stated("1", "Write the docs", "Todo", "unstarted"),
         stated("2", "Fix the build", "In Progress", "started"),
         stated(
@@ -134,7 +135,7 @@ fn a_change_popup_draws_where_it_records_and_a_click_applies_it() {
     app.click(area.x + 1, area.y + 1);
     assert_eq!(app.popup, Popup::None);
     assert_eq!(
-        app.lists[IssueSource::Team].issues[1].priority,
+        app.store.issues[IssueSource::Team].items[1].priority,
         crate::api::types::Priority::Urgent
     );
 }
@@ -229,13 +230,13 @@ fn the_detail_view_redraws_what_changed_since_the_last_frame() {
     let text = screen_text(&render(&mut app, 100, 40));
     assert!(text.contains("Loading comments"), "{text}");
 
-    let issue = app.current_issue.as_mut().unwrap();
+    let issue = app.store.current_issue.as_mut().unwrap();
     issue.comments =
         Some(serde_json::from_str(r#"{"nodes":[{"id":"c1","body":"first **draft**"}]}"#).unwrap());
     let text = screen_text(&render(&mut app, 100, 40));
     assert!(text.contains("first draft"), "{text}");
 
-    let issue = app.current_issue.as_mut().unwrap();
+    let issue = app.store.current_issue.as_mut().unwrap();
     issue.comments.as_mut().unwrap().nodes[0].body = "second take".into();
     issue.description = Some("A new description".into());
     let text = screen_text(&render(&mut app, 100, 40));
@@ -274,7 +275,7 @@ mod timings {
     ];
 
     fn long_list(app: &mut App, n: usize) {
-        app.lists[IssueSource::Team].issues = (0..n)
+        app.store.issues[IssueSource::Team].items = (0..n)
             .map(|i| {
                 let (name, kind) = STATES[i % STATES.len()];
                 stated(&i.to_string(), &format!("Issue number {i}"), name, kind)
@@ -354,13 +355,13 @@ mod timings {
 
         let mut thread = app();
         thread.open_issue_detail();
-        thread.current_issue = Some(long_thread(0));
+        thread.store.current_issue = Some(long_thread(0));
         time("detail frame, no comments", 500, || {
             terminal
                 .draw(|f| crate::ui::draw(f, &mut thread, &mut cache))
                 .unwrap();
         });
-        thread.current_issue = Some(long_thread(100));
+        thread.store.current_issue = Some(long_thread(100));
         time("detail frame, 100 comments", 500, || {
             terminal
                 .draw(|f| crate::ui::draw(f, &mut thread, &mut cache))

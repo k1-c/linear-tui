@@ -1000,26 +1000,26 @@ mod tests {
     #[test]
     fn enter_on_a_project_issue_opens_the_highlighted_one() {
         let mut app = app();
-        app.lists[IssueSource::Project].issues = reordered();
+        app.store.issues[IssueSource::Project].items = reordered();
         app.screen = Screen::ProjectDetail;
         press(&mut app, KeyCode::Char('j'));
         let highlighted = app.focused_issue().unwrap().id.clone();
         press(&mut app, KeyCode::Enter);
         assert_eq!(app.screen, Screen::IssueDetail);
-        assert_eq!(app.current_issue.as_ref().unwrap().id, highlighted);
+        assert_eq!(app.store.current_issue.as_ref().unwrap().id, highlighted);
         assert_eq!(highlighted, "1");
     }
 
     #[test]
     fn enter_on_a_cycle_issue_opens_the_highlighted_one() {
         let mut app = app();
-        app.lists[IssueSource::Cycle].issues = reordered();
+        app.store.issues[IssueSource::Cycle].items = reordered();
         app.screen = Screen::CycleDetail;
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('j'));
         let highlighted = app.focused_issue().unwrap().id.clone();
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.current_issue.as_ref().unwrap().id, highlighted);
+        assert_eq!(app.store.current_issue.as_ref().unwrap().id, highlighted);
         assert_eq!(highlighted, "3");
     }
 
@@ -1034,10 +1034,10 @@ mod tests {
             (Screen::CycleDetail, None),
         ] {
             let mut app = app();
-            app.lists[IssueSource::Team].issues = reordered();
-            app.lists[IssueSource::My].issues = reordered();
-            app.lists[IssueSource::Project].issues = reordered();
-            app.lists[IssueSource::Cycle].issues = reordered();
+            app.store.issues[IssueSource::Team].items = reordered();
+            app.store.issues[IssueSource::My].items = reordered();
+            app.store.issues[IssueSource::Project].items = reordered();
+            app.store.issues[IssueSource::Cycle].items = reordered();
             app.set_preset(crate::grouping::Preset::All);
             app.requests.clear();
             if let Some(nav) = nav {
@@ -1053,7 +1053,7 @@ mod tests {
                 let highlighted = app.focused_issue().unwrap().id.clone();
                 press(&mut app, KeyCode::Enter);
                 assert_eq!(
-                    app.current_issue.as_ref().unwrap().id,
+                    app.store.current_issue.as_ref().unwrap().id,
                     highlighted,
                     "{screen:?} {nav:?} row {downs}"
                 );
@@ -1083,8 +1083,9 @@ mod tests {
     /// A team with three active issues on its list.
     fn team_app() -> App {
         let mut app = app();
-        app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
-        app.lists[IssueSource::Team].issues = reordered();
+        app.store.teams =
+            vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+        app.store.issues[IssueSource::Team].items = reordered();
         app
     }
 

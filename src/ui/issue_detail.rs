@@ -35,7 +35,7 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
     let th = app.theme;
     // Borrowed, not cloned: a long thread is a lot of strings to copy on
     // every spinner tick.
-    let Some(issue) = app.current_issue.as_ref() else {
+    let Some(issue) = app.store.current_issue.as_ref() else {
         return;
     };
     let comment_mode = app.input_mode == InputMode::Comment;

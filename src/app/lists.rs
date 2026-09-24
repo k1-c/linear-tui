@@ -2,37 +2,15 @@
 
 use super::*;
 
-/// Which of the app's issue lists the current screen is showing.
-///
-/// Five lists behave identically once you know which one is on screen —
-/// selection, prefetch, grouping, opening a row — so they are addressed
-/// through this rather than duplicated five times over.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IssueSource {
-    Team,
-    My,
-    View,
-    Project,
-    Cycle,
-}
-
-impl IssueSource {
-    pub const ALL: [IssueSource; 5] =
-        [Self::Team, Self::My, Self::View, Self::Project, Self::Cycle];
-}
-
-/// One issue list and the state that shapes it on screen.
+/// How one issue list is shaped on screen. Its rows are in
+/// [`Store::issues`], under the same [`IssueSource`].
 #[derive(Debug, Default)]
 pub struct IssueList {
-    /// Rows in the order Linear returned them; grouping reorders them for display.
-    pub issues: Vec<Issue>,
     /// Cursor position, as an index into [`App::visible_issues`].
     pub selected: usize,
-    pub page_info: PageInfo,
-    /// The preset chip selected on this list.
+    /// The preset chip selected on this list. A team's list is sliced by it
+    /// on the server, so it also decides what is fetched.
     pub preset: Preset,
-    /// Whether a first page has arrived for what the list currently belongs to.
-    pub loaded: bool,
     /// The live search box. Each list keeps its own, as it keeps its own
     /// filters: narrowing one list must not quietly narrow another.
     pub search: Input,
@@ -54,41 +32,6 @@ impl IssueList {
                     .is_some_and(|state| &state.name == status)
             })
             && self.filters.priority.is_none_or(|p| issue.priority == p)
-    }
-
-    /// Forget the rows, for a list that is about to belong to something else.
-    pub fn reset(&mut self) {
-        self.issues.clear();
-        self.selected = 0;
-        self.page_info = PageInfo::default();
-        self.loaded = false;
-    }
-}
-
-/// One `T` per [`IssueSource`].
-#[derive(Debug, Default)]
-pub struct PerSource<T>([T; 5]);
-
-impl<T> std::ops::Index<IssueSource> for PerSource<T> {
-    type Output = T;
-    fn index(&self, source: IssueSource) -> &T {
-        &self.0[source as usize]
-    }
-}
-
-impl<T> std::ops::IndexMut<IssueSource> for PerSource<T> {
-    fn index_mut(&mut self, source: IssueSource) -> &mut T {
-        &mut self.0[source as usize]
-    }
-}
-
-impl<T> PerSource<T> {
-    pub fn from_fn(f: impl FnMut(IssueSource) -> T) -> Self {
-        Self(IssueSource::ALL.map(f))
-    }
-
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
-        self.0.iter_mut()
     }
 }
 
@@ -207,6 +150,13 @@ impl Filters {
 impl App {
     // ------------------------------------------------- the active issue list
 
+    /// Forget a list's rows, for a list that is about to belong to something
+    /// else.
+    pub fn reset_list(&mut self, source: IssueSource) {
+        self.store.issues[source].reset();
+        self.lists[source].selected = 0;
+    }
+
     /// Which of the five issue lists the current screen is showing.
     pub fn issue_source(&self) -> IssueSource {
         match self.screen {
@@ -258,7 +208,7 @@ impl App {
     /// Get the issue currently focused (selected in list, or being viewed in detail).
     pub fn focused_issue(&self) -> Option<&Issue> {
         match self.screen {
-            Screen::IssueDetail => self.current_issue.as_ref(),
+            Screen::IssueDetail => self.store.current_issue.as_ref(),
             Screen::ViewList | Screen::ProjectList | Screen::CycleList => None,
             _ => self.visible_issues().get(self.selected_index()).copied(),
         }
@@ -273,7 +223,10 @@ impl App {
         let list = self.list();
         let query = list.search.value.to_lowercase();
         group(
-            list.issues.iter().filter(|i| list.admits(i, &query)),
+            self.store.issues[self.issue_source()]
+                .items
+                .iter()
+                .filter(|i| list.admits(i, &query)),
             self.group_by,
             &self.collapsed_groups,
             &self.theme,
@@ -406,7 +359,7 @@ impl App {
         if self.selected_index() + PREFETCH_MARGIN < visible {
             return;
         }
-        let info = &self.lists[source].page_info;
+        let info = &self.store.issues[source].page_info;
         if !info.has_next_page {
             return;
         }
@@ -421,10 +374,12 @@ impl App {
                 preset: self.lists[IssueSource::Team].preset,
             }),
             IssueSource::My => self
+                .store
                 .viewer_id
                 .clone()
                 .map(|user_id| Request::MyIssues { user_id, after }),
             IssueSource::View => self
+                .store
                 .loaded_view_id
                 .clone()
                 .map(|view_id| Request::ViewIssues { view_id, after }),
@@ -450,9 +405,9 @@ impl App {
     pub(super) fn maybe_prefetch_projects(&mut self) {
         let in_view = self.in_project_view();
         let info = if in_view {
-            &self.view_projects_page_info
+            &self.store.view_projects.page_info
         } else {
-            &self.projects_page_info
+            &self.store.projects.page_info
         };
         if self.project_cursor() + PREFETCH_MARGIN < self.project_rows().len()
             || !info.has_next_page
@@ -464,7 +419,8 @@ impl App {
         };
         let after = Some(cursor.clone());
         let request = if in_view {
-            self.loaded_view_projects_id
+            self.store
+                .loaded_view_projects_id
                 .clone()
                 .map(|view_id| Request::ViewProjects { view_id, after })
         } else {
