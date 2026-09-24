@@ -2,6 +2,50 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.2] - 2026-09-24
+
+### Bug Fixes
+
+- **api**: Report refused issue mutations as failures
+- **app**: Drop stale responses and keep the cursor on its issue
+- **auth**: Write credentials and the log owner-only
+- **auth**: Make the OAuth callback server robust to stray requests
+- **api**: Time out stalled requests and keep bodies out of error logs
+- **auth**: Refresh an expired OAuth token during a session
+- **app**: Keep search and filters per issue list
+- **grouping**: Key assignee groups by user and group in linear time
+- **ui**: Measure avatars, icons and indents in cells, and theme project states
+- **ui**: Correct the help overlay's sidebar and refresh entries
+- **ui**: Stop the renderer panicking in a very small terminal
+- **config**: Report unknown keys and out-of-range values
+- **deps**: Update rustls, rustls-webpki, h2 and time past advisories
+
+### Documentation
+
+- **api**: Bring the type guide in line with the code
+
+### Miscellaneous
+
+- Test on every release platform, check the MSRV, and audit
+
+### Refactoring
+
+- **api**: Type ids and errors, and give the client a test seam
+- **app**: Split app.rs into submodules
+- Move request dispatch and CLI subcommands out of main.rs
+- **app**: Let the popup carry what it acts on
+- **keys**: Change app state only through App methods
+
+### Testing
+
+- Cover whole-frame rendering and the keybindings
+
+### Build
+
+- Raise rust-version to 1.88, the oldest toolchain that builds
+
+
+
 ## [0.5.1] - 2026-09-24
 
 ### Documentation
