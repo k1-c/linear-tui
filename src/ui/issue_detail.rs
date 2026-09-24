@@ -31,7 +31,7 @@ const PANEL_WIDTH: u16 = 34;
 /// Narrowest content pane that still gets a separate properties panel.
 const PANEL_MIN_TOTAL: u16 = 96;
 
-pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
+pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
     let th = app.theme;
     // Borrowed, not cloned: a long thread is a lot of strings to copy on
     // every spinner tick.
@@ -63,30 +63,30 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         width: main.width.saturating_sub(5),
         ..main
     };
-    let memo = &mut app.detail_markdown;
     memo.begin();
     let body = body_lines(issue, body_area.width, !with_panel, &th, memo);
     memo.finish();
 
-    app.detail_lines = u16::try_from(body.len).unwrap_or(u16::MAX);
-    app.detail_viewport = body_area.height;
-    app.detail_scroll = app
-        .detail_scroll
-        .min(app.detail_lines.saturating_sub(app.detail_viewport));
+    app.frame.detail_lines = u16::try_from(body.len).unwrap_or(u16::MAX);
+    app.frame.detail_viewport = body_area.height;
+    app.detail_scroll = app.detail_scroll.min(
+        app.frame
+            .detail_lines
+            .saturating_sub(app.frame.detail_viewport),
+    );
 
     // Only the lines in view go to the widget, already scrolled: the body is
     // pre-wrapped, so this draws exactly what `Paragraph::scroll` would.
-    let in_view = body.window(
-        &app.detail_markdown,
-        app.detail_scroll as usize,
-        body_area.height as usize,
-    );
+    let in_view = body.window(memo, app.detail_scroll as usize, body_area.height as usize);
     f.render_widget(Paragraph::new(in_view), body_area);
 
-    if app.detail_lines > app.detail_viewport {
-        let mut state =
-            ScrollbarState::new(app.detail_lines.saturating_sub(app.detail_viewport) as usize)
-                .position(app.detail_scroll as usize);
+    if app.frame.detail_lines > app.frame.detail_viewport {
+        let mut state = ScrollbarState::new(
+            app.frame
+                .detail_lines
+                .saturating_sub(app.frame.detail_viewport) as usize,
+        )
+        .position(app.detail_scroll as usize);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)

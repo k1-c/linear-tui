@@ -1,14 +1,12 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
-use ratatui::layout::Rect;
-use ratatui::widgets::TableState;
-
 use crate::api::ids::*;
 use crate::api::types::*;
 use crate::config::{Config, Theme};
 use crate::grouping::{GroupBy, Preset, Section, group};
 use crate::message::{Message, Page, Request};
 
+mod frame;
 mod input;
 mod lists;
 mod mouse;
@@ -16,6 +14,7 @@ mod sidebar;
 #[cfg(test)]
 mod tests;
 
+pub use frame::*;
 pub use input::*;
 pub use lists::*;
 pub use sidebar::*;
@@ -154,15 +153,6 @@ pub struct TeamContext {
     pub members: Vec<User>,
 }
 
-/// Persistent [`TableState`]s, one per scrollable list.
-#[derive(Debug, Default)]
-pub struct TableStates {
-    pub views: TableState,
-    pub view_projects: TableState,
-    pub projects: TableState,
-    pub cycles: TableState,
-}
-
 /// Identifies one of the paginated sub-lists, for index clamping.
 #[derive(Debug, Clone, Copy)]
 enum Field {
@@ -186,6 +176,9 @@ pub struct App {
 
     /// Where the content pane currently is.
     pub nav: Nav,
+
+    /// What the last frame drew, for hit-testing and page-sized moves.
+    pub frame: FrameState,
 
     /// The five issue lists, addressed by [`IssueSource`].
     pub lists: IssueLists,
@@ -224,10 +217,6 @@ pub struct App {
     /// True while the cursor is in the sidebar rather than the content pane.
     pub sidebar_focus: bool,
     pub sidebar_index: usize,
-    /// First sidebar row on screen, when the tree is taller than the pane.
-    pub sidebar_offset: usize,
-    /// Rows the sidebar drew last frame, kept for keyboard and mouse hit-testing.
-    pub sidebar_rows: Vec<SidebarRow>,
     /// Favorites, in the order Linear's sidebar shows them.
     pub favorites: Vec<Favorite>,
     /// Favorites folders the user has folded, by favorite id.
@@ -237,22 +226,6 @@ pub struct App {
     pub group_by: GroupBy,
     /// Group keys the user has folded away.
     pub collapsed_groups: HashSet<String>,
-    /// Display rows the content list drew last frame — only the visible
-    /// slice, top to bottom — for mouse hit-testing.
-    pub list_rows: Vec<ListRow>,
-    /// For the non-issue lists (projects, cycles, views): which item each
-    /// visible row of `list_area` selects, top to bottom.
-    pub row_targets: Vec<Option<usize>>,
-    /// Screen area those rows occupy, so a click can be mapped back to a row.
-    pub list_area: Rect,
-    /// Where the sidebar was drawn.
-    pub sidebar_area: Rect,
-    /// Screen area of each preset chip, left to right.
-    pub chip_areas: Vec<(Rect, Chip)>,
-    /// Where the open popup drew its entries, so they are clickable too.
-    pub popup_area: Rect,
-    /// First popup entry on screen, when the list scrolls.
-    pub popup_offset: usize,
 
     // Issue detail
     pub current_issue: Option<Issue>,
@@ -262,11 +235,6 @@ pub struct App {
     /// points the sidebar at the favorite while it is open.
     pub detail_return_nav: Nav,
     pub detail_scroll: u16,
-    /// Rendered height of the detail body, updated each frame so scrolling can clamp.
-    pub detail_lines: u16,
-    pub detail_viewport: u16,
-    /// The detail view's rendered Markdown, kept for the next frame.
-    pub detail_markdown: crate::ui::issue_detail::Memo,
 
     // Search
     /// Set while the list shows workspace-wide search results instead of the team's issues.
@@ -316,13 +284,6 @@ pub struct App {
     pub show_help: bool,
     pub help_scroll: u16,
 
-    /// Height of the visible list body, updated each frame for half-page jumps.
-    pub list_viewport: u16,
-
-    /// Scroll offsets for each table, kept across frames so the viewport
-    /// doesn't jump when the underlying list changes.
-    pub tables: TableStates,
-
     // Settings
     pub theme: Theme,
     pub items_per_page: u32,
@@ -339,7 +300,8 @@ impl App {
             inflight: 0,
             prefetched: HashSet::new(),
             nav: Nav::Team(0, TeamSection::Issues),
-            lists: IssueLists::default(),
+            frame: FrameState::default(),
+            lists: PerSource::from_fn(IssueList::new),
             popup: Popup::None,
             popup_index: 0,
             teams: Vec::new(),
@@ -359,26 +321,14 @@ impl App {
             sidebar_width: config.ui.sidebar_width,
             sidebar_focus: false,
             sidebar_index: 0,
-            sidebar_offset: 0,
-            sidebar_rows: Vec::new(),
             favorites: Vec::new(),
             collapsed_folders: HashSet::new(),
             group_by: GroupBy::from_config(config.ui.group_by),
             collapsed_groups: HashSet::new(),
-            list_rows: Vec::new(),
-            row_targets: Vec::new(),
-            list_area: Rect::ZERO,
-            sidebar_area: Rect::ZERO,
-            chip_areas: Vec::new(),
-            popup_area: Rect::ZERO,
-            popup_offset: 0,
             current_issue: None,
             detail_return: Screen::IssueList,
             detail_return_nav: Nav::Team(0, TeamSection::Issues),
             detail_scroll: 0,
-            detail_lines: 0,
-            detail_viewport: 0,
-            detail_markdown: Default::default(),
             global_search: None,
             comment: Input::default(),
             new_issue: None,
@@ -400,8 +350,6 @@ impl App {
             pending_chord: None,
             show_help: false,
             help_scroll: 0,
-            list_viewport: 0,
-            tables: TableStates::default(),
             theme: Theme::from_name(config.ui.theme),
             items_per_page: config.ui.items_per_page,
             default_team: config.ui.default_team.clone(),
@@ -926,12 +874,12 @@ impl App {
         }
     }
 
-    /// Scroll state of the project list on screen.
-    pub fn project_table(&mut self) -> &mut TableState {
+    /// Scroll offset of the project list on screen.
+    pub fn project_offset(&mut self) -> &mut usize {
         if self.in_project_view() {
-            &mut self.tables.view_projects
+            &mut self.frame.offsets.view_projects
         } else {
-            &mut self.tables.projects
+            &mut self.frame.offsets.projects
         }
     }
 
@@ -1408,7 +1356,9 @@ impl App {
 
     /// Largest scroll offset that still shows content.
     fn max_detail_scroll(&self) -> u16 {
-        self.detail_lines.saturating_sub(self.detail_viewport)
+        self.frame
+            .detail_lines
+            .saturating_sub(self.frame.detail_viewport)
     }
 
     pub fn scroll_down(&mut self) {
@@ -1429,7 +1379,7 @@ impl App {
 
     /// Number of rows a half-page jump should cover.
     pub fn half_page(&self) -> isize {
-        (self.list_viewport / 2).max(1) as isize
+        (self.frame.list_viewport / 2).max(1) as isize
     }
 
     /// Move the list cursor on the current screen by `delta` rows, requesting

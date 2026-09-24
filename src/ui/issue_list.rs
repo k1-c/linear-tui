@@ -42,7 +42,7 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect, count: usize) {
     let th = app.theme;
     let mut spans = vec![Span::raw(" ")];
     let mut x = area.x + 1;
-    app.chip_areas.clear();
+    app.frame.chip_areas.clear();
     for preset in Preset::all() {
         let label = format!(" {} ", preset.label());
         let width = label.width() as u16;
@@ -54,7 +54,7 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect, count: usize) {
         } else {
             Style::default().fg(th.muted)
         };
-        app.chip_areas.push((
+        app.frame.chip_areas.push((
             Rect {
                 x,
                 y: area.y,
@@ -106,8 +106,8 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect, count: usize) {
 /// read off that one pass.
 pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) -> usize {
     let th = app.theme;
-    app.list_viewport = area.height;
-    app.list_area = area;
+    app.frame.list_viewport = area.height;
+    app.frame.list_area = area;
 
     let ListView { issues, rows } = app.list_view();
     let count = issues.len();
@@ -117,7 +117,7 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) -> usize {
         .position(|r| matches!(r, ListRow::Issue { ordinal, .. } if *ordinal == selected));
 
     if rows.is_empty() {
-        app.list_rows.clear();
+        app.frame.list_rows.clear();
         let message = if app.loading() {
             format!("{} Loading issues\u{2026}", app.spinner_symbol())
         } else if !app.list().search.is_empty() || app.list().filters.is_active() {
@@ -144,7 +144,7 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) -> usize {
     // Scroll so the cursor stays visible — and when the cursor is the first
     // issue of a group, keep that group's header in view with it.
     let height = area.height as usize;
-    let mut offset = app.list().table.offset();
+    let mut offset = app.frame.offsets.issues[app.issue_source()];
     if let Some(sel) = selected_row {
         let want_top = if sel > 0 && matches!(rows[sel - 1], ListRow::Group { .. }) {
             sel - 1
@@ -203,8 +203,8 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) -> usize {
         })
         .collect();
 
-    *app.active_table_state().offset_mut() = offset;
-    app.list_rows = rows.into_iter().skip(offset).take(height).collect();
+    *app.list_offset() = offset;
+    app.frame.list_rows = rows.into_iter().skip(offset).take(height).collect();
     f.render_widget(Paragraph::new(lines), area);
     count
 }

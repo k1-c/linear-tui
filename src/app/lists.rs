@@ -29,9 +29,6 @@ pub struct IssueList {
     /// Cursor position, as an index into [`App::visible_issues`].
     pub selected: usize,
     pub page_info: PageInfo,
-    /// Scroll offset, kept across frames so the viewport doesn't jump when
-    /// the rows change.
-    pub table: TableState,
     /// The preset chip selected on this list.
     pub preset: Preset,
     /// Whether a first page has arrived for what the list currently belongs to.
@@ -68,42 +65,51 @@ impl IssueList {
     }
 }
 
-/// The five issue lists, indexed by [`IssueSource`].
-#[derive(Debug)]
-pub struct IssueLists([IssueList; 5]);
+/// One `T` per [`IssueSource`].
+#[derive(Debug, Default)]
+pub struct PerSource<T>([T; 5]);
 
-impl Default for IssueLists {
-    /// A team's issues open on Active, as in Linear; every other list opens on
-    /// All, because its contents were already chosen — by a saved view's
-    /// filter, by a project, by being yours — and hiding the done half of a
-    /// view someone deliberately built would be a surprise.
-    fn default() -> Self {
-        Self(IssueSource::ALL.map(|source| IssueList {
-            preset: match source {
-                IssueSource::Team => Preset::Active,
-                _ => Preset::All,
-            },
-            ..IssueList::default()
-        }))
-    }
-}
-
-impl std::ops::Index<IssueSource> for IssueLists {
-    type Output = IssueList;
-    fn index(&self, source: IssueSource) -> &IssueList {
+impl<T> std::ops::Index<IssueSource> for PerSource<T> {
+    type Output = T;
+    fn index(&self, source: IssueSource) -> &T {
         &self.0[source as usize]
     }
 }
 
-impl std::ops::IndexMut<IssueSource> for IssueLists {
-    fn index_mut(&mut self, source: IssueSource) -> &mut IssueList {
+impl<T> std::ops::IndexMut<IssueSource> for PerSource<T> {
+    fn index_mut(&mut self, source: IssueSource) -> &mut T {
         &mut self.0[source as usize]
     }
 }
 
-impl IssueLists {
-    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut IssueList> {
+impl<T> PerSource<T> {
+    pub fn from_fn(f: impl FnMut(IssueSource) -> T) -> Self {
+        Self(IssueSource::ALL.map(f))
+    }
+
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut T> {
         self.0.iter_mut()
+    }
+}
+
+/// The five issue lists.
+pub type IssueLists = PerSource<IssueList>;
+
+impl IssueList {
+    /// An empty list for `source`.
+    ///
+    /// A team's issues open on Active, as in Linear; every other list opens on
+    /// All, because its contents were already chosen — by a saved view's
+    /// filter, by a project, by being yours — and hiding the done half of a
+    /// view someone deliberately built would be a surprise.
+    pub fn new(source: IssueSource) -> Self {
+        Self {
+            preset: match source {
+                IssueSource::Team => Preset::Active,
+                _ => Preset::All,
+            },
+            ..Self::default()
+        }
     }
 }
 
@@ -243,10 +249,10 @@ impl App {
         *self.selected_index_mut() = index.min(len.saturating_sub(1));
     }
 
-    /// The [`TableState`] whose scroll offset belongs to the active list.
-    pub fn active_table_state(&mut self) -> &mut TableState {
+    /// The scroll offset of the active list.
+    pub fn list_offset(&mut self) -> &mut usize {
         let source = self.issue_source();
-        &mut self.lists[source].table
+        &mut self.frame.offsets.issues[source]
     }
 
     /// Get the issue currently focused (selected in list, or being viewed in detail).

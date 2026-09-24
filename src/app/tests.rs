@@ -1,3 +1,5 @@
+use ratatui::layout::Rect;
+
 use super::*;
 use crate::message::Page;
 
@@ -299,8 +301,8 @@ fn a_shrinking_list_clamps_the_selection() {
 #[test]
 fn detail_scroll_clamps_to_the_content() {
     let mut app = app_with(vec![]);
-    app.detail_lines = 30;
-    app.detail_viewport = 10;
+    app.frame.detail_lines = 30;
+    app.frame.detail_viewport = 10;
     app.scroll_to_bottom();
     assert_eq!(app.detail_scroll, 20);
     app.scroll_down();
@@ -312,8 +314,8 @@ fn detail_scroll_clamps_to_the_content() {
 #[test]
 fn a_short_body_cannot_scroll_at_all() {
     let mut app = app_with(vec![]);
-    app.detail_lines = 4;
-    app.detail_viewport = 20;
+    app.frame.detail_lines = 4;
+    app.frame.detail_viewport = 20;
     app.scroll_down();
     assert_eq!(app.detail_scroll, 0);
 }
@@ -639,7 +641,8 @@ fn fav(json: &str) -> Favorite {
 }
 
 fn sidebar_navs(app: &App) -> Vec<Option<Nav>> {
-    app.sidebar_rows
+    app.frame
+        .sidebar_rows
         .iter()
         .filter_map(|r| match r {
             SidebarRow::Item(i) => Some(i.nav()),
@@ -655,7 +658,7 @@ fn the_sidebar_shows_only_the_current_team() {
     let mut app = app_with(vec![]);
     app.teams = vec![team("t1", "Core"), team("t2", "Ops")];
     app.custom_views = vec![view("v1", "Today", false)];
-    app.sidebar_rows = app.sidebar_layout();
+    app.frame.sidebar_rows = app.sidebar_layout();
 
     let navs = sidebar_navs(&app);
     assert!(navs.contains(&Some(Nav::Team(0, TeamSection::Projects))));
@@ -664,16 +667,16 @@ fn the_sidebar_shows_only_the_current_team() {
         !navs.contains(&Some(Nav::View(0))),
         "views are not expanded"
     );
-    assert!(app.sidebar_rows.iter().any(|r| matches!(
+    assert!(app.frame.sidebar_rows.iter().any(|r| matches!(
         r,
         SidebarRow::Item(i) if i.action == SidebarAction::SwitchTeam
     )));
 
     app.sidebar_index = 0;
-    for _ in 0..app.sidebar_rows.len() {
+    for _ in 0..app.frame.sidebar_rows.len() {
         app.sidebar_move(1);
         assert!(matches!(
-            app.sidebar_rows[app.sidebar_index],
+            app.frame.sidebar_rows[app.sidebar_index],
             SidebarRow::Item(_)
         ));
     }
@@ -712,8 +715,9 @@ fn favorites_are_listed_in_linear_order_with_folders() {
         fav(r#"{"id":"a","type":"document","title":"First","sortOrder":1}"#),
         fav(r#"{"id":"c","type":"document","title":"Inside","sortOrder":1,"parent":{"id":"f"}}"#),
     ]));
-    app.sidebar_rows = app.sidebar_layout();
+    app.frame.sidebar_rows = app.sidebar_layout();
     let labels: Vec<_> = app
+        .frame
         .sidebar_rows
         .iter()
         .filter_map(|r| match r {
@@ -738,7 +742,8 @@ fn favorites_are_listed_in_linear_order_with_folders() {
     let folder = app.favorites.iter().position(|f| f.id == "f").unwrap();
     app.toggle_folder(folder);
     assert!(
-        !app.sidebar_rows
+        !app.frame
+            .sidebar_rows
             .iter()
             .any(|r| matches!(r, SidebarRow::Item(i) if i.label == "Inside"))
     );
@@ -943,8 +948,8 @@ fn the_detail_view_returns_to_the_project_it_came_from() {
 // ------------------------------------------------------------------ mouse
 
 fn clickable(app: &mut App) {
-    app.list_area = Rect::new(30, 5, 80, 20);
-    app.list_rows = app.list_view().rows;
+    app.frame.list_area = Rect::new(30, 5, 80, 20);
+    app.frame.list_rows = app.list_view().rows;
 }
 
 #[test]
@@ -974,7 +979,7 @@ fn clicking_a_group_header_folds_it() {
 #[test]
 fn clicking_a_preset_chip_switches_preset() {
     let mut app = app_with(vec![]);
-    app.chip_areas = vec![(Rect::new(30, 3, 8, 1), Chip::Preset(Preset::Backlog))];
+    app.frame.chip_areas = vec![(Rect::new(30, 3, 8, 1), Chip::Preset(Preset::Backlog))];
     app.click(32, 3);
     assert_eq!(app.preset(), Preset::Backlog);
 }
@@ -983,8 +988,8 @@ fn clicking_a_preset_chip_switches_preset() {
 fn clicking_a_sidebar_entry_navigates() {
     let mut app = app_with(vec![]);
     app.viewer_id = Some("u".into());
-    app.sidebar_rows = app.sidebar_layout();
-    app.sidebar_area = Rect::new(0, 2, 25, 30);
+    app.frame.sidebar_rows = app.sidebar_layout();
+    app.frame.sidebar_area = Rect::new(0, 2, 25, 30);
     // Row 0 is My Issues.
     app.click(10, 2);
     assert_eq!(app.nav, Nav::MyIssues);
@@ -998,7 +1003,7 @@ fn clicking_a_sidebar_entry_navigates() {
 fn clicking_a_popup_entry_applies_it() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.open_priority_change();
-    app.popup_area = Rect::new(10, 10, 30, 5);
+    app.frame.popup_area = Rect::new(10, 10, 30, 5);
     app.click(15, 11); // second entry: Urgent
     assert_eq!(app.popup, Popup::None);
     assert_eq!(
@@ -1011,7 +1016,7 @@ fn clicking_a_popup_entry_applies_it() {
 fn clicking_outside_a_popup_closes_it() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.open_priority_change();
-    app.popup_area = Rect::new(10, 10, 30, 5);
+    app.frame.popup_area = Rect::new(10, 10, 30, 5);
     app.click(0, 0);
     assert_eq!(app.popup, Popup::None);
     assert!(app.requests.is_empty());

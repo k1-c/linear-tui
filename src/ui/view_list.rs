@@ -23,12 +23,12 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         height: area.height.saturating_sub(2),
         ..area
     };
-    app.list_area = area;
-    app.list_viewport = area.height;
+    app.frame.list_area = area;
+    app.frame.list_viewport = area.height;
 
     let listed = app.listed_views();
     if listed.is_empty() {
-        app.row_targets.clear();
+        app.frame.row_targets.clear();
         let message = if !app.views_loaded {
             "Loading views\u{2026}".to_string()
         } else {
@@ -145,17 +145,17 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .iter()
         .position(|(_, t)| *t == Some(app.selected_view_index))
         .unwrap_or(0);
-    let mut offset = app.tables.views.offset();
+    let mut offset = app.frame.offsets.views;
     if sel_row < offset {
         offset = sel_row.saturating_sub(1);
     } else if height > 0 && sel_row >= offset + height {
         offset = sel_row + 1 - height;
     }
     offset = offset.min(rows.len().saturating_sub(height));
-    *app.tables.views.offset_mut() = offset;
+    app.frame.offsets.views = offset;
 
     let visible: Vec<_> = rows.into_iter().skip(offset).take(height).collect();
-    app.row_targets = visible.iter().map(|(_, t)| *t).collect();
+    app.frame.row_targets = visible.iter().map(|(_, t)| *t).collect();
     f.render_widget(
         Paragraph::new(visible.into_iter().map(|(l, _)| l).collect::<Vec<_>>()),
         area,
@@ -178,7 +178,7 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             Style::default().fg(th.muted)
         };
-        app.chip_areas.push((
+        app.frame.chip_areas.push((
             Rect {
                 x,
                 y: area.y,

@@ -56,11 +56,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         height: area.height.saturating_sub(2),
         ..area
     };
-    app.list_area = list;
-    app.list_viewport = list.height;
+    app.frame.list_area = list;
+    app.frame.list_viewport = list.height;
 
     if app.project_rows().is_empty() {
-        app.row_targets.clear();
+        app.frame.row_targets.clear();
         let message = if app.loading() {
             format!("{} Loading projects\u{2026}", app.spinner_symbol())
         } else if matches!(app.nav, crate::app::Nav::View(_)) {
@@ -81,14 +81,14 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let height = list.height as usize;
-    let mut offset = app.project_table().offset();
+    let mut offset = *app.project_offset();
     let sel = app.project_cursor();
     if sel < offset {
         offset = sel;
     } else if height > 0 && sel >= offset + height {
         offset = sel + 1 - height;
     }
-    *app.project_table().offset_mut() = offset;
+    *app.project_offset() = offset;
 
     let lines: Vec<Line> = app
         .project_rows()
@@ -98,7 +98,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .take(height)
         .map(|(index, project)| project_row(project, width, index == sel, &th))
         .collect();
-    app.row_targets = (offset..offset + lines.len()).map(Some).collect();
+    app.frame.row_targets = (offset..offset + lines.len()).map(Some).collect();
     f.render_widget(Paragraph::new(lines), list);
 }
 

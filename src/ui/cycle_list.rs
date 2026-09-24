@@ -61,11 +61,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         height: area.height.saturating_sub(1),
         ..area
     };
-    app.list_area = list;
-    app.list_viewport = list.height;
+    app.frame.list_area = list;
+    app.frame.list_viewport = list.height;
 
     if app.cycles.is_empty() {
-        app.row_targets.clear();
+        app.frame.row_targets.clear();
         let message = if app.loading() {
             format!("{} Loading cycles\u{2026}", app.spinner_symbol())
         } else {
@@ -85,13 +85,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 
     let height = list.height as usize;
     let sel = app.selected_cycle_index;
-    let mut offset = app.tables.cycles.offset();
+    let mut offset = app.frame.offsets.cycles;
     if sel < offset {
         offset = sel;
     } else if height > 0 && sel >= offset + height {
         offset = sel + 1 - height;
     }
-    *app.tables.cycles.offset_mut() = offset;
+    app.frame.offsets.cycles = offset;
 
     let now = now_iso();
     let lines: Vec<Line> = app
@@ -102,7 +102,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .take(height)
         .map(|(index, cycle)| cycle_row(cycle, &now, width, index == sel, &th))
         .collect();
-    app.row_targets = (offset..offset + lines.len()).map(Some).collect();
+    app.frame.row_targets = (offset..offset + lines.len()).map(Some).collect();
     f.render_widget(Paragraph::new(lines), list);
 }
 

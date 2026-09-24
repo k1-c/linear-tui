@@ -51,11 +51,11 @@ fn render_popup_list(f: &mut Frame, app: &mut App, title: &str, items: Vec<ListI
         )
         .highlight_symbol("\u{258c}");
 
-    let mut state = ListState::default().with_offset(app.popup_offset);
+    let mut state = ListState::default().with_offset(app.frame.popup_offset);
     state.select(Some(app.popup_index));
     f.render_stateful_widget(list, area, &mut state);
-    app.popup_offset = state.offset();
-    app.popup_area = Rect {
+    app.frame.popup_offset = state.offset();
+    app.frame.popup_area = Rect {
         x: area.x + 1,
         y: area.y + 1,
         width: area.width.saturating_sub(2),

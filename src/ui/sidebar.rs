@@ -15,8 +15,8 @@ use crate::app::{App, Nav, SidebarAction, SidebarRow, TeamSection, Tone};
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let th = app.theme;
-    app.sidebar_rows = app.sidebar_layout();
-    app.sidebar_area = area;
+    app.frame.sidebar_rows = app.sidebar_layout();
+    app.frame.sidebar_area = area;
 
     // The pane is separated from content by a single rule on its right edge.
     let inner = Rect {
@@ -43,22 +43,24 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         height: inner.height.saturating_sub(2),
         ..inner
     };
-    app.sidebar_area = list;
+    app.frame.sidebar_area = list;
 
     // Keep the cursor on screen.
     let height = list.height as usize;
-    if app.sidebar_index < app.sidebar_offset {
-        app.sidebar_offset = app.sidebar_index;
-    } else if height > 0 && app.sidebar_index >= app.sidebar_offset + height {
-        app.sidebar_offset = app.sidebar_index + 1 - height;
+    if app.sidebar_index < app.frame.sidebar_offset {
+        app.frame.sidebar_offset = app.sidebar_index;
+    } else if height > 0 && app.sidebar_index >= app.frame.sidebar_offset + height {
+        app.frame.sidebar_offset = app.sidebar_index + 1 - height;
     }
-    app.sidebar_offset = app
+    app.frame.sidebar_offset = app
+        .frame
         .sidebar_offset
-        .min(app.sidebar_rows.len().saturating_sub(height));
+        .min(app.frame.sidebar_rows.len().saturating_sub(height));
 
     let width = list.width as usize;
     // A view that is not a favorite has no row of its own; light up Views.
     let exact = app
+        .frame
         .sidebar_rows
         .iter()
         .any(|r| matches!(r, SidebarRow::Item(i) if i.nav() == Some(app.nav)));
@@ -75,10 +77,11 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         _ => None,
     };
     let lines: Vec<Line> = app
+        .frame
         .sidebar_rows
         .iter()
         .enumerate()
-        .skip(app.sidebar_offset)
+        .skip(app.frame.sidebar_offset)
         .take(height)
         .map(|(index, row)| match row {
             SidebarRow::Gap => Line::from(""),

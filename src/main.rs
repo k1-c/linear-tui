@@ -137,6 +137,7 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
 
     // `App::new` seeds the initial Teams/Viewer requests.
     let mut app = App::new(&config);
+    let mut cache = ui::Cache::default();
     let mut last_tick = Instant::now();
     let mut dirty = true;
 
@@ -156,7 +157,7 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
         }
 
         if dirty {
-            terminal.draw(|f| ui::draw(f, &mut app))?;
+            terminal.draw(|f| ui::draw(f, &mut app, &mut cache))?;
             dirty = false;
         }
 

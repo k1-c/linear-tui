@@ -287,7 +287,8 @@ impl App {
 
     /// Indices of the sidebar rows the cursor may land on.
     fn sidebar_stops(&self) -> Vec<usize> {
-        self.sidebar_rows
+        self.frame
+            .sidebar_rows
             .iter()
             .enumerate()
             .filter(|(_, row)| matches!(row, SidebarRow::Item(_)))
@@ -310,7 +311,7 @@ impl App {
     }
 
     fn sidebar_item(&self, index: usize) -> Option<&SidebarItem> {
-        match self.sidebar_rows.get(index) {
+        match self.frame.sidebar_rows.get(index) {
             Some(SidebarRow::Item(item)) => Some(item),
             _ => None,
         }
@@ -347,7 +348,7 @@ impl App {
         if !self.collapsed_folders.remove(&id) {
             self.collapsed_folders.insert(id);
         }
-        self.sidebar_rows = self.sidebar_layout();
+        self.frame.sidebar_rows = self.sidebar_layout();
     }
 
     /// Move focus between the sidebar and the content pane.
@@ -359,7 +360,7 @@ impl App {
         if focused {
             // Start on the row matching where the content pane already is, so
             // the sidebar opens pointing at you rather than at the top.
-            if let Some(index) = self.sidebar_rows.iter().position(
+            if let Some(index) = self.frame.sidebar_rows.iter().position(
                 |row| matches!(row, SidebarRow::Item(item) if item.nav() == Some(self.nav)),
             ) {
                 self.sidebar_index = index;

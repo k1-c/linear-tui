@@ -1,5 +1,7 @@
 //! Mouse input, hit-tested against what the last frame drew.
 
+use ratatui::layout::Rect;
+
 use super::*;
 
 fn contains(area: Rect, x: u16, y: u16) -> bool {
@@ -27,8 +29,8 @@ impl App {
             return;
         }
         if self.popup != Popup::None {
-            if contains(self.popup_area, x, y) {
-                self.popup_pick(self.popup_offset + (y - self.popup_area.y) as usize);
+            if contains(self.frame.popup_area, x, y) {
+                self.popup_pick(self.frame.popup_offset + (y - self.frame.popup_area.y) as usize);
             } else {
                 self.close_popup();
             }
@@ -38,9 +40,9 @@ impl App {
             return;
         }
 
-        if contains(self.sidebar_area, x, y) {
-            let index = self.sidebar_offset + (y - self.sidebar_area.y) as usize;
-            let Some(SidebarRow::Item(item)) = self.sidebar_rows.get(index).cloned() else {
+        if contains(self.frame.sidebar_area, x, y) {
+            let index = self.frame.sidebar_offset + (y - self.frame.sidebar_area.y) as usize;
+            let Some(SidebarRow::Item(item)) = self.frame.sidebar_rows.get(index).cloned() else {
                 return;
             };
             self.sidebar_index = index;
@@ -48,7 +50,12 @@ impl App {
             return;
         }
 
-        if let Some((_, chip)) = self.chip_areas.iter().find(|(r, _)| contains(*r, x, y)) {
+        if let Some((_, chip)) = self
+            .frame
+            .chip_areas
+            .iter()
+            .find(|(r, _)| contains(*r, x, y))
+        {
             let chip = *chip;
             self.sidebar_focus = false;
             match chip {
@@ -58,14 +65,14 @@ impl App {
             return;
         }
 
-        if !contains(self.list_area, x, y) {
+        if !contains(self.frame.list_area, x, y) {
             return;
         }
         self.sidebar_focus = false;
-        let row = (y - self.list_area.y) as usize;
+        let row = (y - self.frame.list_area.y) as usize;
         match self.screen {
             Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => {
-                match self.list_rows.get(row).cloned() {
+                match self.frame.list_rows.get(row).cloned() {
                     Some(ListRow::Group { key, .. }) => self.toggle_group(&key),
                     Some(ListRow::Issue { ordinal, .. }) => {
                         if ordinal == self.selected_index() {
@@ -79,7 +86,7 @@ impl App {
                 }
             }
             Screen::ProjectList | Screen::CycleList | Screen::ViewList => {
-                let Some(Some(target)) = self.row_targets.get(row).copied() else {
+                let Some(Some(target)) = self.frame.row_targets.get(row).copied() else {
                     return;
                 };
                 let current = match self.screen {
@@ -109,13 +116,14 @@ impl App {
             } else {
                 self.popup_prev();
             }
-        } else if contains(self.sidebar_area, x, y) {
+        } else if contains(self.frame.sidebar_area, x, y) {
             let max = self
+                .frame
                 .sidebar_rows
                 .len()
-                .saturating_sub(self.sidebar_area.height as usize);
-            self.sidebar_offset =
-                (self.sidebar_offset as isize + delta as isize).clamp(0, max as isize) as usize;
+                .saturating_sub(self.frame.sidebar_area.height as usize);
+            self.frame.sidebar_offset = (self.frame.sidebar_offset as isize + delta as isize)
+                .clamp(0, max as isize) as usize;
         } else if self.show_help {
             self.scroll_help(delta);
         } else {

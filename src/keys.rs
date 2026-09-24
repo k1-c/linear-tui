@@ -810,7 +810,7 @@ fn half_page_down(app: &mut App) {
     if app.sidebar_focus {
         app.sidebar_move(app.half_page());
     } else if app.screen == Screen::IssueDetail {
-        app.scroll_by(app.detail_viewport as i16 / 2);
+        app.scroll_by(app.frame.detail_viewport as i16 / 2);
     } else {
         app.move_selection(app.half_page());
     }
@@ -820,7 +820,7 @@ fn half_page_up(app: &mut App) {
     if app.sidebar_focus {
         app.sidebar_move(-app.half_page());
     } else if app.screen == Screen::IssueDetail {
-        app.scroll_by(-(app.detail_viewport as i16) / 2);
+        app.scroll_by(-(app.frame.detail_viewport as i16) / 2);
     } else {
         app.move_selection(-app.half_page());
     }
@@ -828,17 +828,17 @@ fn half_page_up(app: &mut App) {
 
 fn page_down(app: &mut App) {
     if app.screen == Screen::IssueDetail {
-        app.scroll_by(app.detail_viewport as i16);
+        app.scroll_by(app.frame.detail_viewport as i16);
     } else {
-        app.move_selection(app.list_viewport.max(1) as isize);
+        app.move_selection(app.frame.list_viewport.max(1) as isize);
     }
 }
 
 fn page_up(app: &mut App) {
     if app.screen == Screen::IssueDetail {
-        app.scroll_by(-(app.detail_viewport as i16));
+        app.scroll_by(-(app.frame.detail_viewport as i16));
     } else {
-        app.move_selection(-(app.list_viewport.max(1) as isize));
+        app.move_selection(-(app.frame.list_viewport.max(1) as isize));
     }
 }
 

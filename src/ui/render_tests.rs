@@ -39,7 +39,9 @@ fn app() -> App {
 
 fn render(app: &mut App, width: u16, height: u16) -> Vec<String> {
     let mut terminal = Terminal::new(TestBackend::new(width, height)).unwrap();
-    terminal.draw(|f| super::draw(f, app)).unwrap();
+    terminal
+        .draw(|f| super::draw(f, app, &mut super::Cache::default()))
+        .unwrap();
     let buffer = terminal.backend().buffer();
     (0..height)
         .map(|y| {
@@ -75,11 +77,12 @@ fn recorded_rows_match_the_drawn_list() {
     let mut app = app();
     let lines = render(&mut app, 100, 20);
     let issues = app
+        .frame
         .list_rows
         .iter()
         .filter(|r| matches!(r, ListRow::Issue { .. }))
         .count();
-    let groups = app.list_rows.len() - issues;
+    let groups = app.frame.list_rows.len() - issues;
     assert_eq!((groups, issues), (2, 3));
 
     // Each recorded issue row is the screen line that shows that issue.
@@ -88,9 +91,9 @@ fn recorded_rows_match_the_drawn_list() {
         .iter()
         .map(|i| i.identifier.clone())
         .collect();
-    for (offset, row) in app.list_rows.iter().enumerate() {
+    for (offset, row) in app.frame.list_rows.iter().enumerate() {
         if let ListRow::Issue { ordinal, .. } = row {
-            let line = &lines[app.list_area.y as usize + offset];
+            let line = &lines[app.frame.list_area.y as usize + offset];
             assert!(line.contains(&visible[*ordinal]), "{line:?}");
         }
     }
@@ -100,7 +103,7 @@ fn recorded_rows_match_the_drawn_list() {
 fn a_click_on_a_drawn_chip_selects_its_preset() {
     let mut app = app();
     render(&mut app, 100, 20);
-    let (area, chip) = app.chip_areas[2];
+    let (area, chip) = app.frame.chip_areas[2];
     assert_eq!(chip, Chip::Preset(Preset::all()[2]));
     app.click(area.x, area.y);
     assert_eq!(app.preset(), Preset::all()[2]);
@@ -125,7 +128,7 @@ fn a_change_popup_draws_where_it_records_and_a_click_applies_it() {
     let mut app = app();
     app.open_priority_change();
     render(&mut app, 100, 30);
-    let area = app.popup_area;
+    let area = app.frame.popup_area;
     assert!(area.width > 0 && area.height > 0);
     // The second entry is Urgent.
     app.click(area.x + 1, area.y + 1);
@@ -147,7 +150,7 @@ fn the_detail_view_renders_markdown_and_measures_itself() {
         text.contains("bold") && !text.contains("**bold**"),
         "{text}"
     );
-    assert!(app.detail_lines > 0);
+    assert!(app.frame.detail_lines > 0);
 }
 
 /// No screen, overlay, or terminal size may panic the renderer.
@@ -197,7 +200,7 @@ fn a_tiny_terminal_says_so_and_leaves_nothing_clickable() {
     render(&mut app, 100, 20);
     let text = screen_text(&render(&mut app, 12, 3));
     assert!(text.contains("Terminal"), "{text}");
-    assert!(app.list_rows.is_empty() && app.chip_areas.is_empty());
+    assert!(app.frame.list_rows.is_empty() && app.frame.chip_areas.is_empty());
 }
 
 /// The help overlay is drawn from the binding table, so every documented
@@ -329,11 +332,14 @@ mod timings {
     #[ignore = "timing run: cargo test --release timings -- --ignored --nocapture"]
     fn timings() {
         let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+        let mut cache = crate::ui::Cache::default();
 
         let mut list = app();
         long_list(&mut list, 1000);
         time("list frame, 1000 issues", 500, || {
-            terminal.draw(|f| crate::ui::draw(f, &mut list)).unwrap();
+            terminal
+                .draw(|f| crate::ui::draw(f, &mut list, &mut cache))
+                .unwrap();
         });
         time("j then k, 1000 issues", 2000, || {
             list.move_selection(1);
@@ -341,18 +347,24 @@ mod timings {
         });
         list.open_issue_detail();
         time("detail frame over 1000 issues", 500, || {
-            terminal.draw(|f| crate::ui::draw(f, &mut list)).unwrap();
+            terminal
+                .draw(|f| crate::ui::draw(f, &mut list, &mut cache))
+                .unwrap();
         });
 
         let mut thread = app();
         thread.open_issue_detail();
         thread.current_issue = Some(long_thread(0));
         time("detail frame, no comments", 500, || {
-            terminal.draw(|f| crate::ui::draw(f, &mut thread)).unwrap();
+            terminal
+                .draw(|f| crate::ui::draw(f, &mut thread, &mut cache))
+                .unwrap();
         });
         thread.current_issue = Some(long_thread(100));
         time("detail frame, 100 comments", 500, || {
-            terminal.draw(|f| crate::ui::draw(f, &mut thread)).unwrap();
+            terminal
+                .draw(|f| crate::ui::draw(f, &mut thread, &mut cache))
+                .unwrap();
         });
     }
 }

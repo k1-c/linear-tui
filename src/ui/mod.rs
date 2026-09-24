@@ -28,6 +28,15 @@ use crate::keys;
 /// needs every column, and `Tab` has nothing to focus.
 const SIDEBAR_MIN_WIDTH: u16 = 100;
 
+/// What the renderer keeps from one frame to the next for its own sake —
+/// never read by `app`. The main loop owns it, next to the `App`, so the
+/// model does not depend on the view.
+#[derive(Debug, Default)]
+pub struct Cache {
+    /// The detail view's rendered Markdown.
+    pub detail_markdown: issue_detail::Memo,
+}
+
 /// Days since the Unix epoch for a civil (proleptic Gregorian) date.
 /// Howard Hinnant's `days_from_civil`.
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
@@ -139,7 +148,7 @@ pub fn input_lines(input: &Input, theme: &Theme) -> Vec<Line<'static>> {
 const MIN_WIDTH: u16 = 20;
 const MIN_HEIGHT: u16 = 5;
 
-pub fn draw(f: &mut Frame, app: &mut App) {
+pub fn draw(f: &mut Frame, app: &mut App, cache: &mut Cache) {
     let area = f.area();
     if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
         draw_too_small(f, app);
@@ -148,7 +157,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     let show_sidebar = app.sidebar_visible && area.width >= SIDEBAR_MIN_WIDTH;
     if !show_sidebar {
         app.sidebar_focus = false;
-        app.sidebar_area = Rect::ZERO;
+        app.frame.sidebar_area = Rect::ZERO;
     }
 
     let cols = if show_sidebar {
@@ -180,10 +189,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Each screen resets these as it draws; clear them so a screen without
     // clickable rows does not leave stale targets from the last one behind.
-    app.list_rows.clear();
-    app.row_targets.clear();
-    app.chip_areas.clear();
-    app.list_area = Rect::ZERO;
+    app.frame.list_rows.clear();
+    app.frame.row_targets.clear();
+    app.frame.chip_areas.clear();
+    app.frame.list_area = Rect::ZERO;
 
     let content = rows[2];
     match app.screen {
@@ -191,18 +200,18 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Screen::ProjectList => project_list::draw(f, app, content),
         Screen::CycleList => cycle_list::draw(f, app, content),
         Screen::ViewList => view_list::draw(f, app, content),
-        Screen::IssueDetail => issue_detail::draw(f, app, content),
+        Screen::IssueDetail => issue_detail::draw(f, app, &mut cache.detail_markdown, content),
         Screen::ProjectDetail => project_detail::draw(f, app, content),
         Screen::CycleDetail => cycle_detail::draw(f, app, content),
     }
 
     draw_status_bar(f, app, rows[3]);
 
-    app.popup_area = Rect::ZERO;
+    app.frame.popup_area = Rect::ZERO;
     if app.popup != Popup::None {
         popup::draw(f, app);
     } else {
-        app.popup_offset = 0;
+        app.frame.popup_offset = 0;
     }
     if app.input_mode == InputMode::NewIssue {
         new_issue::draw(f, app);
@@ -421,12 +430,12 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
 fn draw_too_small(f: &mut Frame, app: &mut App) {
     // Nothing on screen is clickable, so nothing from a larger frame may be.
-    app.list_rows.clear();
-    app.row_targets.clear();
-    app.chip_areas.clear();
-    app.list_area = Rect::ZERO;
-    app.sidebar_area = Rect::ZERO;
-    app.popup_area = Rect::ZERO;
+    app.frame.list_rows.clear();
+    app.frame.row_targets.clear();
+    app.frame.chip_areas.clear();
+    app.frame.list_area = Rect::ZERO;
+    app.frame.sidebar_area = Rect::ZERO;
+    app.frame.popup_area = Rect::ZERO;
     let area = f.area();
     f.render_widget(
         Paragraph::new("Terminal too small")
