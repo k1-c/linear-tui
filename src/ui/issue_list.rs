@@ -20,7 +20,7 @@ use super::widgets::{
     truncate, user_name,
 };
 use crate::api::types::{Issue, hex_color};
-use crate::app::{App, Chip, IssueSource, ListRow};
+use crate::app::{App, Chip, IssueSource, ListRow, ListView};
 use crate::config::Theme;
 use crate::grouping::{GroupBy, Preset};
 
@@ -32,12 +32,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         Constraint::Min(0),    // list
     ])
     .split(area);
-    draw_toolbar(f, app, chunks[0]);
-    draw_list(f, app, chunks[2]);
+    let count = draw_list(f, app, chunks[2]);
+    draw_toolbar(f, app, chunks[0], count);
 }
 
-/// Preset chips on the left, grouping and counts on the right.
-pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
+/// Preset chips on the left, grouping and `count` — the issues [`draw_list`]
+/// drew — on the right.
+pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect, count: usize) {
     let th = app.theme;
     let mut spans = vec![Span::raw(" ")];
     let mut x = area.x + 1;
@@ -67,7 +68,6 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
         x += width + 1;
     }
 
-    let count = app.visible_issues().len();
     let mut right = vec![];
     if app.list().filters.is_active() {
         right.push(Span::styled(
@@ -99,17 +99,22 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-/// The grouped list itself. Records its rows and area for mouse hit-testing.
-pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
+/// The grouped list itself. Records its rows and area for mouse hit-testing,
+/// and returns how many issues the cursor can reach.
+///
+/// The list is grouped once here, and everything the frame needs from it is
+/// read off that one pass.
+pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) -> usize {
     let th = app.theme;
-    let rows = app.list_layout();
+    app.list_viewport = area.height;
+    app.list_area = area;
+
+    let ListView { issues, rows } = app.list_view();
+    let count = issues.len();
     let selected = app.selected_index();
     let selected_row = rows
         .iter()
         .position(|r| matches!(r, ListRow::Issue { ordinal, .. } if *ordinal == selected));
-
-    app.list_viewport = area.height;
-    app.list_area = area;
 
     if rows.is_empty() {
         app.list_rows.clear();
@@ -133,13 +138,13 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
             .alignment(ratatui::layout::Alignment::Center),
             message_row(area),
         );
-        return;
+        return count;
     }
 
     // Scroll so the cursor stays visible — and when the cursor is the first
     // issue of a group, keep that group's header in view with it.
     let height = area.height as usize;
-    let mut offset = app.active_table_state().offset();
+    let mut offset = app.list().table.offset();
     if let Some(sel) = selected_row {
         let want_top = if sel > 0 && matches!(rows[sel - 1], ListRow::Group { .. }) {
             sel - 1
@@ -153,9 +158,7 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         }
     }
     offset = offset.min(rows.len().saturating_sub(height));
-    *app.active_table_state().offset_mut() = offset;
 
-    let issues = app.visible_issues();
     let id_width = issues
         .iter()
         .map(|i| i.identifier.width())
@@ -200,8 +203,10 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         })
         .collect();
 
+    *app.active_table_state().offset_mut() = offset;
     app.list_rows = rows.into_iter().skip(offset).take(height).collect();
     f.render_widget(Paragraph::new(lines), area);
+    count
 }
 
 fn group_line(

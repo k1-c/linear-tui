@@ -33,7 +33,9 @@ const PANEL_MIN_TOTAL: u16 = 96;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let th = app.theme;
-    let Some(issue) = app.current_issue.clone() else {
+    // Borrowed, not cloned: a long thread is a lot of strings to copy on
+    // every spinner tick.
+    let Some(issue) = app.current_issue.as_ref() else {
         return;
     };
     let comment_mode = app.input_mode == InputMode::Comment;
@@ -61,18 +63,25 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         width: main.width.saturating_sub(5),
         ..main
     };
-    let lines = body_lines(&issue, body_area.width, !with_panel, &th);
+    let memo = &mut app.detail_markdown;
+    memo.begin();
+    let body = body_lines(issue, body_area.width, !with_panel, &th, memo);
+    memo.finish();
 
-    app.detail_lines = u16::try_from(lines.len()).unwrap_or(u16::MAX);
+    app.detail_lines = u16::try_from(body.len).unwrap_or(u16::MAX);
     app.detail_viewport = body_area.height;
     app.detail_scroll = app
         .detail_scroll
         .min(app.detail_lines.saturating_sub(app.detail_viewport));
 
-    f.render_widget(
-        Paragraph::new(lines).scroll((app.detail_scroll, 0)),
-        body_area,
+    // Only the lines in view go to the widget, already scrolled: the body is
+    // pre-wrapped, so this draws exactly what `Paragraph::scroll` would.
+    let in_view = body.window(
+        &app.detail_markdown,
+        app.detail_scroll as usize,
+        body_area.height as usize,
     );
+    f.render_widget(Paragraph::new(in_view), body_area);
 
     if app.detail_lines > app.detail_viewport {
         let mut state =
@@ -94,7 +103,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     if with_panel {
-        draw_panel(f, &issue, cols[1], &th);
+        draw_panel(f, issue, cols[1], &th);
     }
 
     if comment_mode {
@@ -144,8 +153,153 @@ fn section_rule(title: &str, trailing: &str, width: u16, th: &Theme) -> Line<'st
     ])
 }
 
-fn body_lines(issue: &Issue, width: u16, inline_props: bool, th: &Theme) -> Vec<Line<'static>> {
-    let mut out: Vec<Line<'static>> = vec![Line::from("")];
+/// Rendered Markdown kept from one frame to the next.
+///
+/// The detail view renders the same sources in the same order on every frame
+/// — the description, then each comment — and re-parsing and re-wrapping them
+/// on each spinner tick is most of what a long thread costs to draw. Each call
+/// is matched against the call made at the same position on the last frame,
+/// and its lines are reused only when everything they were rendered from is
+/// equal. There is nothing to invalidate: any change to what would be drawn
+/// is simply a miss, and re-renders that one entry.
+#[derive(Debug, Default)]
+pub struct Memo {
+    entries: Vec<MemoEntry>,
+    next: usize,
+}
+
+#[derive(Debug)]
+struct MemoEntry {
+    source: String,
+    width: u16,
+    gutter: Vec<Span<'static>>,
+    /// Whether the lines are closed with a comment card's right edge.
+    card: bool,
+    theme: Theme,
+    lines: Vec<Line<'static>>,
+}
+
+impl Memo {
+    /// Start a frame: calls are matched in order from the first entry again.
+    pub fn begin(&mut self) {
+        self.next = 0;
+    }
+
+    /// End a frame, dropping whatever the frame did not render.
+    pub fn finish(&mut self) {
+        self.entries.truncate(self.next);
+    }
+
+    /// Render `source` as [`markdown::render`] would — closed with the right
+    /// edge of a comment card `width` wide when `card` is set — reusing the
+    /// last frame's lines for an identical call. Returns the entry holding
+    /// them, for [`Self::lines`].
+    fn render(
+        &mut self,
+        source: &str,
+        width: u16,
+        gutter: &[Span<'static>],
+        card: bool,
+        th: &Theme,
+    ) -> usize {
+        let index = self.next;
+        self.next += 1;
+        let hit = self.entries.get(index).is_some_and(|e| {
+            e.width == width
+                && e.card == card
+                && e.source == source
+                && e.gutter == gutter
+                && e.theme == *th
+        });
+        if !hit {
+            let lines = if card {
+                // `render` fills `width - 2` including the gutter, which
+                // leaves one cell of padding before the right edge.
+                let mut lines = markdown::render(source, width.saturating_sub(2), gutter, th);
+                for line in &mut lines {
+                    close_card_line(line, width as usize, th);
+                }
+                lines
+            } else {
+                markdown::render(source, width, gutter, th)
+            };
+            let entry = MemoEntry {
+                source: source.to_owned(),
+                width,
+                gutter: gutter.to_vec(),
+                card,
+                theme: *th,
+                lines,
+            };
+            match self.entries.get_mut(index) {
+                Some(slot) => *slot = entry,
+                None => self.entries.push(entry),
+            }
+        }
+        index
+    }
+
+    fn lines(&self, entry: usize) -> &[Line<'static>] {
+        &self.entries[entry].lines
+    }
+}
+
+/// The detail body as one frame lays it out: lines built for this frame,
+/// interleaved with runs of Markdown held in the [`Memo`]. Only the lines in
+/// view are ever copied out, so a long thread is not duplicated on each draw.
+struct Body {
+    pieces: Vec<Piece>,
+    /// Total height in lines.
+    len: usize,
+}
+
+enum Piece {
+    Line(Line<'static>),
+    Memo(usize),
+}
+
+impl Body {
+    fn new() -> Self {
+        Self {
+            pieces: Vec::new(),
+            len: 0,
+        }
+    }
+
+    fn push(&mut self, line: Line<'static>) {
+        self.pieces.push(Piece::Line(line));
+        self.len += 1;
+    }
+
+    fn extend(&mut self, lines: impl IntoIterator<Item = Line<'static>>) {
+        for line in lines {
+            self.push(line);
+        }
+    }
+
+    fn memo(&mut self, memo: &Memo, entry: usize) {
+        self.pieces.push(Piece::Memo(entry));
+        self.len += memo.lines(entry).len();
+    }
+
+    /// The `take` lines starting at line `skip`.
+    fn window(&self, memo: &Memo, skip: usize, take: usize) -> Vec<Line<'static>> {
+        self.pieces
+            .iter()
+            .flat_map(|piece| match piece {
+                Piece::Line(line) => std::slice::from_ref(line),
+                Piece::Memo(entry) => memo.lines(*entry),
+            })
+            .skip(skip)
+            .take(take)
+            .cloned()
+            .collect()
+    }
+}
+
+fn body_lines(issue: &Issue, width: u16, inline_props: bool, th: &Theme, memo: &mut Memo) -> Body {
+    let mut out = Body::new();
+    out.push(Line::from(""));
     let w = width as usize;
 
     // Title, large in Linear; bold and wrapped here.
@@ -184,7 +338,10 @@ fn body_lines(issue: &Issue, width: u16, inline_props: bool, th: &Theme) -> Vec<
         .as_deref()
         .filter(|d| !d.trim().is_empty())
     {
-        Some(desc) => out.extend(markdown::render(desc, width, &[], th)),
+        Some(desc) => {
+            let entry = memo.render(desc, width, &[], false, th);
+            out.memo(memo, entry);
+        }
         None => out.push(Line::from(Span::styled(
             "Add description\u{2026}",
             Style::default().fg(th.muted).add_modifier(Modifier::ITALIC),
@@ -248,7 +405,7 @@ fn body_lines(issue: &Issue, width: u16, inline_props: bool, th: &Theme) -> Vec<
                 th,
             ));
             out.push(Line::from(""));
-            out.extend(comment_threads(&comments.nodes, width, th));
+            comment_threads(&mut out, &comments.nodes, width, th, memo);
             out.push(Line::from(Span::styled(
                 "  m  Leave a comment\u{2026}",
                 Style::default().fg(th.muted),
@@ -262,7 +419,7 @@ fn body_lines(issue: &Issue, width: u16, inline_props: bool, th: &Theme) -> Vec<
 /// Comments as threads: each top-level comment as a card, its replies nested
 /// inside it. Linear returns replies as siblings with a `parent`, oldest last,
 /// so the tree is rebuilt here and shown chronologically.
-fn comment_threads(comments: &[Comment], width: u16, th: &Theme) -> Vec<Line<'static>> {
+fn comment_threads(out: &mut Body, comments: &[Comment], width: u16, th: &Theme, memo: &mut Memo) {
     let mut replies: HashMap<&str, Vec<&Comment>> = HashMap::new();
     let mut roots: Vec<&Comment> = Vec::new();
     let ids: Vec<&str> = comments.iter().map(|c| c.id.as_str()).collect();
@@ -280,23 +437,36 @@ fn comment_threads(comments: &[Comment], width: u16, th: &Theme) -> Vec<Line<'st
         list.sort_by(by_time);
     }
 
-    let mut out = Vec::new();
     for root in roots {
-        out.extend(comment_card(root, &replies, width, th));
+        comment_card(out, root, &replies, width, th, memo);
         out.push(Line::from(""));
     }
-    out
+}
+
+/// Close a line inside a comment card with the card's right edge.
+fn close_card_line(line: &mut Line<'static>, width: usize, th: &Theme) {
+    let used = line.width();
+    line.spans
+        .push(Span::raw(" ".repeat(width.saturating_sub(used + 1))));
+    line.spans
+        .push(Span::styled("\u{2502}", Style::default().fg(th.border)));
 }
 
 fn comment_card(
+    out: &mut Body,
     root: &Comment,
     replies: &HashMap<&str, Vec<&Comment>>,
     width: u16,
     th: &Theme,
-) -> Vec<Line<'static>> {
+    memo: &mut Memo,
+) {
     let border = Style::default().fg(th.border);
     let w = width as usize;
-    let mut out = Vec::new();
+    // Every line between the top and bottom edges is closed on the right.
+    let closed = |mut line: Line<'static>| {
+        close_card_line(&mut line, w, th);
+        line
+    };
 
     out.push(Line::from(vec![
         Span::styled("\u{256d}", border),
@@ -313,13 +483,13 @@ fn comment_card(
     for (index, (comment, is_reply)) in entries.iter().enumerate() {
         if index > 0 {
             // A thin divider between the comment and each reply.
-            out.push(Line::from(vec![
+            out.push(closed(Line::from(vec![
                 Span::styled("\u{2502} ", border),
                 Span::styled(
                     "\u{2508}".repeat(w.saturating_sub(4)),
                     Style::default().fg(th.border),
                 ),
-            ]));
+            ])));
         }
         let indent = if *is_reply { "  " } else { "" };
         let mut header = gutter.clone();
@@ -347,26 +517,12 @@ fn comment_card(
         if comment.edited_at.is_some() {
             header.push(Span::styled(" (edited)", Style::default().fg(th.muted)));
         }
-        out.push(Line::from(header));
+        out.push(closed(Line::from(header)));
 
         let mut body_gutter = gutter.clone();
         body_gutter.push(Span::raw(indent));
-        out.extend(markdown::render(
-            &comment.body,
-            width.saturating_sub(2),
-            &body_gutter,
-            th,
-        ));
-        // `render` fills `width - 2` including the gutter, which leaves one
-        // cell of padding before the right edge.
-    }
-
-    // Close every inner line with the card's right edge.
-    for line in out.iter_mut().skip(1) {
-        let used = line.width();
-        line.spans
-            .push(Span::raw(" ".repeat(w.saturating_sub(used + 1))));
-        line.spans.push(Span::styled("\u{2502}", border));
+        let entry = memo.render(&comment.body, width, &body_gutter, true, th);
+        out.memo(memo, entry);
     }
 
     out.push(Line::from(vec![
@@ -374,7 +530,6 @@ fn comment_card(
         Span::styled("\u{2500}".repeat(w.saturating_sub(2)), border),
         Span::styled("\u{256f}", border),
     ]));
-    out
 }
 
 // ---------------------------------------------------------------- properties

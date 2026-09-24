@@ -50,6 +50,6 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     ];
     f.render_widget(Paragraph::new(lines), chunks[0]);
 
-    draw_toolbar(f, app, chunks[1]);
-    draw_list(f, app, chunks[3]);
+    let count = draw_list(f, app, chunks[3]);
+    draw_toolbar(f, app, chunks[1], count);
 }

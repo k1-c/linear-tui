@@ -547,12 +547,13 @@ fn issues_are_listed_in_group_order() {
     let ids: Vec<_> = app.visible_issues().iter().map(|i| i.id.clone()).collect();
     assert_eq!(ids, ["2", "1", "3"]);
     // Header rows interleave with the issues.
-    let layout = app.list_layout();
+    let layout = app.list_view().rows;
     assert!(matches!(layout[0], ListRow::Group { count: 1, .. }));
     assert!(matches!(layout[2], ListRow::Group { count: 2, .. }));
     app.group_by = GroupBy::None;
     assert!(
-        app.list_layout()
+        app.list_view()
+            .rows
             .iter()
             .all(|r| matches!(r, ListRow::Issue { .. }))
     );
@@ -943,7 +944,7 @@ fn the_detail_view_returns_to_the_project_it_came_from() {
 
 fn clickable(app: &mut App) {
     app.list_area = Rect::new(30, 5, 80, 20);
-    app.list_rows = app.list_layout();
+    app.list_rows = app.list_view().rows;
 }
 
 #[test]
