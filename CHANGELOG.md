@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.3] - 2026-09-24
+
+### Miscellaneous
+
+- Let the audit job write its check run
+- Pin GitHub Actions to commit SHAs
+
+
+
 ## [0.5.2] - 2026-09-24
 
 ### Bug Fixes
