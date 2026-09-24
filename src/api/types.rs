@@ -508,6 +508,15 @@ impl Favorite {
     }
 }
 
+impl Cycle {
+    /// What a cycle is called: its name, or `Cycle 12` for an unnamed one.
+    pub fn label(&self) -> String {
+        self.name
+            .clone()
+            .unwrap_or_else(|| format!("Cycle {}", self.number.unwrap_or(0.0)))
+    }
+}
+
 impl CustomView {
     /// Whether this view lists issues. Project views filter projects, not
     /// issues, so opening one as an issue list would only ever show nothing.

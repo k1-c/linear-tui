@@ -12,6 +12,7 @@ mod logging;
 mod message;
 mod palette;
 mod private_file;
+mod snapshot;
 mod store;
 mod ui;
 mod usecase;
@@ -58,7 +59,7 @@ async fn main() -> Result<()> {
     }
 
     // Load config and authenticate
-    let config = Config::load()?;
+    let mut config = Config::load()?;
     let token_store = TokenStore::new()?;
     let Some(auth) = authenticate(&token_store, &config).await? else {
         return Ok(());
@@ -66,8 +67,46 @@ async fn main() -> Result<()> {
     tracing::info!(method = auth.label(), "authenticated successfully");
     let client = LinearClient::new(auth.into_credentials(token_store));
 
+    // An entry for this directory in config.toml wins over the view
+    // remembered for it.
+    let origin = snapshot::Origin::current(std::env::current_dir()?);
+    let pinned = config.workspace(&origin.workspace, &origin.cwd).cloned();
+    let shelf = snapshot::state_dir()
+        .map(|dir| snapshot::Shelf::new(&dir, &origin.workspace))
+        .inspect_err(|e| tracing::warn!("snapshots disabled: {e:#}"))
+        .ok();
+    let restored = match &pinned {
+        Some(entry) => {
+            if entry.team.is_some() {
+                config.ui.default_team.clone_from(&entry.team);
+            }
+            None
+        }
+        None => shelf.as_ref().and_then(|s| s.for_restore(origin.pid)),
+    };
+    let recorder = shelf.map(|shelf| {
+        shelf.prune();
+        snapshot::Recorder::new(&shelf, origin.pid)
+    });
+
     // Run TUI
-    run_tui(client, config).await
+    run_tui(
+        client,
+        config,
+        Session {
+            origin,
+            restored,
+            recorder,
+        },
+    )
+    .await
+}
+
+/// Where this instance runs, what it reopens, and where it records its view.
+struct Session {
+    origin: snapshot::Origin,
+    restored: Option<snapshot::ViewSnapshot>,
+    recorder: Option<snapshot::Recorder>,
 }
 
 /// Resolve stored credentials, running first-run setup when there are none.
@@ -130,7 +169,12 @@ impl Drop for TerminalGuard {
     }
 }
 
-async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
+async fn run_tui(client: LinearClient, config: Config, session: Session) -> Result<()> {
+    let Session {
+        origin,
+        restored,
+        mut recorder,
+    } = session;
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
@@ -141,6 +185,10 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
 
     // `App::new` seeds the initial Teams/Viewer requests.
     let mut app = App::new(&config);
+    if let Some(snapshot) = restored {
+        tracing::info!(updated_at = %snapshot.updated_at, "restoring the last view");
+        app.restore(snapshot);
+    }
     let mut cache = ui::Cache::default();
     let mut last_tick = Instant::now();
     let mut dirty = true;
@@ -171,10 +219,11 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
         }
 
         // Drain completed requests without blocking.
+        let mut moved = false;
         while let Ok(msg) = rx.try_recv() {
             app.outbox.inflight = app.outbox.inflight.saturating_sub(1);
             app.handle_message(msg);
-            dirty = true;
+            moved = true;
         }
 
         if let Some(text) = app.outbox.clipboard.take() {
@@ -182,8 +231,23 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
         }
 
         if event::poll_and_handle(&mut app)? {
-            dirty = true;
+            moved = true;
         }
+
+        // Record where the user is once the view has rested. This is the
+        // only place a snapshot is written — never from rendering.
+        let now = Instant::now();
+        if let Some(recorder) = &mut recorder {
+            if moved {
+                recorder.touch(now);
+            }
+            if recorder.is_due(now)
+                && let Some(snapshot) = app.snapshot(&origin)
+            {
+                recorder.record(snapshot);
+            }
+        }
+        dirty |= moved;
 
         if app.loading() && last_tick.elapsed() >= TICK {
             app.tick_spinner();
@@ -196,6 +260,11 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
         }
     }
 
+    if let Some(recorder) = &mut recorder
+        && let Some(snapshot) = app.snapshot(&origin)
+    {
+        recorder.close(snapshot);
+    }
     Ok(())
 }
 

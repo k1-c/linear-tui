@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "workspace": "/home/me/dev/shop",
+  "cwd": "/home/me/dev/shop-worktrees/eng-42-checkout",
+  "pid": 48213,
+  "updated_at": "2026-09-25T06:01:02Z",
+  "herdr_pane": "w2:p3",
+  "team": { "id": "3f1c…team", "key": "ENG", "name": "Engineering" },
+  "destination": {
+    "kind": "team",
+    "team": { "id": "3f1c…team", "key": "ENG", "name": "Engineering" },
+    "section": "issues"
+  },
+  "screen": "issue_detail",
+  "issue": { "id": "9a0e…issue", "identifier": "ENG-42", "title": "Checkout fails on empty cart" },
+  "group_by": "status",
+  "lists": [
+    {
+      "source": "team",
+      "preset": "active",
+      "priority": "High",
+      "selected": { "id": "9a0e…issue", "identifier": "ENG-42", "title": "Checkout fails on empty cart" }
+    }
+  ],
+  "rows": [
+    {
+      "kind": "issue",
+      "id": "77b2…issue",
+      "identifier": "ENG-40",
+      "title": "Retry payment webhooks",
+      "state": "In Progress",
+      "assignee": "me",
+      "priority": "High",
+      "url": "https://linear.app/shop/issue/ENG-40/retry-payment-webhooks"
+    },
+    {
+      "kind": "issue",
+      "id": "9a0e…issue",
+      "identifier": "ENG-42",
+      "title": "Checkout fails on empty cart",
+      "state": "Todo",
+      "priority": "High",
+      "url": "https://linear.app/shop/issue/ENG-42/checkout-fails-on-empty-cart"
+    }
+  ],
+  "rows_total": 2,
+  "selected_row": 1
+}

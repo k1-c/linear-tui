@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -11,6 +12,9 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    /// Settings for one directory, keyed by its path (`~` allowed).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub workspaces: BTreeMap<String, WorkspaceConfig>,
     /// What was wrong with the file as loaded — unknown keys, values out of
     /// range — for the app to surface. Never written back.
     #[serde(skip)]
@@ -20,7 +24,7 @@ pub struct Config {
 /// The keys each table of `config.toml` understands. A key outside these is
 /// almost always a typo, which serde would otherwise ignore without a word.
 const KNOWN_KEYS: &[(&str, &[&str])] = &[
-    ("", &["auth", "ui"]),
+    ("", &["auth", "ui", "workspaces"]),
     (
         "auth",
         &["api_key", "oauth_client_id", "oauth_client_secret"],
@@ -41,6 +45,17 @@ const KNOWN_KEYS: &[(&str, &[&str])] = &[
 /// Linear's largest page. A bigger `first` is refused by the API.
 pub const MAX_ITEMS_PER_PAGE: u32 = 250;
 pub const SIDEBAR_WIDTH: std::ops::RangeInclusive<u16> = 18..=48;
+
+/// The keys a `[workspaces."<path>"]` table understands.
+const WORKSPACE_KEYS: &[&str] = &["team"];
+
+/// How linear-tui opens in one directory. An entry here wins over the view
+/// remembered for the directory.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WorkspaceConfig {
+    /// The team to open on, by name or key.
+    pub team: Option<String>,
+}
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AuthConfig {
@@ -97,6 +112,15 @@ fn unknown_keys(table: &toml::Table) -> Vec<String> {
                 };
                 unknown.push(format!("unknown key `{path}` is ignored"));
             }
+        }
+    }
+    let workspaces = table.get("workspaces").and_then(toml::Value::as_table);
+    for (path, entry) in workspaces.into_iter().flatten() {
+        let keys = entry.as_table().into_iter().flat_map(|t| t.keys());
+        for key in keys.filter(|k| !WORKSPACE_KEYS.contains(&k.as_str())) {
+            unknown.push(format!(
+                "unknown key `workspaces.\"{path}\".{key}` is ignored"
+            ));
         }
     }
     unknown
@@ -293,6 +317,25 @@ impl Config {
         }
     }
 
+    /// The entry for `workspace` — the repository — or for `cwd` itself,
+    /// the more specific one first.
+    pub fn workspace(&self, workspace: &Path, cwd: &Path) -> Option<&WorkspaceConfig> {
+        let home = directories::BaseDirs::new().map(|d| d.home_dir().to_path_buf());
+        let expand = |key: &str| match (key.strip_prefix("~/"), &home) {
+            (Some(rest), Some(home)) => home.join(rest),
+            _ => PathBuf::from(key),
+        };
+        let matches = |dir: &Path| {
+            let dir = fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+            self.workspaces.iter().find_map(|(key, entry)| {
+                let path = expand(key);
+                let path = fs::canonicalize(&path).unwrap_or(path);
+                (path == dir).then_some(entry)
+            })
+        };
+        matches(cwd).or_else(|| matches(workspace))
+    }
+
     /// Write the config back. It can hold an API key and a client secret, so
     /// it is written owner-only.
     pub fn save(&self) -> Result<()> {
@@ -338,6 +381,21 @@ mod tests {
     }
 
     #[test]
+    fn a_workspace_entry_is_found_by_path_and_checked_for_typos() {
+        let config = Config::parse(
+            "[workspaces.\"/tmp\"]\nteam = \"ENG\"\n[workspaces.\"/nowhere\"]\ntaem = \"X\"\n",
+        )
+        .unwrap();
+        assert_eq!(
+            config.warnings,
+            ["unknown key `workspaces.\"/nowhere\".taem` is ignored"]
+        );
+        let entry = config.workspace(Path::new("/elsewhere"), Path::new("/tmp"));
+        assert_eq!(entry.and_then(|e| e.team.as_deref()), Some("ENG"));
+        assert!(config.workspace(Path::new("/a"), Path::new("/b")).is_none());
+    }
+
+    #[test]
     fn a_valid_file_has_no_warnings() {
         let config = Config::parse("[ui]\ntheme = \"light\"\nitems_per_page = 100\n").unwrap();
         assert!(config.warnings.is_empty(), "{:?}", config.warnings);
@@ -352,6 +410,12 @@ mod tests {
         config.auth.oauth_client_id = Some("id".into());
         config.auth.oauth_client_secret = Some("secret".into());
         config.ui.default_team = Some("ENG".into());
+        config.workspaces.insert(
+            "~/dev/app".into(),
+            WorkspaceConfig {
+                team: Some("ENG".into()),
+            },
+        );
         let written = toml::to_string(&config).unwrap();
         assert!(Config::parse(&written).unwrap().warnings.is_empty());
         let table: toml::Table = toml::from_str(&written).unwrap();
@@ -368,5 +432,7 @@ mod tests {
             };
             assert_eq!(keys.len(), known.len(), "[{section}] {keys:?}");
         }
+        let entry = table["workspaces"]["~/dev/app"].as_table().unwrap();
+        assert_eq!(entry.len(), WORKSPACE_KEYS.len(), "{entry:?}");
     }
 }

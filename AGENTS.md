@@ -57,8 +57,12 @@ the pins current, so never add one by tag or branch.
   queued requests). Transitions live by concern: `messages.rs`
   (`handle_message`), `navigation.rs`, `popups.rs`, `actions.rs` (intents that
   resolve the target and call a use case), `cursor.rs`, `lists.rs` (filtering,
-  grouping, prefetch), `sidebar.rs`, `mouse.rs` (`App::click`), `input.rs`;
+  grouping, prefetch), `sidebar.rs`, `mouse.rs` (`App::click`), `input.rs`,
+  `snapshot.rs` (capture the view) and `restore.rs` (reopen it on launch);
   `tests.rs` the state tests
+- `src/snapshot/` — the view snapshot (`docs/view-snapshot.md`): its types, the
+  per-workspace files under the state dir (`Shelf`), and the debounced writer
+  (`Recorder`) the main loop drives
 - `src/grouping.rs` — Active/Backlog/All presets and grouping of issue lists
 - `src/keys.rs` — keybindings (Controller): the `BINDINGS` table
 - `src/palette.rs` — the `Ctrl+K` command palette (Controller): lists the
@@ -112,6 +116,10 @@ Other invariants:
 - `ui::draw` takes `&mut App` so renderers can write back measurements
   (`app.frame`: `detail_lines`, `list_viewport`, scroll offsets). Rendering
   must not do I/O.
+- The view snapshot is written from the main loop only, after input or an
+  answer has been handled and the view has rested. It holds pages by Linear ID,
+  never by sidebar position; its format is a contract with other programs, so
+  fields are only added, and a breaking change bumps `snapshot::VERSION`.
 - Mutations are optimistic. `Store::patch_issue` updates every copy of an
   issue, including `current_issue`, and the request only confirms it. Do not trigger a
   full list reload to reflect a single-field change — it costs a round trip and

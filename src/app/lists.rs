@@ -81,7 +81,7 @@ pub struct ListView<'a> {
 }
 
 /// The issues of the open sections, in the order they are drawn.
-fn visible_of(sections: Vec<Section<'_>>) -> Vec<&Issue> {
+pub(super) fn visible_of(sections: Vec<Section<'_>>) -> Vec<&Issue> {
     sections
         .into_iter()
         .filter(|s| !s.collapsed)
@@ -225,10 +225,15 @@ impl App {
     /// where the cursor can land, so a collapsed group cannot leave the cursor
     /// pointing at an issue nobody can see.
     pub fn sections(&self) -> Vec<Section<'_>> {
-        let list = self.list();
+        self.sections_of(self.issue_source())
+    }
+
+    /// [`Self::sections`] for any of the five lists, on screen or not.
+    pub(super) fn sections_of(&self, source: IssueSource) -> Vec<Section<'_>> {
+        let list = &self.view.lists[source];
         let query = list.search.value.to_lowercase();
         group(
-            self.store.issues[self.issue_source()]
+            self.store.issues[source]
                 .items
                 .iter()
                 .filter(|i| list.admits(i, &query)),

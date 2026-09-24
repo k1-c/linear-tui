@@ -22,10 +22,14 @@ pub fn poll_and_handle(app: &mut App) -> Result<bool> {
         timeout = Duration::ZERO;
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                app.cancel_restore();
                 handle_key(app, key);
                 dirty = true;
             }
             Event::Mouse(mouse) => {
+                if let MouseEventKind::Down(_) = mouse.kind {
+                    app.cancel_restore();
+                }
                 // The palette's rows come from the binding table, which the
                 // app does not know about, so its clicks are routed here.
                 let palette = app.view.popup == Popup::Palette;
