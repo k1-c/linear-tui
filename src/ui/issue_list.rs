@@ -16,7 +16,8 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::widgets::{
-    avatar, estimate, fit, label_chip, priority_glyph, short_date, state_glyph, truncate, user_name,
+    avatar, estimate, fit, label_chip, message_row, priority_glyph, short_date, state_glyph,
+    truncate, user_name,
 };
 use crate::api::types::{Issue, hex_color};
 use crate::app::{App, Chip, IssueSource, ListRow};
@@ -124,18 +125,13 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         } else {
             "No issues".to_string()
         };
-        let y = area.y + area.height / 3;
         f.render_widget(
             Paragraph::new(Line::from(Span::styled(
                 message,
                 Style::default().fg(th.muted),
             )))
             .alignment(ratatui::layout::Alignment::Center),
-            Rect {
-                y,
-                height: 1,
-                ..area
-            },
+            message_row(area),
         );
         return;
     }

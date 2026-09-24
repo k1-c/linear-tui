@@ -133,8 +133,17 @@ pub fn input_lines(input: &Input, theme: &Theme) -> Vec<Line<'static>> {
     out
 }
 
+/// Below this the layout has no room for its own chrome; the frame says so
+/// instead of drawing panes that cannot fit.
+const MIN_WIDTH: u16 = 20;
+const MIN_HEIGHT: u16 = 5;
+
 pub fn draw(f: &mut Frame, app: &mut App) {
     let area = f.area();
+    if area.width < MIN_WIDTH || area.height < MIN_HEIGHT {
+        draw_too_small(f, app);
+        return;
+    }
     let show_sidebar = app.sidebar_visible && area.width >= SIDEBAR_MIN_WIDTH;
     if !show_sidebar {
         app.sidebar_focus = false;
@@ -463,6 +472,23 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     };
     let spans: Vec<Span> = keys.iter().flat_map(|(k, w)| hint(k, w, th)).collect();
     f.render_widget(Paragraph::new(Line::from(spans)), area);
+}
+
+fn draw_too_small(f: &mut Frame, app: &mut App) {
+    // Nothing on screen is clickable, so nothing from a larger frame may be.
+    app.list_rows.clear();
+    app.row_targets.clear();
+    app.chip_areas.clear();
+    app.list_area = Rect::ZERO;
+    app.sidebar_area = Rect::ZERO;
+    app.popup_area = Rect::ZERO;
+    let area = f.area();
+    f.render_widget(
+        Paragraph::new("Terminal too small")
+            .style(Style::default().fg(app.theme.muted))
+            .wrap(Wrap { trim: true }),
+        area,
+    );
 }
 
 fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
