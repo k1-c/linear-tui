@@ -4,10 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [0.5.3] - 2026-09-24
 
+### Bug Fixes
+
+- **deps**: Upgrade ratatui to 0.30 and crossterm to 0.29
+- **app**: Offer an issue's own team states and members in popups
+
 ### Miscellaneous
 
 - Let the audit job write its check run
 - Pin GitHub Actions to commit SHAs
+
+### Performance
+
+- **list**: Group the issue list once per frame
+- **detail**: Reuse rendered markdown between frames
+
+### Refactoring
+
+- **keys**: Drive dispatch, hints, and help from one binding table
 
 
 
