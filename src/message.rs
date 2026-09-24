@@ -42,6 +42,11 @@ pub enum Request {
         view_id: String,
         after: Option<String>,
     },
+    /// One saved project view's projects.
+    ViewProjects {
+        view_id: String,
+        after: Option<String>,
+    },
     Projects {
         team_id: String,
         after: Option<String>,
@@ -130,6 +135,10 @@ pub enum Message {
         /// Echoed back so a late page cannot be filed under the wrong view.
         view_id: String,
         page: Page<Issue>,
+    },
+    ViewProjects {
+        view_id: String,
+        page: Page<Project>,
     },
     Projects(Page<Project>),
     Cycles(Page<Cycle>),

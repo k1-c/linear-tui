@@ -422,6 +422,19 @@ async fn execute_request(client: &LinearClient, req: Request, per_page: u32) -> 
                 Err(e) => Message::Error(format!("Failed to load view issues: {e}")),
             }
         }
+        Request::ViewProjects { view_id, after } => {
+            let append = after.is_some();
+            match client
+                .custom_view_projects(&view_id, after.as_deref())
+                .await
+            {
+                Ok((projects, info)) => Message::ViewProjects {
+                    view_id,
+                    page: Page::new(projects, info, append),
+                },
+                Err(e) => Message::Error(format!("Failed to load view projects: {e}")),
+            }
+        }
         Request::Projects { team_id, after } => {
             let append = after.is_some();
             match client.projects(&team_id, after.as_deref()).await {

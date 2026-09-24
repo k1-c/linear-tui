@@ -286,6 +286,8 @@ fn handle_view_list_keys(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Char('q') => app.should_quit = true,
         KeyCode::Enter | KeyCode::Char(' ') => app.open_selected_view(),
+        // Linear's Issues / Projects tabs on a Views page.
+        KeyCode::BackTab => app.cycle_view_kind(),
         _ => {}
     }
 }

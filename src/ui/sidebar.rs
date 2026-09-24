@@ -11,7 +11,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::widgets::truncate;
-use crate::app::{App, Nav, SidebarAction, SidebarRow, Tone};
+use crate::app::{App, Nav, SidebarAction, SidebarRow, TeamSection, Tone};
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let th = app.theme;
@@ -62,8 +62,16 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .sidebar_rows
         .iter()
         .any(|r| matches!(r, SidebarRow::Item(i) if i.nav() == Some(app.nav)));
+    // A team's view lights its team's Views row; any other, the workspace's.
     let fallback = match app.nav {
-        Nav::View(_) if !exact => Some(Nav::Views),
+        Nav::View(i) if !exact => Some(
+            match app.custom_views.get(i).and_then(|v| v.team.as_ref()) {
+                Some(team) if app.current_team().is_some_and(|t| t.id == team.id) => {
+                    Nav::Team(app.selected_team_index, TeamSection::Views)
+                }
+                _ => Nav::Views,
+            },
+        ),
         _ => None,
     };
     let lines: Vec<Line> = app

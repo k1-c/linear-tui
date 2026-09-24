@@ -19,9 +19,9 @@ Built with [ratatui](https://ratatui.rs/) and the Linear GraphQL API.
 
 ## Features
 
-- **Sidebar navigation, like Linear's** — My Issues, your **Favorites** (in Linear's order, with folders), and the current team's Issues / Cycles / Projects under a team switcher
+- **Sidebar navigation, like Linear's** — My Issues, your **Favorites** (in Linear's order, with folders), and the current team's Issues / Cycles / Projects / Views under a team switcher
 - **Favorites** — favorite projects, cycles, issues, and views open right in the terminal; favorites of kinds the TUI has no page for (documents, labels, …) open on linear.app
-- **Saved views** — every issue view you or your workspace saved, evaluated by Linear itself, so a view shows exactly what it shows on linear.app
+- **Saved views** — issue and project views, on the workspace Views page and each team's own, with Linear's Issues / Projects tabs; Linear evaluates each view's filter, so it shows exactly what it shows on linear.app
 - **Grouped lists** — issues stacked under collapsible status headers (or by assignee, priority, project), sub-issues nested under their parent, and Linear's Active / Backlog / All issues presets
 - **Rich rows** — priority and status glyphs in the workspace's own colours, label chips, project, estimate, assignee avatar, and date, dropping columns gracefully as the terminal narrows
 - **Issue detail like the web app** — rendered Markdown (bold, code, lists, headings, quotes, code blocks) with proper Japanese line breaking, threaded comment cards, sub-issues, and a properties panel with status, priority, assignee, **creator**, estimate, due date, cycle, labels, project and milestone; step to the next/previous issue with `J`/`K`
@@ -151,7 +151,7 @@ a terminal allows it, so muscle memory carries over from the web app.
 
 | Key | Action |
 | --- | --- |
-| `Shift+Tab` | Next preset: Active → Backlog → All issues |
+| `Shift+Tab` | Next preset: Active → Backlog → All issues (on a Views page: Issues ⇄ Projects tab) |
 | `D` | Group by status → assignee → priority → project → none |
 | `z` / `Z` | Fold the group under the cursor / fold or unfold every group |
 
@@ -161,7 +161,7 @@ a terminal allows it, so muscle memory carries over from the web app.
 | --- | --- |
 | Click a row | Select it; click it again to open it |
 | Click a sidebar entry | Go there; a folder folds, the team row opens the team switcher |
-| Click a preset chip or group header | Switch preset / fold the group |
+| Click a preset chip, tab, or group header | Switch preset or tab / fold the group |
 | Click a popup entry | Choose it; click outside to close |
 | Wheel | Scroll whatever is under the pointer |
 
@@ -241,9 +241,6 @@ sidebar = true               # Show the sidebar (it hides itself below 100 colum
 sidebar_width = 26           # Sidebar width in columns (18-48)
 group_by = "status"          # "status" | "assignee" | "priority" | "project" | "none"
 ```
-
-Saved views that list projects rather than issues are not shown yet; issue
-views are.
 
 ### Themes
 

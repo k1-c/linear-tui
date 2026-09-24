@@ -28,6 +28,21 @@ const ISSUE_FIELDS: &str = r#"
     updatedAt
 "#;
 
+/// Fields selected for every project row, whichever list it comes from.
+const PROJECT_FIELDS: &str = r#"
+    id
+    name
+    description
+    state
+    color
+    health
+    progress
+    startDate
+    targetDate
+    url
+    lead { id name displayName }
+"#;
+
 /// Default page size for the sub-lists that hang off a project or cycle.
 const SUBLIST_PAGE_SIZE: u32 = 100;
 
@@ -438,6 +453,44 @@ impl LinearClient {
         ))
     }
 
+    /// Projects belonging to a saved project view — filtered by Linear, as
+    /// with issue views.
+    pub async fn custom_view_projects(
+        &self,
+        view_id: &str,
+        after: Option<&str>,
+    ) -> Result<(Vec<Project>, PageInfo)> {
+        #[derive(Deserialize)]
+        struct Resp {
+            #[serde(rename = "customView")]
+            custom_view: ViewWithProjects,
+        }
+        #[derive(Deserialize)]
+        struct ViewWithProjects {
+            projects: Connection<Project>,
+        }
+        let variables = serde_json::json!({
+            "id": view_id,
+            "after": after,
+            "first": SUBLIST_PAGE_SIZE,
+        });
+        let query = format!(
+            r#"query($id: String!, $after: String, $first: Int!) {{
+                customView(id: $id) {{
+                    projects(first: $first, after: $after) {{
+                        nodes {{ {PROJECT_FIELDS} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, Some(variables)).await?;
+        Ok((
+            resp.custom_view.projects.nodes,
+            resp.custom_view.projects.page_info,
+        ))
+    }
+
     pub async fn projects(
         &self,
         team_id: &str,
@@ -456,31 +509,17 @@ impl LinearClient {
             "after": after,
             "first": SUBLIST_PAGE_SIZE,
         });
-        let resp: TeamResp = self
-            .query(
-                r#"query($id: String!, $after: String, $first: Int!) {
-                    team(id: $id) {
-                        projects(first: $first, after: $after) {
-                            nodes {
-                                id
-                                name
-                                description
-                                state
-                                color
-                                health
-                                progress
-                                startDate
-                                targetDate
-                                url
-                                lead { id name displayName }
-                            }
-                            pageInfo { hasNextPage endCursor }
-                        }
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
+        let query = format!(
+            r#"query($id: String!, $after: String, $first: Int!) {{
+                team(id: $id) {{
+                    projects(first: $first, after: $after) {{
+                        nodes {{ {PROJECT_FIELDS} }}
+                        pageInfo {{ hasNextPage endCursor }}
+                    }}
+                }}
+            }}"#
+        );
+        let resp: TeamResp = self.query(&query, Some(variables)).await?;
         Ok((resp.team.projects.nodes, resp.team.projects.page_info))
     }
 

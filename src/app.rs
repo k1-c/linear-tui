@@ -39,16 +39,51 @@ pub enum TeamSection {
     Issues,
     Cycles,
     Projects,
+    /// Saved views scoped to the team.
+    Views,
+}
+
+/// What a saved view lists — Linear's Issues / Projects tabs on a Views page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViewKind {
+    #[default]
+    Issues,
+    Projects,
+}
+
+impl ViewKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Issues => "Issues",
+            Self::Projects => "Projects",
+        }
+    }
+
+    fn of(view: &CustomView) -> Self {
+        if view.lists_issues() {
+            Self::Issues
+        } else {
+            Self::Projects
+        }
+    }
+}
+
+/// A clickable chip in a toolbar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Chip {
+    Preset(Preset),
+    ViewKind(ViewKind),
 }
 
 impl Nav {
     /// The screen this destination opens.
     pub fn screen(&self) -> Screen {
         match self {
+            // A project view opens a project list instead; see `App::screen_for`.
             Self::MyIssues | Self::View(_) | Self::Team(_, TeamSection::Issues) => {
                 Screen::IssueList
             }
-            Self::Views => Screen::ViewList,
+            Self::Views | Self::Team(_, TeamSection::Views) => Screen::ViewList,
             Self::Team(_, TeamSection::Cycles) => Screen::CycleList,
             Self::Team(_, TeamSection::Projects) => Screen::ProjectList,
             // Depends on what the favorite is; `App::activate` opens it.
@@ -323,6 +358,7 @@ pub struct TableStates {
     pub my_issues: TableState,
     pub view_issues: TableState,
     pub views: TableState,
+    pub view_projects: TableState,
     pub projects: TableState,
     pub cycles: TableState,
     pub project_issues: TableState,
@@ -419,6 +455,13 @@ pub struct App {
     pub selected_view_issue_index: usize,
     /// Which view `view_issues` belongs to, so switching views refetches.
     pub loaded_view_id: Option<String>,
+    /// Which tab the Views pages show.
+    pub view_kind: ViewKind,
+    // Saved project views
+    pub view_projects: Vec<Project>,
+    pub view_projects_page_info: PageInfo,
+    pub selected_view_project_index: usize,
+    pub loaded_view_projects_id: Option<String>,
 
     // Sidebar
     pub sidebar_visible: bool,
@@ -457,7 +500,7 @@ pub struct App {
     /// Where the sidebar was drawn.
     pub sidebar_area: Rect,
     /// Screen area of each preset chip, left to right.
-    pub chip_areas: Vec<(Rect, Preset)>,
+    pub chip_areas: Vec<(Rect, Chip)>,
     /// Where the open popup drew its entries, so they are clickable too.
     pub popup_area: Rect,
     /// First popup entry on screen, when the list scrolls.
@@ -577,6 +620,11 @@ impl App {
             view_issues_page_info: PageInfo::default(),
             selected_view_issue_index: 0,
             loaded_view_id: None,
+            view_kind: ViewKind::default(),
+            view_projects: Vec::new(),
+            view_projects_page_info: PageInfo::default(),
+            selected_view_project_index: 0,
+            loaded_view_projects_id: None,
             sidebar_visible: config.ui.sidebar,
             sidebar_width: config.ui.sidebar_width.clamp(18, 48),
             sidebar_focus: false,
@@ -683,7 +731,7 @@ impl App {
                     });
                 }
             }
-            Nav::Views => {
+            Nav::Views | Nav::Team(_, TeamSection::Views) => {
                 if !self.views_loaded {
                     self.request(Request::CustomViews);
                 }
@@ -691,9 +739,15 @@ impl App {
             Nav::View(index) => {
                 if let Some(view) = self.custom_views.get(index) {
                     let view_id = view.id.clone();
-                    self.request(Request::ViewIssues {
-                        view_id,
-                        after: None,
+                    self.request(match ViewKind::of(view) {
+                        ViewKind::Issues => Request::ViewIssues {
+                            view_id,
+                            after: None,
+                        },
+                        ViewKind::Projects => Request::ViewProjects {
+                            view_id,
+                            after: None,
+                        },
                     });
                 }
             }
@@ -717,6 +771,7 @@ impl App {
                         team_id,
                         after: None,
                     },
+                    TeamSection::Views => return,
                 };
                 self.request(request);
             }
@@ -729,8 +784,11 @@ impl App {
         self.prefetched.clear();
         match self.nav {
             Nav::MyIssues => self.my_issues_loaded = false,
-            Nav::Views => self.views_loaded = false,
-            Nav::View(_) => self.loaded_view_id = None,
+            Nav::Views | Nav::Team(_, TeamSection::Views) => self.views_loaded = false,
+            Nav::View(_) => {
+                self.loaded_view_id = None;
+                self.loaded_view_projects_id = None;
+            }
             Nav::Team(_, TeamSection::Projects) => self.projects_loaded = false,
             Nav::Team(_, TeamSection::Cycles) => self.cycles_loaded = false,
             Nav::Team(_, TeamSection::Issues) | Nav::Favorite(_) => {}
@@ -857,6 +915,19 @@ impl App {
                 self.selected_issue_index = 0;
                 self.global_search = Some(term);
             }
+            Message::ViewProjects { view_id, page } => {
+                let append = page.append;
+                Self::merge(
+                    &mut self.view_projects,
+                    page,
+                    &mut self.view_projects_page_info,
+                );
+                if !append {
+                    self.selected_view_project_index = 0;
+                }
+                self.loaded_view_projects_id = Some(view_id);
+                self.clear_status();
+            }
             Message::Projects(page) => {
                 Self::merge(&mut self.projects, page, &mut self.projects_page_info);
                 self.clamp(Field::Projects);
@@ -876,8 +947,7 @@ impl App {
                     Nav::View(i) => self.custom_views.get(i).map(|v| v.id.clone()),
                     _ => None,
                 };
-                let mut views: Vec<CustomView> =
-                    views.into_iter().filter(CustomView::lists_issues).collect();
+                let mut views = views;
                 // Linear's Views page lists personal views above workspace ones.
                 views.sort_by(|a, b| {
                     a.shared
@@ -894,7 +964,7 @@ impl App {
                 }
                 self.selected_view_index = self
                     .selected_view_index
-                    .min(self.custom_views.len().saturating_sub(1));
+                    .min(self.listed_views().len().saturating_sub(1));
             }
             Message::Favorites(mut favorites) => {
                 favorites.sort_by(|a, b| a.sort_order.total_cmp(&b.sort_order));
@@ -1334,19 +1404,131 @@ impl App {
     }
 
     fn maybe_prefetch_projects(&mut self) {
-        if self.selected_project_index + PREFETCH_MARGIN < self.projects.len()
-            || !self.projects_page_info.has_next_page
+        let in_view = self.in_project_view();
+        let info = if in_view {
+            &self.view_projects_page_info
+        } else {
+            &self.projects_page_info
+        };
+        if self.project_cursor() + PREFETCH_MARGIN < self.project_rows().len()
+            || !info.has_next_page
         {
             return;
         }
-        if let (Some(team_id), Some(cursor)) =
-            (self.team_id(), self.projects_page_info.end_cursor.clone())
-            && self.prefetched.insert(cursor.clone())
+        let Some(cursor) = info.end_cursor.clone() else {
+            return;
+        };
+        let after = Some(cursor.clone());
+        let request = if in_view {
+            self.loaded_view_projects_id
+                .clone()
+                .map(|view_id| Request::ViewProjects { view_id, after })
+        } else {
+            self.team_id()
+                .map(|team_id| Request::Projects { team_id, after })
+        };
+        if let Some(request) = request
+            && self.prefetched.insert(cursor)
         {
-            self.request(Request::Projects {
-                team_id,
-                after: Some(cursor),
-            });
+            self.request(request);
+        }
+    }
+
+    // ------------------------------------------------------------ project lists
+
+    /// Whether the project list on screen is a saved project view's rather
+    /// than the team's.
+    fn in_project_view(&self) -> bool {
+        matches!(self.nav, Nav::View(i) if self.custom_views.get(i).is_some_and(|v| ViewKind::of(v) == ViewKind::Projects))
+    }
+
+    /// The projects the project list is showing.
+    pub fn project_rows(&self) -> &[Project] {
+        if self.in_project_view() {
+            &self.view_projects
+        } else {
+            &self.projects
+        }
+    }
+
+    pub fn project_cursor(&self) -> usize {
+        if self.in_project_view() {
+            self.selected_view_project_index
+        } else {
+            self.selected_project_index
+        }
+    }
+
+    fn project_cursor_mut(&mut self) -> &mut usize {
+        if self.in_project_view() {
+            &mut self.selected_view_project_index
+        } else {
+            &mut self.selected_project_index
+        }
+    }
+
+    /// Scroll state of the project list on screen.
+    pub fn project_table(&mut self) -> &mut TableState {
+        if self.in_project_view() {
+            &mut self.tables.view_projects
+        } else {
+            &mut self.tables.projects
+        }
+    }
+
+    // ----------------------------------------------------------- views pages
+
+    /// The team whose views a Views page shows, or `None` for the workspace
+    /// page.
+    fn views_scope(&self) -> Option<&str> {
+        match self.nav {
+            Nav::Team(index, TeamSection::Views) => self.teams.get(index).map(|t| t.id.as_str()),
+            _ => None,
+        }
+    }
+
+    /// The views the current Views page lists, as indices into `custom_views`.
+    ///
+    /// As in Linear, the workspace page holds views that belong to no team,
+    /// and each team's page holds the views scoped to it; the tab picks issue
+    /// or project views.
+    pub fn listed_views(&self) -> Vec<usize> {
+        let scope = self.views_scope();
+        self.custom_views
+            .iter()
+            .enumerate()
+            .filter(|(_, v)| v.team.as_ref().map(|t| t.id.as_str()) == scope)
+            .filter(|(_, v)| ViewKind::of(v) == self.view_kind)
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    pub fn set_view_kind(&mut self, kind: ViewKind) {
+        if self.view_kind != kind {
+            self.view_kind = kind;
+            self.selected_view_index = 0;
+        }
+    }
+
+    pub fn cycle_view_kind(&mut self) {
+        self.set_view_kind(match self.view_kind {
+            ViewKind::Issues => ViewKind::Projects,
+            ViewKind::Projects => ViewKind::Issues,
+        });
+    }
+
+    /// The screen a destination opens: a project view is a project list.
+    fn screen_for(&self, nav: Nav) -> Screen {
+        match nav {
+            Nav::View(i)
+                if self
+                    .custom_views
+                    .get(i)
+                    .is_some_and(|v| ViewKind::of(v) == ViewKind::Projects) =>
+            {
+                Screen::ProjectList
+            }
+            _ => nav.screen(),
         }
     }
 
@@ -1658,7 +1840,10 @@ impl App {
     pub fn move_selection(&mut self, delta: isize) {
         match self.screen {
             Screen::ProjectList => {
-                Self::nav_by(self.projects.len(), &mut self.selected_project_index, delta);
+                let len = self.project_rows().len();
+                let mut index = self.project_cursor();
+                Self::nav_by(len, &mut index, delta);
+                *self.project_cursor_mut() = index;
                 self.maybe_prefetch_projects();
             }
             Screen::CycleList => {
@@ -1666,11 +1851,8 @@ impl App {
                 self.maybe_prefetch_cycles();
             }
             Screen::ViewList => {
-                Self::nav_by(
-                    self.custom_views.len(),
-                    &mut self.selected_view_index,
-                    delta,
-                );
+                let len = self.listed_views().len();
+                Self::nav_by(len, &mut self.selected_view_index, delta);
             }
             Screen::IssueDetail => {}
             // Every issue list scrolls the same way, whichever one it is.
@@ -1788,8 +1970,8 @@ impl App {
     pub fn open_in_browser(&mut self) {
         let url = match self.screen {
             Screen::ProjectList => self
-                .projects
-                .get(self.selected_project_index)
+                .project_rows()
+                .get(self.project_cursor())
                 .and_then(|p| p.url.clone()),
             Screen::ProjectDetail if self.focused_issue().is_none() => {
                 self.current_project.as_ref().and_then(|p| p.url.clone())
@@ -1939,10 +2121,13 @@ impl App {
             return;
         }
 
-        if let Some((_, preset)) = self.chip_areas.iter().find(|(r, _)| contains(*r, x, y)) {
-            let preset = *preset;
+        if let Some((_, chip)) = self.chip_areas.iter().find(|(r, _)| contains(*r, x, y)) {
+            let chip = *chip;
             self.sidebar_focus = false;
-            self.set_preset(preset);
+            match chip {
+                Chip::Preset(preset) => self.set_preset(preset),
+                Chip::ViewKind(kind) => self.set_view_kind(kind),
+            }
             return;
         }
 
@@ -1971,7 +2156,7 @@ impl App {
                     return;
                 };
                 let current = match self.screen {
-                    Screen::ProjectList => &mut self.selected_project_index,
+                    Screen::ProjectList => self.project_cursor_mut(),
                     Screen::CycleList => &mut self.selected_cycle_index,
                     _ => &mut self.selected_view_index,
                 };
@@ -2077,6 +2262,8 @@ impl App {
         match self.nav {
             Nav::Team(_, TeamSection::Projects) => self.screen = Screen::ProjectList,
             Nav::Team(_, TeamSection::Cycles) => self.screen = Screen::CycleList,
+            // A project opened from a project view goes back to the view.
+            Nav::View(_) => self.screen = Screen::ProjectList,
             _ => self.focus_sidebar(true),
         }
     }
@@ -2094,21 +2281,28 @@ impl App {
         {
             self.select_team_index(index);
         }
-        if self.nav == nav && self.screen == nav.screen() {
+        let screen = self.screen_for(nav);
+        if self.nav == nav && self.screen == screen {
             return;
         }
+        if screen == Screen::ViewList && self.nav != nav {
+            // A different Views page lists different views.
+            self.selected_view_index = 0;
+        }
         self.nav = nav;
-        self.screen = nav.screen();
+        self.screen = screen;
         self.sidebar_focus = false;
 
         let cached = match nav {
             Nav::MyIssues => self.my_issues_loaded,
-            Nav::Views => self.views_loaded,
-            Nav::View(index) => self
-                .custom_views
-                .get(index)
-                .zip(self.loaded_view_id.as_ref())
-                .is_some_and(|(view, loaded)| &view.id == loaded),
+            Nav::Views | Nav::Team(_, TeamSection::Views) => self.views_loaded,
+            Nav::View(index) => self.custom_views.get(index).is_some_and(|view| {
+                let loaded = match ViewKind::of(view) {
+                    ViewKind::Issues => &self.loaded_view_id,
+                    ViewKind::Projects => &self.loaded_view_projects_id,
+                };
+                loaded.as_deref() == Some(view.id.as_str())
+            }),
             Nav::Team(_, TeamSection::Issues) => !self.issues.is_empty(),
             Nav::Team(_, TeamSection::Projects) => self.projects_loaded,
             Nav::Team(_, TeamSection::Cycles) => self.cycles_loaded,
@@ -2117,11 +2311,14 @@ impl App {
         if let Nav::View(_) = nav
             && !cached
         {
-            // A different view's issues are still in the list; clear them so
+            // A different view's rows are still in the list; clear them so
             // the old results are not briefly attributed to the new view.
             self.view_issues.clear();
             self.view_issues_page_info = PageInfo::default();
             self.selected_view_issue_index = 0;
+            self.view_projects.clear();
+            self.view_projects_page_info = PageInfo::default();
+            self.selected_view_project_index = 0;
         }
         if !cached {
             self.reload_current_tab();
@@ -2143,8 +2340,8 @@ impl App {
 
     /// Open the view under the cursor on the saved-view index.
     pub fn open_selected_view(&mut self) {
-        if self.selected_view_index < self.custom_views.len() {
-            self.activate(Nav::View(self.selected_view_index));
+        if let Some(index) = self.listed_views().get(self.selected_view_index).copied() {
+            self.activate(Nav::View(index));
         }
     }
 
@@ -2266,6 +2463,13 @@ impl App {
                 "\u{25a3}",
                 1,
                 SidebarAction::Go(Nav::Team(index, TeamSection::Projects)),
+                Tone::Normal,
+            ));
+            rows.push(item(
+                "Views",
+                "\u{2261}",
+                1,
+                SidebarAction::Go(Nav::Team(index, TeamSection::Views)),
                 Tone::Normal,
             ));
         }
@@ -2486,7 +2690,7 @@ impl App {
 
     // Project navigation
     pub fn open_project_detail(&mut self) {
-        if let Some(project) = self.projects.get(self.selected_project_index).cloned() {
+        if let Some(project) = self.project_rows().get(self.project_cursor()).cloned() {
             self.open_project(project);
         }
     }
@@ -3288,17 +3492,81 @@ mod tests {
         assert_eq!(app.custom_views[0].id, "b");
     }
 
+    fn scoped_view(id: &str, name: &str, team: Option<&str>, model: &str) -> CustomView {
+        let mut v = view(id, name, true);
+        v.team = team.map(|t| {
+            serde_json::from_str(&format!(r#"{{"id":"{t}","name":"{t}","key":"{t}"}}"#)).unwrap()
+        });
+        v.model_name = Some(model.into());
+        v
+    }
+
+    /// Like Linear: the workspace Views page lists views with no team, each
+    /// team's page lists its own, and the tab splits issue from project views.
     #[test]
-    fn project_views_are_left_out() {
+    fn views_pages_list_by_scope_and_kind() {
         let mut app = app_with(vec![]);
-        let mut projects = view("p", "Roadmap", true);
-        projects.model_name = Some("Project".into());
+        app.teams = vec![team("t1", "Core")];
         app.handle_message(Message::CustomViews(vec![
-            projects,
-            view("i", "Bugs", true),
+            scoped_view("a", "Workspace bugs", None, "Issue"),
+            scoped_view("b", "Core board", Some("t1"), "Issue"),
+            scoped_view("c", "Roadmap", None, "Project"),
+            scoped_view("d", "Core roadmap", Some("t1"), "Project"),
         ]));
-        assert_eq!(app.custom_views.len(), 1);
-        assert_eq!(app.custom_views[0].id, "i");
+        let names = |app: &App| -> Vec<String> {
+            app.listed_views()
+                .into_iter()
+                .map(|i| app.custom_views[i].name.clone())
+                .collect()
+        };
+
+        app.activate(Nav::Views);
+        assert_eq!(names(&app), ["Workspace bugs"]);
+        app.cycle_view_kind();
+        assert_eq!(names(&app), ["Roadmap"]);
+
+        app.activate(Nav::Team(0, TeamSection::Views));
+        assert_eq!(app.screen, Screen::ViewList);
+        assert_eq!(names(&app), ["Core roadmap"]);
+        app.set_view_kind(ViewKind::Issues);
+        assert_eq!(names(&app), ["Core board"]);
+    }
+
+    #[test]
+    fn a_project_view_opens_as_a_project_list() {
+        let mut app = app_with(vec![]);
+        app.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
+        app.activate(Nav::View(0));
+        assert_eq!(app.screen, Screen::ProjectList);
+        assert!(matches!(
+            app.requests.back(),
+            Some(Request::ViewProjects { after: None, .. })
+        ));
+
+        let project: Project =
+            serde_json::from_str(r#"{"id":"p1","name":"Launch","lead":null}"#).unwrap();
+        app.handle_message(Message::ViewProjects {
+            view_id: "p".into(),
+            page: Page::new(vec![project], PageInfo::default(), false),
+        });
+        assert_eq!(
+            app.project_rows().len(),
+            1,
+            "rows come from the view, not the team"
+        );
+        app.open_project_detail();
+        assert_eq!(app.current_project.as_ref().unwrap().id, "p1");
+        app.leave_container();
+        assert_eq!(app.screen, Screen::ProjectList, "back to the view");
+    }
+
+    #[test]
+    fn opening_the_same_project_view_again_does_not_refetch() {
+        let mut app = app_with(vec![]);
+        app.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
+        app.loaded_view_projects_id = Some("p".into());
+        app.activate(Nav::View(0));
+        assert!(app.requests.is_empty());
     }
 
     #[test]
@@ -3377,7 +3645,7 @@ mod tests {
     #[test]
     fn clicking_a_preset_chip_switches_preset() {
         let mut app = app_with(vec![]);
-        app.chip_areas = vec![(Rect::new(30, 3, 8, 1), Preset::Backlog)];
+        app.chip_areas = vec![(Rect::new(30, 3, 8, 1), Chip::Preset(Preset::Backlog))];
         app.click(32, 3);
         assert_eq!(app.preset(), Preset::Backlog);
     }
