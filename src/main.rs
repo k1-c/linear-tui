@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
         return Ok(());
     };
     tracing::info!(method = auth.label(), "authenticated successfully");
-    let client = LinearClient::with_header(auth.authorization_header());
+    let client = LinearClient::new(auth.into_credentials(token_store));
 
     // Run TUI
     run_tui(client, config).await

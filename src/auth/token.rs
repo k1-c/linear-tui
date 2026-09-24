@@ -53,6 +53,12 @@ impl TokenStore {
         Ok(Self { path })
     }
 
+    /// A store at an explicit path, for tests.
+    #[cfg(test)]
+    pub fn at(path: PathBuf) -> Self {
+        Self { path }
+    }
+
     pub fn load(&self) -> Result<Option<OAuthTokens>> {
         if !self.path.exists() {
             return Ok(None);

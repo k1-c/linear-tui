@@ -40,6 +40,9 @@ pub enum ApiError {
     #[error("{0}")]
     Rejected(&'static str),
 
+    /// Fetching fresh credentials failed.
+    #[error("could not refresh the session: {0}")]
+    Refresh(String),
 }
 
 /// One entry of a GraphQL `errors` array.

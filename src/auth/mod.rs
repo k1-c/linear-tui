@@ -1,12 +1,15 @@
 pub mod oauth;
 pub mod server;
+pub mod session;
 pub mod setup;
 pub mod token;
+
+use std::sync::Arc;
 
 use anyhow::Result;
 use token::{OAuthTokens, TokenStore};
 
-use crate::api::client::LinearClient;
+use crate::api::client::{Credentials, LinearClient, StaticCredentials};
 use crate::api::types::Viewer;
 use crate::config::Config;
 
@@ -18,7 +21,7 @@ pub enum AuthMethod {
 impl AuthMethod {
     /// Returns the value for the Authorization header.
     /// OAuth tokens use "Bearer <token>", API keys are sent directly.
-    pub fn authorization_header(&self) -> String {
+    fn authorization_header(&self) -> String {
         match self {
             AuthMethod::OAuth(tokens) => format!("Bearer {}", tokens.access_token),
             AuthMethod::ApiKey(key) => key.clone(),
@@ -29,6 +32,15 @@ impl AuthMethod {
         match self {
             AuthMethod::OAuth(_) => "OAuth",
             AuthMethod::ApiKey(_) => "API key",
+        }
+    }
+
+    /// Credentials for a long-lived client. OAuth ones renew themselves and
+    /// write the renewed pair back to `store`.
+    pub fn into_credentials(self, store: TokenStore) -> Arc<dyn Credentials> {
+        match self {
+            AuthMethod::OAuth(tokens) => Arc::new(session::OAuthSession::new(store, tokens)),
+            AuthMethod::ApiKey(key) => Arc::new(StaticCredentials(key)),
         }
     }
 }
