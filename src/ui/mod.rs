@@ -371,7 +371,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             " / ",
             Style::default().fg(th.warning).add_modifier(Modifier::BOLD),
         )];
-        spans.extend(input_spans(&app.search, th));
+        spans.extend(input_spans(&app.list().search, th));
         spans.push(Span::styled(
             format!(
                 "   {} matches \u{00b7} Enter keep \u{00b7} Esc clear \u{00b7} Ctrl+G search all of Linear",

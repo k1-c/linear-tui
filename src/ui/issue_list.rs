@@ -69,15 +69,15 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
 
     let count = app.visible_issues().len();
     let mut right = vec![];
-    if app.filters.is_active() {
+    if app.list().filters.is_active() {
         right.push(Span::styled(
-            format!("\u{25bc} {}  ", app.filters.summary()),
+            format!("\u{25bc} {}  ", app.list().filters.summary()),
             Style::default().fg(th.secondary),
         ));
     }
-    if !app.search.is_empty() {
+    if !app.list().search.is_empty() {
         right.push(Span::styled(
-            format!("/{}  ", app.search.value),
+            format!("/{}  ", app.list().search.value),
             Style::default().fg(th.warning),
         ));
     }
@@ -115,7 +115,7 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         app.list_rows.clear();
         let message = if app.loading() {
             format!("{} Loading issues\u{2026}", app.spinner_symbol())
-        } else if !app.search.is_empty() || app.filters.is_active() {
+        } else if !app.list().search.is_empty() || app.list().filters.is_active() {
             "No issues match the current filter".to_string()
         } else if app.preset() != Preset::All {
             format!(

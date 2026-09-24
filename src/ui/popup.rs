@@ -128,11 +128,12 @@ fn draw_filter(f: &mut Frame, app: &mut App) {
                 0,
                 vec![],
                 "Any status",
-                app.filters.status.is_none(),
+                app.list().filters.status.is_none(),
                 &th,
             )];
             for (i, state) in app.workflow_states.iter().enumerate() {
                 let is_current = app
+                    .list()
                     .filters
                     .status
                     .as_ref()
@@ -152,7 +153,7 @@ fn draw_filter(f: &mut Frame, app: &mut App) {
                 0,
                 vec![],
                 "Any priority",
-                app.filters.priority.is_none(),
+                app.list().filters.priority.is_none(),
                 &th,
             )];
             for i in 1..=5 {
@@ -162,7 +163,7 @@ fn draw_filter(f: &mut Frame, app: &mut App) {
                     i,
                     vec![priority_glyph(p, &th), Span::raw(" ")],
                     p.label(),
-                    app.filters.priority == Some(p),
+                    app.list().filters.priority == Some(p),
                     &th,
                 ));
             }

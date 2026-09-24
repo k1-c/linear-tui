@@ -120,8 +120,93 @@ pub enum IssueSource {
 }
 
 impl IssueSource {
-    fn slot(self) -> usize {
-        self as usize
+    pub const ALL: [IssueSource; 5] =
+        [Self::Team, Self::My, Self::View, Self::Project, Self::Cycle];
+}
+
+/// One issue list and the state that shapes it on screen.
+#[derive(Debug, Default)]
+pub struct IssueList {
+    /// Rows in the order Linear returned them; grouping reorders them for display.
+    pub issues: Vec<Issue>,
+    /// Cursor position, as an index into [`App::visible_issues`].
+    pub selected: usize,
+    pub page_info: PageInfo,
+    /// Scroll offset, kept across frames so the viewport doesn't jump when
+    /// the rows change.
+    pub table: TableState,
+    /// The preset chip selected on this list.
+    pub preset: Preset,
+    /// Whether a first page has arrived for what the list currently belongs to.
+    pub loaded: bool,
+    /// The live search box. Each list keeps its own, as it keeps its own
+    /// filters: narrowing one list must not quietly narrow another.
+    pub search: Input,
+    pub filters: Filters,
+}
+
+impl IssueList {
+    /// Whether an issue survives this list's preset, search box, and filters.
+    /// `query` is the search text, lowercased once by the caller.
+    fn admits(&self, issue: &Issue, query: &str) -> bool {
+        self.preset.admits(issue)
+            && (query.is_empty()
+                || issue.title.to_lowercase().contains(query)
+                || issue.identifier.to_lowercase().contains(query))
+            && self.filters.status.as_ref().is_none_or(|status| {
+                issue
+                    .state
+                    .as_ref()
+                    .is_some_and(|state| &state.name == status)
+            })
+            && self.filters.priority.is_none_or(|p| issue.priority == p)
+    }
+
+    /// Forget the rows, for a list that is about to belong to something else.
+    pub fn reset(&mut self) {
+        self.issues.clear();
+        self.selected = 0;
+        self.page_info = PageInfo::default();
+        self.loaded = false;
+    }
+}
+
+/// The five issue lists, indexed by [`IssueSource`].
+#[derive(Debug)]
+pub struct IssueLists([IssueList; 5]);
+
+impl Default for IssueLists {
+    /// A team's issues open on Active, as in Linear; every other list opens on
+    /// All, because its contents were already chosen — by a saved view's
+    /// filter, by a project, by being yours — and hiding the done half of a
+    /// view someone deliberately built would be a surprise.
+    fn default() -> Self {
+        Self(IssueSource::ALL.map(|source| IssueList {
+            preset: match source {
+                IssueSource::Team => Preset::Active,
+                _ => Preset::All,
+            },
+            ..IssueList::default()
+        }))
+    }
+}
+
+impl std::ops::Index<IssueSource> for IssueLists {
+    type Output = IssueList;
+    fn index(&self, source: IssueSource) -> &IssueList {
+        &self.0[source as usize]
+    }
+}
+
+impl std::ops::IndexMut<IssueSource> for IssueLists {
+    fn index_mut(&mut self, source: IssueSource) -> &mut IssueList {
+        &mut self.0[source as usize]
+    }
+}
+
+impl IssueLists {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut IssueList> {
+        self.0.iter_mut()
     }
 }
 
@@ -355,15 +440,10 @@ impl Input {
 /// Persistent [`TableState`]s, one per scrollable list.
 #[derive(Debug, Default)]
 pub struct TableStates {
-    pub issues: TableState,
-    pub my_issues: TableState,
-    pub view_issues: TableState,
     pub views: TableState,
     pub view_projects: TableState,
     pub projects: TableState,
     pub cycles: TableState,
-    pub project_issues: TableState,
-    pub cycle_issues: TableState,
 }
 
 /// Identifies one of the paginated sub-lists, for index clamping.
@@ -426,6 +506,9 @@ pub struct App {
     /// Where the content pane currently is.
     pub nav: Nav,
 
+    /// The five issue lists, addressed by [`IssueSource`].
+    pub lists: IssueLists,
+
     // Popup
     pub popup: Popup,
     pub popup_index: usize,
@@ -440,12 +523,8 @@ pub struct App {
     pub team_members: Vec<User>,
 
     // Issues
-    pub issues: Vec<Issue>,
-    pub selected_issue_index: usize,
-    pub page_info: PageInfo,
 
     // Filters
-    pub filters: Filters,
     pub filter_kind: FilterKind,
     pub workflow_states: Vec<WorkflowState>,
 
@@ -453,9 +532,6 @@ pub struct App {
     pub custom_views: Vec<CustomView>,
     pub views_loaded: bool,
     pub selected_view_index: usize,
-    pub view_issues: Vec<Issue>,
-    pub view_issues_page_info: PageInfo,
-    pub selected_view_issue_index: usize,
     /// Which view `view_issues` belongs to, so switching views refetches.
     pub loaded_view_id: Option<CustomViewId>,
     /// Which tab the Views pages show.
@@ -483,13 +559,6 @@ pub struct App {
 
     // List shaping
     pub group_by: GroupBy,
-    /// The preset chip selected on each list, indexed by [`IssueSource`].
-    ///
-    /// A team's issues open on Active, as in Linear; every other list opens on
-    /// All, because its contents were already chosen — by a saved view's
-    /// filter, by a project, by being yours — and hiding the done half of a
-    /// view someone deliberately built would be a surprise.
-    presets: [Preset; 5],
     /// Group keys the user has folded away.
     pub collapsed_groups: HashSet<String>,
     /// Display rows the content list drew last frame — only the visible
@@ -522,7 +591,6 @@ pub struct App {
     pub detail_viewport: u16,
 
     // Search
-    pub search: Input,
     /// Set while the list shows workspace-wide search results instead of the team's issues.
     pub global_search: Option<String>,
 
@@ -539,32 +607,20 @@ pub struct App {
     pub viewer_id: Option<UserId>,
 
     // My Issues
-    pub my_issues: Vec<Issue>,
-    pub selected_my_issue_index: usize,
-    pub my_issues_page_info: PageInfo,
-    pub my_issues_loaded: bool,
 
     // Projects
     pub projects: Vec<Project>,
     pub selected_project_index: usize,
     pub current_project: Option<Project>,
-    pub project_issues: Vec<Issue>,
-    pub selected_project_issue_index: usize,
     pub projects_loaded: bool,
-    pub project_issues_loaded: bool,
     pub projects_page_info: PageInfo,
-    pub project_issues_page_info: PageInfo,
 
     // Cycles
     pub cycles: Vec<Cycle>,
     pub selected_cycle_index: usize,
     pub current_cycle: Option<Cycle>,
-    pub cycle_issues: Vec<Issue>,
-    pub selected_cycle_issue_index: usize,
     pub cycles_loaded: bool,
-    pub cycle_issues_loaded: bool,
     pub cycles_page_info: PageInfo,
-    pub cycle_issues_page_info: PageInfo,
 
     // Status
     pub status_message: Option<String>,
@@ -605,24 +661,18 @@ impl App {
             inflight: 0,
             prefetched: HashSet::new(),
             nav: Nav::Team(0, TeamSection::Issues),
+            lists: IssueLists::default(),
             popup: Popup::None,
             popup_index: 0,
             popup_issue: None,
             teams: Vec::new(),
             selected_team_index: 0,
             team_members: Vec::new(),
-            issues: Vec::new(),
-            selected_issue_index: 0,
-            page_info: PageInfo::default(),
-            filters: Filters::default(),
             filter_kind: FilterKind::Status,
             workflow_states: Vec::new(),
             custom_views: Vec::new(),
             views_loaded: false,
             selected_view_index: 0,
-            view_issues: Vec::new(),
-            view_issues_page_info: PageInfo::default(),
-            selected_view_issue_index: 0,
             loaded_view_id: None,
             view_kind: ViewKind::default(),
             view_projects: Vec::new(),
@@ -638,13 +688,6 @@ impl App {
             favorites: Vec::new(),
             collapsed_folders: HashSet::new(),
             group_by: GroupBy::from_config(config.ui.group_by),
-            presets: [
-                Preset::Active,
-                Preset::All,
-                Preset::All,
-                Preset::All,
-                Preset::All,
-            ],
             collapsed_groups: HashSet::new(),
             list_rows: Vec::new(),
             row_targets: Vec::new(),
@@ -659,34 +702,21 @@ impl App {
             detail_scroll: 0,
             detail_lines: 0,
             detail_viewport: 0,
-            search: Input::default(),
             global_search: None,
             comment: Input::default(),
             new_issue: None,
             pending_clipboard: None,
             viewer_id: None,
-            my_issues: Vec::new(),
-            selected_my_issue_index: 0,
-            my_issues_page_info: PageInfo::default(),
-            my_issues_loaded: false,
             projects: Vec::new(),
             selected_project_index: 0,
             current_project: None,
-            project_issues: Vec::new(),
-            selected_project_issue_index: 0,
             projects_loaded: false,
-            project_issues_loaded: false,
             projects_page_info: PageInfo::default(),
-            project_issues_page_info: PageInfo::default(),
             cycles: Vec::new(),
             selected_cycle_index: 0,
             current_cycle: None,
-            cycle_issues: Vec::new(),
-            selected_cycle_issue_index: 0,
             cycles_loaded: false,
-            cycle_issues_loaded: false,
             cycles_page_info: PageInfo::default(),
-            cycle_issues_page_info: PageInfo::default(),
             status_message: None,
             spinner_frame: 0,
             error_popup: None,
@@ -765,7 +795,7 @@ impl App {
                     TeamSection::Issues => Request::Issues {
                         team_id,
                         after: None,
-                        preset: self.presets[IssueSource::Team.slot()],
+                        preset: self.lists[IssueSource::Team].preset,
                     },
                     TeamSection::Projects => Request::Projects {
                         team_id,
@@ -787,7 +817,7 @@ impl App {
         self.global_search = None;
         self.prefetched.clear();
         match self.nav {
-            Nav::MyIssues => self.my_issues_loaded = false,
+            Nav::MyIssues => self.lists[IssueSource::My].loaded = false,
             Nav::Views | Nav::Team(_, TeamSection::Views) => self.views_loaded = false,
             Nav::View(_) => {
                 self.loaded_view_id = None;
@@ -798,10 +828,10 @@ impl App {
             Nav::Team(_, TeamSection::Issues) | Nav::Favorite(_) => {}
         }
         if self.screen == Screen::ProjectDetail {
-            self.project_issues_loaded = false;
+            self.lists[IssueSource::Project].loaded = false;
         }
         if self.screen == Screen::CycleDetail {
-            self.cycle_issues_loaded = false;
+            self.lists[IssueSource::Cycle].loaded = false;
         }
         self.reload_current_tab();
         self.queue_detail_fetches();
@@ -819,7 +849,7 @@ impl App {
                 }
             }
             Screen::ProjectDetail => {
-                if !self.project_issues_loaded
+                if !self.lists[IssueSource::Project].loaded
                     && let Some(project) = &self.current_project
                 {
                     let project_id = project.id.clone();
@@ -830,7 +860,7 @@ impl App {
                 }
             }
             Screen::CycleDetail => {
-                if !self.cycle_issues_loaded
+                if !self.lists[IssueSource::Cycle].loaded
                     && let Some(cycle) = &self.current_cycle
                 {
                     let cycle_id = cycle.id.clone();
@@ -865,7 +895,7 @@ impl App {
                     self.request(Request::Issues {
                         team_id,
                         after: None,
-                        preset: self.presets[IssueSource::Team.slot()],
+                        preset: self.lists[IssueSource::Team].preset,
                     });
                 }
             }
@@ -895,8 +925,7 @@ impl App {
             } => {
                 // A page for a team or preset the user has since left would
                 // file, say, another team's backlog under this team's Active.
-                if !self.is_current_team(&team_id)
-                    || preset != self.presets[IssueSource::Team.slot()]
+                if !self.is_current_team(&team_id) || preset != self.lists[IssueSource::Team].preset
                 {
                     return;
                 }
@@ -905,7 +934,6 @@ impl App {
             }
             Message::MyIssues(page) => {
                 self.accept_issue_page(IssueSource::My, page);
-                self.my_issues_loaded = true;
                 self.clear_status();
             }
             Message::SearchResults {
@@ -920,15 +948,15 @@ impl App {
                 }
                 self.nav = Nav::Team(self.selected_team_index, TeamSection::Issues);
                 self.screen = Screen::IssueList;
-                self.issues = issues;
-                self.page_info = PageInfo::default();
-                self.filters.clear();
+                self.lists[IssueSource::Team].issues = issues;
+                self.lists[IssueSource::Team].page_info = PageInfo::default();
+                self.lists[IssueSource::Team].filters.clear();
                 // Search answers "where is it", done or not; the Active slice
                 // would quietly hide half the matches. Set without refetching,
                 // which would replace the results with the team's list.
-                self.presets[IssueSource::Team.slot()] = Preset::All;
-                self.search.clear();
-                self.selected_issue_index = 0;
+                self.lists[IssueSource::Team].preset = Preset::All;
+                self.lists[IssueSource::Team].search.clear();
+                self.lists[IssueSource::Team].selected = 0;
                 self.global_search = Some(term);
             }
             Message::ViewProjects { view_id, page } => {
@@ -1009,14 +1037,12 @@ impl App {
                     return;
                 }
                 self.accept_issue_page(IssueSource::Project, page);
-                self.project_issues_loaded = true;
             }
             Message::CycleIssues { cycle_id, page } => {
                 if self.current_cycle.as_ref().map(|c| &c.id) != Some(&cycle_id) {
                     return;
                 }
                 self.accept_issue_page(IssueSource::Cycle, page);
-                self.cycle_issues_loaded = true;
             }
             Message::IssueCreated { team_id, issue } => {
                 self.set_status(format!("Created {}", issue.identifier));
@@ -1029,7 +1055,7 @@ impl App {
                 // the cursor on it — found by id, since grouping decides where
                 // in the list it lands.
                 let id = issue.id.clone();
-                self.issues.insert(0, *issue);
+                self.lists[IssueSource::Team].issues.insert(0, *issue);
                 if self.issue_source() == IssueSource::Team && self.screen == Screen::IssueList {
                     self.restore_issue_selection(Some(&id));
                 }
@@ -1089,14 +1115,9 @@ impl App {
             None
         };
         let append = page.append;
-        let (list, info) = match source {
-            IssueSource::Team => (&mut self.issues, &mut self.page_info),
-            IssueSource::My => (&mut self.my_issues, &mut self.my_issues_page_info),
-            IssueSource::View => (&mut self.view_issues, &mut self.view_issues_page_info),
-            IssueSource::Project => (&mut self.project_issues, &mut self.project_issues_page_info),
-            IssueSource::Cycle => (&mut self.cycle_issues, &mut self.cycle_issues_page_info),
-        };
-        Self::merge_issues(list, page, info);
+        let list = &mut self.lists[source];
+        Self::merge_issues(&mut list.issues, page, &mut list.page_info);
+        list.loaded = true;
         if on_screen {
             self.restore_issue_selection(keep.as_ref());
         } else if !append {
@@ -1199,27 +1220,20 @@ impl App {
         }
     }
 
-    /// The unfiltered contents of the active list.
-    fn source_issues(&self) -> &[Issue] {
-        match self.issue_source() {
-            IssueSource::Team => &self.issues,
-            IssueSource::My => &self.my_issues,
-            IssueSource::View => &self.view_issues,
-            IssueSource::Project => &self.project_issues,
-            IssueSource::Cycle => &self.cycle_issues,
-        }
+    /// The issue list on screen.
+    pub fn list(&self) -> &IssueList {
+        &self.lists[self.issue_source()]
+    }
+
+    pub fn list_mut(&mut self) -> &mut IssueList {
+        let source = self.issue_source();
+        &mut self.lists[source]
     }
 
     /// Cursor position within the active list, as an index into
     /// [`Self::visible_issues`].
     pub fn selected_index(&self) -> usize {
-        match self.issue_source() {
-            IssueSource::Team => self.selected_issue_index,
-            IssueSource::My => self.selected_my_issue_index,
-            IssueSource::View => self.selected_view_issue_index,
-            IssueSource::Project => self.selected_project_issue_index,
-            IssueSource::Cycle => self.selected_cycle_issue_index,
-        }
+        self.lists[self.issue_source()].selected
     }
 
     fn selected_index_mut(&mut self) -> &mut usize {
@@ -1227,13 +1241,7 @@ impl App {
     }
 
     fn selected_index_of(&mut self, source: IssueSource) -> &mut usize {
-        match source {
-            IssueSource::Team => &mut self.selected_issue_index,
-            IssueSource::My => &mut self.selected_my_issue_index,
-            IssueSource::View => &mut self.selected_view_issue_index,
-            IssueSource::Project => &mut self.selected_project_issue_index,
-            IssueSource::Cycle => &mut self.selected_cycle_issue_index,
-        }
+        &mut self.lists[source].selected
     }
 
     pub fn set_selected_index(&mut self, index: usize) {
@@ -1243,13 +1251,8 @@ impl App {
 
     /// The [`TableState`] whose scroll offset belongs to the active list.
     pub fn active_table_state(&mut self) -> &mut TableState {
-        match self.issue_source() {
-            IssueSource::Team => &mut self.tables.issues,
-            IssueSource::My => &mut self.tables.my_issues,
-            IssueSource::View => &mut self.tables.view_issues,
-            IssueSource::Project => &mut self.tables.project_issues,
-            IssueSource::Cycle => &mut self.tables.cycle_issues,
-        }
+        let source = self.issue_source();
+        &mut self.lists[source].table
     }
 
     /// Get the issue currently focused (selected in list, or being viewed in detail).
@@ -1261,44 +1264,16 @@ impl App {
         }
     }
 
-    fn matches(issue: &Issue, lowercase_query: &str) -> bool {
-        issue.title.to_lowercase().contains(lowercase_query)
-            || issue.identifier.to_lowercase().contains(lowercase_query)
-    }
-
-    /// Whether an issue survives the search box and the status/priority filters.
-    fn admitted(&self, issue: &Issue) -> bool {
-        if !self.preset().admits(issue) {
-            return false;
-        }
-        if !self.search.is_empty() {
-            let query = self.search.value.to_lowercase();
-            if !Self::matches(issue, &query) {
-                return false;
-            }
-        }
-        if let Some(status) = &self.filters.status {
-            match &issue.state {
-                Some(state) if &state.name == status => {}
-                _ => return false,
-            }
-        }
-        if let Some(pri) = self.filters.priority
-            && issue.priority != pri
-        {
-            return false;
-        }
-        true
-    }
-
     /// The active list, filtered and stacked into its groups.
     ///
     /// Sections are the single source of truth for both what is on screen and
     /// where the cursor can land, so a collapsed group cannot leave the cursor
     /// pointing at an issue nobody can see.
     pub fn sections(&self) -> Vec<Section<'_>> {
+        let list = self.list();
+        let query = list.search.value.to_lowercase();
         group(
-            self.source_issues().iter().filter(|i| self.admitted(i)),
+            list.issues.iter().filter(|i| list.admits(i, &query)),
             self.group_by,
             &self.collapsed_groups,
             &self.theme,
@@ -1401,7 +1376,7 @@ impl App {
 
     /// The preset chip selected on the list currently on screen.
     pub fn preset(&self) -> Preset {
-        self.presets[self.issue_source().slot()]
+        self.lists[self.issue_source()].preset
     }
 
     pub fn set_preset(&mut self, preset: Preset) {
@@ -1409,7 +1384,7 @@ impl App {
             return;
         }
         let source = self.issue_source();
-        self.presets[source.slot()] = preset;
+        self.lists[source].preset = preset;
         *self.selected_index_mut() = 0;
         // A team's list is sliced on the server; the other lists already hold
         // everything they can show and only filter locally. Workspace search
@@ -1446,13 +1421,7 @@ impl App {
         if self.selected_index() + PREFETCH_MARGIN < self.visible_issues().len() {
             return;
         }
-        let info = match source {
-            IssueSource::Team => &self.page_info,
-            IssueSource::My => &self.my_issues_page_info,
-            IssueSource::View => &self.view_issues_page_info,
-            IssueSource::Project => &self.project_issues_page_info,
-            IssueSource::Cycle => &self.cycle_issues_page_info,
-        };
+        let info = &self.lists[source].page_info;
         if !info.has_next_page {
             return;
         }
@@ -1464,7 +1433,7 @@ impl App {
             IssueSource::Team => self.team_id().map(|team_id| Request::Issues {
                 team_id,
                 after,
-                preset: self.presets[IssueSource::Team.slot()],
+                preset: self.lists[IssueSource::Team].preset,
             }),
             IssueSource::My => self
                 .viewer_id
@@ -1772,14 +1741,7 @@ impl App {
 
     /// Apply `f` to every copy of the issue we hold, so the UI updates without a refetch.
     fn patch_issue(&mut self, issue_id: &IssueId, f: impl Fn(&mut Issue)) {
-        let lists = [
-            &mut self.issues,
-            &mut self.my_issues,
-            &mut self.view_issues,
-            &mut self.project_issues,
-            &mut self.cycle_issues,
-        ];
-        for list in lists {
+        for list in self.lists.iter_mut().map(|l| &mut l.issues) {
             for issue in list.iter_mut().filter(|i| &i.id == issue_id) {
                 f(issue);
             }
@@ -1870,18 +1832,20 @@ impl App {
         match self.filter_kind {
             FilterKind::Status => {
                 if self.popup_index == 0 {
-                    self.filters.status = None;
+                    self.list_mut().filters.status = None;
                 } else if let Some(state) = self.workflow_states.get(self.popup_index - 1) {
-                    self.filters.status = Some(state.name.clone());
+                    let name = state.name.clone();
+                    self.list_mut().filters.status = Some(name);
                 }
                 self.filter_kind = FilterKind::Priority;
                 self.popup_index = 0;
             }
             FilterKind::Priority => {
-                self.filters.priority = match self.popup_index {
+                let priority = match self.popup_index {
                     0 => None,
                     n => Some(Priority::from_index(n)),
                 };
+                self.list_mut().filters.priority = priority;
                 self.popup = Popup::None;
                 *self.selected_index_mut() = 0;
             }
@@ -1889,7 +1853,7 @@ impl App {
     }
 
     pub fn clear_filters(&mut self) {
-        self.filters.clear();
+        self.list_mut().filters.clear();
         *self.selected_index_mut() = 0;
     }
 
@@ -2020,12 +1984,18 @@ impl App {
 
     // ------------------------------------------------------------------ search
 
+    /// Open the search box on the list on screen.
+    pub fn start_search(&mut self) {
+        self.input_mode = InputMode::Search;
+        self.list_mut().search.clear();
+    }
+
     /// Hand the current query to Linear's workspace-wide search.
     pub fn search_workspace(&mut self) {
-        if self.search.is_empty() {
+        if self.list().search.is_empty() {
             return;
         }
-        let term = self.search.value.clone();
+        let term = self.list().search.value.clone();
         let team_id = self.team_id();
         self.set_status(format!("Searching Linear for \"{term}\"…"));
         self.request(Request::Search { term, team_id });
@@ -2039,13 +2009,12 @@ impl App {
     }
 
     pub fn clear_search(&mut self) {
-        self.search.clear();
-        self.selected_issue_index = 0;
-        self.selected_my_issue_index = 0;
-        self.selected_view_issue_index = 0;
+        let list = self.list_mut();
+        list.search.clear();
+        list.selected = 0;
         // Leaving a workspace search returns the list to the team's own issues.
-        if self.global_search.take().is_some() {
-            self.presets[IssueSource::Team.slot()] = Preset::Active;
+        if self.issue_source() == IssueSource::Team && self.global_search.take().is_some() {
+            self.lists[IssueSource::Team].preset = Preset::Active;
             self.reload_current_tab();
         }
     }
@@ -2380,7 +2349,7 @@ impl App {
         self.sidebar_focus = false;
 
         let cached = match nav {
-            Nav::MyIssues => self.my_issues_loaded,
+            Nav::MyIssues => self.lists[IssueSource::My].loaded,
             Nav::Views | Nav::Team(_, TeamSection::Views) => self.views_loaded,
             Nav::View(index) => self.custom_views.get(index).is_some_and(|view| {
                 let loaded = match ViewKind::of(view) {
@@ -2389,7 +2358,7 @@ impl App {
                 };
                 loaded.as_ref() == Some(&view.id)
             }),
-            Nav::Team(_, TeamSection::Issues) => !self.issues.is_empty(),
+            Nav::Team(_, TeamSection::Issues) => self.lists[IssueSource::Team].loaded,
             Nav::Team(_, TeamSection::Projects) => self.projects_loaded,
             Nav::Team(_, TeamSection::Cycles) => self.cycles_loaded,
             Nav::Favorite(_) => true,
@@ -2399,9 +2368,7 @@ impl App {
         {
             // A different view's rows are still in the list; clear them so
             // the old results are not briefly attributed to the new view.
-            self.view_issues.clear();
-            self.view_issues_page_info = PageInfo::default();
-            self.selected_view_issue_index = 0;
+            self.lists[IssueSource::View].reset();
             self.view_projects.clear();
             self.view_projects_page_info = PageInfo::default();
             self.selected_view_project_index = 0;
@@ -2434,10 +2401,8 @@ impl App {
     /// Switch the current team, discarding everything scoped to the old one.
     fn select_team_index(&mut self, index: usize) {
         self.selected_team_index = index;
-        self.issues.clear();
-        self.selected_issue_index = 0;
         // The old team's cursors mean nothing to the new team's lists.
-        self.page_info = PageInfo::default();
+        self.lists[IssueSource::Team].reset();
         self.projects_page_info = PageInfo::default();
         self.cycles_page_info = PageInfo::default();
         self.workflow_states.clear();
@@ -2448,7 +2413,7 @@ impl App {
         self.cycles.clear();
         self.selected_project_index = 0;
         self.selected_cycle_index = 0;
-        self.filters.clear();
+        self.lists[IssueSource::Team].filters.clear();
         self.invalidate_tab_caches();
         if let Some(team_id) = self.team_id() {
             self.request(Request::TeamContext { team_id });
@@ -2772,12 +2737,12 @@ impl App {
     }
 
     pub fn invalidate_tab_caches(&mut self) {
-        self.my_issues_loaded = false;
+        self.lists[IssueSource::My].loaded = false;
         self.loaded_view_id = None;
         self.projects_loaded = false;
         self.cycles_loaded = false;
-        self.project_issues_loaded = false;
-        self.cycle_issues_loaded = false;
+        self.lists[IssueSource::Project].loaded = false;
+        self.lists[IssueSource::Cycle].loaded = false;
     }
 
     // Project navigation
@@ -2789,9 +2754,7 @@ impl App {
 
     fn open_project(&mut self, project: Project) {
         self.current_project = Some(project);
-        self.project_issues.clear();
-        self.project_issues_loaded = false;
-        self.selected_project_issue_index = 0;
+        self.lists[IssueSource::Project].reset();
         self.screen = Screen::ProjectDetail;
         self.queue_detail_fetches();
     }
@@ -2805,9 +2768,7 @@ impl App {
 
     fn open_cycle(&mut self, cycle: Cycle) {
         self.current_cycle = Some(cycle);
-        self.cycle_issues.clear();
-        self.cycle_issues_loaded = false;
-        self.selected_cycle_issue_index = 0;
+        self.lists[IssueSource::Cycle].reset();
         self.screen = Screen::CycleDetail;
         self.queue_detail_fetches();
     }
@@ -2831,7 +2792,7 @@ mod tests {
         let mut app = App::new(&Config::default());
         // Every list response names the team it was fetched for.
         app.teams = vec![team("t", "Core")];
-        app.issues = issues;
+        app.lists[IssueSource::Team].issues = issues;
         app.requests.clear();
         app
     }
@@ -2931,11 +2892,11 @@ mod tests {
             issue("2", "ENG-2", "Add search"),
             issue("3", "OPS-9", "Rotate keys"),
         ]);
-        app.search.value = "search".into();
+        app.list_mut().search.value = "search".into();
         app.apply_search();
         assert_eq!(app.visible_issues().len(), 1);
 
-        app.search.value = "eng-".into();
+        app.list_mut().search.value = "eng-".into();
         app.apply_search();
         assert_eq!(app.visible_issues().len(), 2);
     }
@@ -2943,7 +2904,7 @@ mod tests {
     #[test]
     fn clearing_the_search_restores_every_issue() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")]);
-        app.search.value = "nothing-matches".into();
+        app.list_mut().search.value = "nothing-matches".into();
         app.apply_search();
         assert_eq!(app.visible_issues().len(), 0);
 
@@ -2957,7 +2918,7 @@ mod tests {
         a.priority = Priority::Urgent;
         let app_issues = vec![a, issue("2", "ENG-2", "b")];
         let mut app = app_with(app_issues);
-        app.filters.priority = Some(Priority::Urgent);
+        app.list_mut().filters.priority = Some(Priority::Urgent);
         assert_eq!(app.visible_issues().len(), 1);
         assert_eq!(app.visible_issues()[0].identifier, "ENG-1");
     }
@@ -2969,8 +2930,8 @@ mod tests {
     #[test]
     fn a_priority_change_updates_every_copy_of_the_issue() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-        app.my_issues = vec![issue("1", "ENG-1", "a")];
-        app.view_issues = vec![issue("1", "ENG-1", "a")];
+        app.lists[IssueSource::My].issues = vec![issue("1", "ENG-1", "a")];
+        app.lists[IssueSource::View].issues = vec![issue("1", "ENG-1", "a")];
         app.current_issue = Some(issue("1", "ENG-1", "a"));
         app.screen = Screen::IssueDetail;
         app.open_priority_change();
@@ -2978,9 +2939,18 @@ mod tests {
 
         app.apply_priority_selection();
 
-        assert_eq!(app.issues[0].priority, Priority::High);
-        assert_eq!(app.my_issues[0].priority, Priority::High);
-        assert_eq!(app.view_issues[0].priority, Priority::High);
+        assert_eq!(
+            app.lists[IssueSource::Team].issues[0].priority,
+            Priority::High
+        );
+        assert_eq!(
+            app.lists[IssueSource::My].issues[0].priority,
+            Priority::High
+        );
+        assert_eq!(
+            app.lists[IssueSource::View].issues[0].priority,
+            Priority::High
+        );
         assert_eq!(app.current_issue.as_ref().unwrap().priority, Priority::High);
         assert_eq!(app.popup, Popup::None);
     }
@@ -3024,7 +2994,7 @@ mod tests {
             preset: Preset::Active,
             page: Page::new(vec![issue("2", "ENG-2", "b")], PageInfo::default(), true),
         });
-        assert_eq!(app.issues.len(), 2);
+        assert_eq!(app.lists[IssueSource::Team].issues.len(), 2);
     }
 
     /// Regression: scrolling near the bottom while the next page was still in
@@ -3037,7 +3007,7 @@ mod tests {
                 .collect(),
         );
         app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
-        app.page_info = PageInfo {
+        app.lists[IssueSource::Team].page_info = PageInfo {
             has_next_page: true,
             end_cursor: Some("c1".into()),
         };
@@ -3064,14 +3034,18 @@ mod tests {
                 true,
             ),
         });
-        let ids: Vec<_> = app.issues.iter().map(|i| i.id.as_str()).collect();
+        let ids: Vec<_> = app.lists[IssueSource::Team]
+            .issues
+            .iter()
+            .map(|i| i.id.as_str())
+            .collect();
         assert_eq!(ids, ["1", "2", "3"]);
     }
 
     #[test]
     fn a_fresh_page_replaces_the_list_and_keeps_the_selection() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")]);
-        app.selected_issue_index = 1;
+        app.lists[IssueSource::Team].selected = 1;
         // ENG-2 comes back first this time; the cursor must follow the issue,
         // not stay on row 1.
         app.handle_message(Message::Issues {
@@ -3083,8 +3057,8 @@ mod tests {
                 false,
             ),
         });
-        assert_eq!(app.issues.len(), 2);
-        assert_eq!(app.selected_issue_index, 0);
+        assert_eq!(app.lists[IssueSource::Team].issues.len(), 2);
+        assert_eq!(app.lists[IssueSource::Team].selected, 0);
     }
 
     #[test]
@@ -3149,15 +3123,15 @@ mod tests {
             serde_json::from_str(r#"{"id":"t2","name":"Ops","key":"OPS"}"#).unwrap(),
         ];
         app.projects_loaded = true;
-        app.my_issues_loaded = true;
+        app.lists[IssueSource::My].loaded = true;
         app.popup_index = 1;
 
         app.select_team();
 
         assert_eq!(app.selected_team_index, 1);
         assert!(!app.projects_loaded);
-        assert!(!app.my_issues_loaded);
-        assert!(app.issues.is_empty());
+        assert!(!app.lists[IssueSource::My].loaded);
+        assert!(app.lists[IssueSource::Team].issues.is_empty());
     }
 
     // ------------------------------------------------------------ new issue
@@ -3213,8 +3187,8 @@ mod tests {
             team_id: "t".into(),
             issue: Box::new(issue("2", "ENG-2", "new")),
         });
-        assert_eq!(app.issues[0].identifier, "ENG-2");
-        assert_eq!(app.selected_issue_index, 0);
+        assert_eq!(app.lists[IssueSource::Team].issues[0].identifier, "ENG-2");
+        assert_eq!(app.lists[IssueSource::Team].selected, 0);
     }
 
     // -------------------------------------------------------------- clipboard
@@ -3245,7 +3219,14 @@ mod tests {
 
         app.assign_to_me();
 
-        assert_eq!(app.issues[0].assignee.as_ref().unwrap().id, "u1");
+        assert_eq!(
+            app.lists[IssueSource::Team].issues[0]
+                .assignee
+                .as_ref()
+                .unwrap()
+                .id,
+            "u1"
+        );
         assert!(matches!(
             app.requests.front(),
             Some(Request::UpdateAssignee { .. })
@@ -3266,7 +3247,10 @@ mod tests {
     fn set_priority_applies_without_a_popup() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
         app.set_priority(Priority::Urgent);
-        assert_eq!(app.issues[0].priority, Priority::Urgent);
+        assert_eq!(
+            app.lists[IssueSource::Team].issues[0].priority,
+            Priority::Urgent
+        );
         assert_eq!(app.popup, Popup::None);
         assert!(matches!(
             app.requests.front(),
@@ -3319,7 +3303,7 @@ mod tests {
     fn a_saved_view_opens_on_all() {
         let mut app = app_with(vec![]);
         app.custom_views = vec![view("v", "Mine", false)];
-        app.view_issues = vec![stated("2", "s-done", "Done", "completed")];
+        app.lists[IssueSource::View].issues = vec![stated("2", "s-done", "Done", "completed")];
         app.loaded_view_id = Some("v".into());
         app.activate(Nav::View(0));
         assert_eq!(app.preset(), Preset::All);
@@ -3354,10 +3338,10 @@ mod tests {
             stated("2", "s-todo", "Todo", "unstarted"),
             stated("3", "s-todo", "Todo", "unstarted"),
         ]);
-        app.selected_issue_index = 2;
+        app.lists[IssueSource::Team].selected = 2;
         app.toggle_selected_group();
         assert_eq!(app.visible_issues().len(), 1);
-        assert_eq!(app.selected_issue_index, 0);
+        assert_eq!(app.lists[IssueSource::Team].selected, 0);
         app.toggle_group("status:s-todo");
         assert_eq!(app.visible_issues().len(), 3);
     }
@@ -3401,7 +3385,7 @@ mod tests {
                 false,
             ),
         });
-        assert_eq!(app.issues[0].id, "1");
+        assert_eq!(app.lists[IssueSource::Team].issues[0].id, "1");
     }
 
     #[test]
@@ -3411,7 +3395,10 @@ mod tests {
         app.activate(Nav::Team(1, TeamSection::Cycles));
         assert_eq!(app.selected_team_index, 1);
         assert_eq!(app.screen, Screen::CycleList);
-        assert!(app.issues.is_empty(), "the old team's issues are dropped");
+        assert!(
+            app.lists[IssueSource::Team].issues.is_empty(),
+            "the old team's issues are dropped"
+        );
         assert!(
             app.requests
                 .iter()
@@ -3703,7 +3690,7 @@ mod tests {
         assert_eq!(app.detail_position(), Some((0, 2)));
         app.step_issue(1);
         assert_eq!(app.current_issue.as_ref().unwrap().id, "2");
-        assert_eq!(app.selected_issue_index, 1);
+        assert_eq!(app.lists[IssueSource::Team].selected, 1);
         app.step_issue(1);
         assert_eq!(
             app.current_issue.as_ref().unwrap().id,
@@ -3717,7 +3704,7 @@ mod tests {
     #[test]
     fn the_detail_view_returns_to_the_project_it_came_from() {
         let mut app = app_with(vec![]);
-        app.project_issues = vec![stated("1", "s", "Todo", "unstarted")];
+        app.lists[IssueSource::Project].issues = vec![stated("1", "s", "Todo", "unstarted")];
         app.screen = Screen::ProjectDetail;
         app.open_issue_detail();
         assert_eq!(app.screen, Screen::IssueDetail);
@@ -3741,7 +3728,7 @@ mod tests {
         clickable(&mut app);
         // Row 0 is the "Todo" header, rows 1 and 2 the issues.
         app.click(40, 7);
-        assert_eq!(app.selected_issue_index, 1);
+        assert_eq!(app.lists[IssueSource::Team].selected, 1);
         assert_eq!(app.screen, Screen::IssueList);
         app.click(40, 7);
         assert_eq!(app.screen, Screen::IssueDetail);
@@ -3786,7 +3773,10 @@ mod tests {
         app.popup_area = Rect::new(10, 10, 30, 5);
         app.click(15, 11); // second entry: Urgent
         assert_eq!(app.popup, Popup::None);
-        assert_eq!(app.issues[0].priority, Priority::Urgent);
+        assert_eq!(
+            app.lists[IssueSource::Team].issues[0].priority,
+            Priority::Urgent
+        );
     }
 
     #[test]
@@ -3813,7 +3803,7 @@ mod tests {
             preset: Preset::Active,
             page: page(vec![issue("9", "OPS-9", "stale")], false),
         });
-        assert_eq!(app.issues[0].id, "1");
+        assert_eq!(app.lists[IssueSource::Team].issues[0].id, "1");
     }
 
     #[test]
@@ -3831,13 +3821,13 @@ mod tests {
     fn switching_team_forgets_the_old_teams_cursors_and_states() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
         app.teams.push(team("t2", "Ops"));
-        app.page_info = PageInfo {
+        app.lists[IssueSource::Team].page_info = PageInfo {
             has_next_page: true,
             end_cursor: Some("c1".into()),
         };
         app.workflow_states = vec![stated("1", "s-x", "Doing", "started").state.unwrap()];
         app.activate(Nav::Team(1, TeamSection::Issues));
-        assert!(!app.page_info.has_next_page);
+        assert!(!app.lists[IssueSource::Team].page_info.has_next_page);
         assert!(app.workflow_states.is_empty());
     }
 
@@ -3851,8 +3841,8 @@ mod tests {
             project_id: "p1".into(),
             page: page(vec![issue("9", "ENG-9", "stale")], false),
         });
-        assert!(app.project_issues.is_empty());
-        assert!(!app.project_issues_loaded);
+        assert!(app.lists[IssueSource::Project].issues.is_empty());
+        assert!(!app.lists[IssueSource::Project].loaded);
     }
 
     #[test]
@@ -3864,7 +3854,7 @@ mod tests {
             view_id: "v1".into(),
             page: page(vec![issue("9", "ENG-9", "stale")], false),
         });
-        assert!(app.view_issues.is_empty());
+        assert!(app.lists[IssueSource::View].issues.is_empty());
         assert_eq!(app.loaded_view_id, None);
     }
 
@@ -3876,7 +3866,7 @@ mod tests {
             team_id: Some("other".into()),
             issues: vec![issue("9", "OPS-9", "x")],
         });
-        assert_eq!(app.issues[0].id, "1");
+        assert_eq!(app.lists[IssueSource::Team].issues[0].id, "1");
         assert_eq!(app.global_search, None);
     }
 
@@ -3899,7 +3889,10 @@ mod tests {
 
         // Linear's answer puts every copy back.
         app.handle_message(Message::IssueDetail(Box::new(issue("1", "ENG-1", "a"))));
-        assert_eq!(app.issues[0].priority, Priority::None);
+        assert_eq!(
+            app.lists[IssueSource::Team].issues[0].priority,
+            Priority::None
+        );
     }
 
     #[test]
@@ -3909,7 +3902,7 @@ mod tests {
                 .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), "t"))
                 .collect(),
         );
-        app.page_info = PageInfo {
+        app.lists[IssueSource::Team].page_info = PageInfo {
             has_next_page: true,
             end_cursor: Some("c1".into()),
         };
@@ -3961,12 +3954,12 @@ mod tests {
                 .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), &format!("t{i}")))
                 .collect(),
         );
-        app.page_info = PageInfo {
+        app.lists[IssueSource::Team].page_info = PageInfo {
             has_next_page: true,
             end_cursor: Some("c1".into()),
         };
         for c in "t19".chars() {
-            app.search.insert(c);
+            app.list_mut().search.insert(c);
         }
         app.move_selection(1);
         assert!(matches!(
@@ -3979,9 +3972,31 @@ mod tests {
     fn filtering_resets_the_cursor_of_the_list_on_screen() {
         let mut app = app_with(vec![]);
         app.nav = Nav::MyIssues;
-        app.my_issues = vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
-        app.selected_my_issue_index = 1;
+        app.lists[IssueSource::My].issues =
+            vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
+        app.lists[IssueSource::My].selected = 1;
         app.clear_filters();
-        assert_eq!(app.selected_my_issue_index, 0);
+        assert_eq!(app.lists[IssueSource::My].selected, 0);
+    }
+
+    /// Regression: the search box and filters were one set shared by every
+    /// list, so narrowing a project's issues also narrowed the team's.
+    #[test]
+    fn each_list_keeps_its_own_search_and_filters() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "alpha")]);
+        app.current_project =
+            Some(serde_json::from_str(r#"{"id":"p1","name":"P","lead":null}"#).unwrap());
+        app.screen = Screen::ProjectDetail;
+        app.lists[IssueSource::Project].issues = vec![issue("2", "ENG-2", "beta")];
+        app.start_search();
+        for c in "zzz".chars() {
+            app.list_mut().search.insert(c);
+        }
+        app.list_mut().filters.priority = Some(Priority::Urgent);
+        assert!(app.visible_issues().is_empty());
+
+        app.leave_container();
+        app.screen = Screen::IssueList;
+        assert_eq!(app.visible_issues().len(), 1, "the team list is untouched");
     }
 }

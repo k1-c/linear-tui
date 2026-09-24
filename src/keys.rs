@@ -192,6 +192,9 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) {
             KeyCode::Char('z') => return app.toggle_selected_group(),
             KeyCode::Char('Z') => return app.toggle_all_groups(),
             KeyCode::BackTab => return app.cycle_preset(),
+            KeyCode::Char('f') => return app.open_filter(),
+            KeyCode::Char('F') => return app.clear_filters(),
+            KeyCode::Char('/') => return app.start_search(),
             _ => {}
         }
     }
@@ -332,12 +335,6 @@ fn handle_issue_list_keys(app: &mut App, key: KeyEvent) {
         // Space is Linear's peek; with no split pane it simply opens the issue.
         KeyCode::Enter | KeyCode::Char(' ') => app.open_issue_detail(),
         KeyCode::Char('t') => app.open_team_select(),
-        KeyCode::Char('f') => app.open_filter(),
-        KeyCode::Char('F') => app.clear_filters(),
-        KeyCode::Char('/') => {
-            app.input_mode = InputMode::Search;
-            app.search.clear();
-        }
         KeyCode::Esc => app.clear_search(),
         _ => {}
     }
@@ -378,6 +375,9 @@ fn handle_project_detail_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
+        // Esc drops a search first, as on the team's list; only then does
+        // it leave the page.
+        KeyCode::Esc if !app.list().search.is_empty() => app.clear_search(),
         KeyCode::Esc | KeyCode::Char('q') => app.leave_container(),
         // The cursor counts rows in display order, which grouping reorders,
         // so the issue has to be looked up in that order too.
@@ -403,6 +403,9 @@ fn handle_cycle_detail_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
+        // Esc drops a search first, as on the team's list; only then does
+        // it leave the page.
+        KeyCode::Esc if !app.list().search.is_empty() => app.clear_search(),
         KeyCode::Esc | KeyCode::Char('q') => app.leave_container(),
         // The cursor counts rows in display order, which grouping reorders,
         // so the issue has to be looked up in that order too.
@@ -451,7 +454,7 @@ fn handle_search_mode(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
-    if edit_input(&mut app.search, key) {
+    if edit_input(&mut app.list_mut().search, key) {
         // Filter as you type so the list stays in sync with the query.
         app.apply_search();
     }
@@ -525,7 +528,7 @@ fn handle_new_issue_mode(app: &mut App, key: KeyEvent) {
 mod tests {
     use super::*;
     use crate::api::types::Issue;
-    use crate::app::Screen;
+    use crate::app::{IssueSource, Screen};
     use crate::config::Config;
     use crossterm::event::{KeyEventKind, KeyEventState};
 
@@ -571,7 +574,7 @@ mod tests {
     #[test]
     fn enter_on_a_project_issue_opens_the_highlighted_one() {
         let mut app = app();
-        app.project_issues = reordered();
+        app.lists[IssueSource::Project].issues = reordered();
         app.screen = Screen::ProjectDetail;
         press(&mut app, KeyCode::Char('j'));
         let highlighted = app.focused_issue().unwrap().id.clone();
@@ -584,7 +587,7 @@ mod tests {
     #[test]
     fn enter_on_a_cycle_issue_opens_the_highlighted_one() {
         let mut app = app();
-        app.cycle_issues = reordered();
+        app.lists[IssueSource::Cycle].issues = reordered();
         app.screen = Screen::CycleDetail;
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('j'));
@@ -605,10 +608,10 @@ mod tests {
             (Screen::CycleDetail, None),
         ] {
             let mut app = app();
-            app.issues = reordered();
-            app.my_issues = reordered();
-            app.project_issues = reordered();
-            app.cycle_issues = reordered();
+            app.lists[IssueSource::Team].issues = reordered();
+            app.lists[IssueSource::My].issues = reordered();
+            app.lists[IssueSource::Project].issues = reordered();
+            app.lists[IssueSource::Cycle].issues = reordered();
             app.set_preset(crate::grouping::Preset::All);
             app.requests.clear();
             if let Some(nav) = nav {
