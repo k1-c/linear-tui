@@ -1,4 +1,4 @@
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
@@ -146,6 +146,14 @@ pub enum FilterKind {
     Priority,
 }
 
+/// One team's workflow states and members — what its issues can be moved to
+/// and assigned to.
+#[derive(Debug, Clone, Default)]
+pub struct TeamContext {
+    pub states: Vec<WorkflowState>,
+    pub members: Vec<User>,
+}
+
 /// Persistent [`TableState`]s, one per scrollable list.
 #[derive(Debug, Default)]
 pub struct TableStates {
@@ -189,12 +197,12 @@ pub struct App {
     // Teams
     pub teams: Vec<Team>,
     pub selected_team_index: usize,
-    pub team_members: Vec<User>,
-
-    // Issues
-
-    // Filters
-    pub workflow_states: Vec<WorkflowState>,
+    /// States and members of every team loaded so far. A status or assignee
+    /// must come from the issue's own team, and My Issues, views, projects
+    /// and cycles can hold issues of teams other than the selected one.
+    pub team_contexts: HashMap<TeamId, TeamContext>,
+    /// Teams whose context is in flight, so each one is asked for once.
+    team_contexts_pending: HashSet<TeamId>,
 
     // Saved views
     pub custom_views: Vec<CustomView>,
@@ -257,6 +265,8 @@ pub struct App {
     /// Rendered height of the detail body, updated each frame so scrolling can clamp.
     pub detail_lines: u16,
     pub detail_viewport: u16,
+    /// The detail view's rendered Markdown, kept for the next frame.
+    pub detail_markdown: crate::ui::issue_detail::Memo,
 
     // Search
     /// Set while the list shows workspace-wide search results instead of the team's issues.
@@ -334,8 +344,8 @@ impl App {
             popup_index: 0,
             teams: Vec::new(),
             selected_team_index: 0,
-            team_members: Vec::new(),
-            workflow_states: Vec::new(),
+            team_contexts: HashMap::new(),
+            team_contexts_pending: HashSet::new(),
             custom_views: Vec::new(),
             views_loaded: false,
             selected_view_index: 0,
@@ -368,6 +378,7 @@ impl App {
             detail_scroll: 0,
             detail_lines: 0,
             detail_viewport: 0,
+            detail_markdown: Default::default(),
             global_search: None,
             comment: Input::default(),
             new_issue: None,
@@ -560,9 +571,7 @@ impl App {
                 self.teams = teams;
                 self.nav = Nav::Team(self.selected_team_index, TeamSection::Issues);
                 if let Some(team_id) = self.team_id() {
-                    self.request(Request::TeamContext {
-                        team_id: team_id.clone(),
-                    });
+                    self.ensure_team_context(team_id.clone());
                     self.request(Request::Issues {
                         team_id,
                         after: None,
@@ -581,13 +590,17 @@ impl App {
                 states,
                 members,
             } => {
-                // The old team's states would offer status changes the new
-                // team's issues cannot take.
-                if !self.is_current_team(&team_id) {
-                    return;
+                // Kept whichever team is selected: it is filed under its own
+                // team, so it can only ever be offered for that team's issues.
+                self.team_contexts_pending.remove(&team_id);
+                let waiting = self.popup_team_id() == Some(&team_id);
+                self.team_contexts
+                    .insert(team_id, TeamContext { states, members });
+                // A popup opened while this was loading starts on the
+                // issue's current value, as it would have if it were cached.
+                if waiting {
+                    self.popup_index = self.popup_initial_index();
                 }
-                self.workflow_states = states;
-                self.team_members = members;
             }
             Message::Issues {
                 team_id,
@@ -740,6 +753,10 @@ impl App {
                 // A failed page must be retryable.
                 if let Some(cursor) = request.cursor() {
                     self.prefetched.remove(cursor);
+                }
+                // Reopening the popup asks again.
+                if let Request::TeamContext { team_id } = request.as_ref() {
+                    self.team_contexts_pending.remove(team_id);
                 }
                 // The change is already on screen; ask Linear what the issue
                 // really looks like now rather than guess what to undo.
@@ -1018,22 +1035,141 @@ impl App {
     }
 
     pub fn open_filter(&mut self) {
+        for team_id in self.list_team_ids() {
+            self.ensure_team_context(team_id);
+        }
         self.popup = Popup::Filter(FilterKind::Status);
         self.popup_index = 0;
     }
 
     pub fn open_status_change(&mut self) {
-        let Some(issue) = self.focused_issue() else {
-            return;
+        if let Some(issue) = self.focused_issue() {
+            self.open_change_popup(Popup::StatusChange(issue.id.clone()));
+        }
+    }
+
+    /// Open a status or assignee popup, fetching the issue's team first if
+    /// its states and members have not been loaded yet.
+    fn open_change_popup(&mut self, popup: Popup) {
+        self.popup = popup;
+        if let Some(team_id) = self.popup_team_id().cloned() {
+            self.ensure_team_context(team_id);
+        }
+        self.popup_index = self.popup_initial_index();
+    }
+
+    /// Where a change popup starts: on the issue's current value, so Enter is
+    /// a no-op rather than a surprise.
+    fn popup_initial_index(&self) -> usize {
+        let Some(issue) = self.popup_issue() else {
+            return 0;
         };
-        // Start on the issue's current state so Enter is a no-op, not a surprise.
-        let index = issue
-            .state
+        match self.popup {
+            Popup::StatusChange(_) => issue
+                .state
+                .as_ref()
+                .and_then(|state| self.popup_states().iter().position(|s| s.id == state.id))
+                .unwrap_or(0),
+            // Row 0 is Unassign, so a member's row is one past their index.
+            Popup::AssigneeChange(_) => issue
+                .assignee
+                .as_ref()
+                .and_then(|user| self.popup_members().iter().position(|u| u.id == user.id))
+                .map_or(0, |i| i + 1),
+            _ => 0,
+        }
+    }
+
+    // ----------------------------------------------------------- team context
+
+    /// The team `issue` belongs to. An issue that does not say is taken to be
+    /// the selected team's.
+    pub fn issue_team_id<'a>(&'a self, issue: &'a Issue) -> Option<&'a TeamId> {
+        issue
+            .team
             .as_ref()
-            .and_then(|state| self.workflow_states.iter().position(|s| s.id == state.id))
-            .unwrap_or(0);
-        self.popup = Popup::StatusChange(issue.id.clone());
-        self.popup_index = index;
+            .map(|team| &team.id)
+            .or_else(|| self.current_team().map(|t| &t.id))
+    }
+
+    /// Ask for a team's states and members, unless they are loaded or on the way.
+    fn ensure_team_context(&mut self, team_id: TeamId) {
+        if self.team_contexts.contains_key(&team_id)
+            || !self.team_contexts_pending.insert(team_id.clone())
+        {
+            return;
+        }
+        self.request(Request::TeamContext { team_id });
+    }
+
+    /// The team whose states or members the open change popup offers.
+    fn popup_team_id(&self) -> Option<&TeamId> {
+        match self.popup {
+            Popup::StatusChange(_) | Popup::AssigneeChange(_) => {
+                self.issue_team_id(self.popup_issue()?)
+            }
+            _ => None,
+        }
+    }
+
+    fn popup_context(&self) -> Option<&TeamContext> {
+        self.team_contexts.get(self.popup_team_id()?)
+    }
+
+    /// True while a change popup waits for its issue's team to load.
+    pub fn popup_loading(&self) -> bool {
+        match self.popup {
+            Popup::StatusChange(_) | Popup::AssigneeChange(_) => self.popup_context().is_none(),
+            Popup::Filter(FilterKind::Status) => self
+                .list_team_ids()
+                .iter()
+                .any(|id| !self.team_contexts.contains_key(id)),
+            _ => false,
+        }
+    }
+
+    /// The states the status popup offers: those of the issue's own team.
+    pub fn popup_states(&self) -> &[WorkflowState] {
+        self.popup_context().map_or(&[], |c| &c.states)
+    }
+
+    /// The members the assignee popup offers: those of the issue's own team.
+    pub fn popup_members(&self) -> &[User] {
+        self.popup_context().map_or(&[], |c| &c.members)
+    }
+
+    /// Teams of the issues in the list on screen, in order of first
+    /// appearance; the selected team when the list is empty.
+    fn list_team_ids(&self) -> Vec<TeamId> {
+        let mut ids: Vec<TeamId> = Vec::new();
+        for issue in &self.list().issues {
+            if let Some(id) = self.issue_team_id(issue)
+                && !ids.contains(id)
+            {
+                ids.push(id.clone());
+            }
+        }
+        if ids.is_empty() {
+            ids.extend(self.team_id());
+        }
+        ids
+    }
+
+    /// The states the status filter offers. The filter matches by name, so a
+    /// list spanning teams offers each name once, whichever team it is from.
+    pub fn filter_states(&self) -> Vec<&WorkflowState> {
+        let mut states: Vec<&WorkflowState> = Vec::new();
+        for id in self.list_team_ids() {
+            let Some(context) = self.team_contexts.get(&id) else {
+                continue;
+            };
+            for state in &context.states {
+                if !states.iter().any(|s| s.name == state.name) {
+                    states.push(state);
+                }
+            }
+        }
+        states
     }
 
     pub fn open_priority_change(&mut self) {
@@ -1045,17 +1181,9 @@ impl App {
     }
 
     pub fn open_assignee_change(&mut self) {
-        let Some(issue) = self.focused_issue() else {
-            return;
-        };
-        // Row 0 is Unassign, so a member's row is one past their index.
-        let index = issue
-            .assignee
-            .as_ref()
-            .and_then(|user| self.team_members.iter().position(|u| u.id == user.id))
-            .map_or(0, |i| i + 1);
-        self.popup = Popup::AssigneeChange(issue.id.clone());
-        self.popup_index = index;
+        if let Some(issue) = self.focused_issue() {
+            self.open_change_popup(Popup::AssigneeChange(issue.id.clone()));
+        }
     }
 
     /// Linear's `I` — assign the focused issue to the current user.
@@ -1067,9 +1195,11 @@ impl App {
         let Some(issue_id) = self.focused_issue().map(|i| i.id.clone()) else {
             return;
         };
+        // The viewer is the same user in every team they belong to.
         let me = self
-            .team_members
-            .iter()
+            .team_contexts
+            .values()
+            .flat_map(|c| &c.members)
             .find(|u| u.id == viewer_id)
             .cloned();
         self.patch_issue(&issue_id, |i| i.assignee = me.clone());
@@ -1134,10 +1264,11 @@ impl App {
     }
 
     pub fn apply_status_selection(&mut self) {
-        if let Popup::StatusChange(issue_id) = self.take_popup()
-            && let Some(state) = self.workflow_states.get(self.popup_index)
-        {
-            let state = state.clone();
+        // Nothing to pick while the issue's team loads; the popup stays open.
+        let Some(state) = self.popup_states().get(self.popup_index).cloned() else {
+            return;
+        };
+        if let Popup::StatusChange(issue_id) = self.take_popup() {
             let state_id = state.id.clone();
             self.patch_issue(&issue_id, |i| i.state = Some(state.clone()));
             self.request(Request::UpdateStatus { issue_id, state_id });
@@ -1156,12 +1287,16 @@ impl App {
     }
 
     pub fn apply_assignee_selection(&mut self) {
-        if let Popup::AssigneeChange(issue_id) = self.take_popup() {
-            let assignee = if self.popup_index == 0 {
-                None // Unassign
-            } else {
-                self.team_members.get(self.popup_index - 1).cloned()
+        let assignee = if self.popup_index == 0 {
+            None // Unassign
+        } else {
+            // Only Unassign can be picked while the issue's team loads.
+            let Some(member) = self.popup_members().get(self.popup_index - 1).cloned() else {
+                return;
             };
+            Some(member)
+        };
+        if let Popup::AssigneeChange(issue_id) = self.take_popup() {
             let assignee_id = assignee.as_ref().map(|u| u.id.clone());
             self.patch_issue(&issue_id, |i| i.assignee = assignee.clone());
             self.request(Request::UpdateAssignee {
@@ -1227,12 +1362,12 @@ impl App {
         match self.popup {
             Popup::TeamSelect => self.teams.len(),
             // Each filter list starts with an "any" row.
-            Popup::Filter(FilterKind::Status) => self.workflow_states.len() + 1,
+            Popup::Filter(FilterKind::Status) => self.filter_states().len() + 1,
             Popup::Filter(FilterKind::Priority) => Priority::ALL.len() + 1,
-            Popup::StatusChange(_) => self.workflow_states.len(),
+            Popup::StatusChange(_) => self.popup_states().len(),
             Popup::PriorityChange(_) => Priority::ALL.len(),
             // +1 for Unassign
-            Popup::AssigneeChange(_) => self.team_members.len() + 1,
+            Popup::AssigneeChange(_) => self.popup_members().len() + 1,
             Popup::None => 0,
         }
     }
@@ -1245,7 +1380,7 @@ impl App {
             FilterKind::Status => {
                 if self.popup_index == 0 {
                     self.list_mut().filters.status = None;
-                } else if let Some(state) = self.workflow_states.get(self.popup_index - 1) {
+                } else if let Some(state) = self.filter_states().get(self.popup_index - 1) {
                     let name = state.name.clone();
                     self.list_mut().filters.status = Some(name);
                 }
@@ -1323,7 +1458,7 @@ impl App {
                 let mut index = self.selected_index();
                 Self::nav_by(len, &mut index, delta);
                 *self.selected_index_mut() = index;
-                self.maybe_prefetch();
+                self.maybe_prefetch_within(len);
             }
         }
     }
@@ -1334,18 +1469,22 @@ impl App {
         if self.screen != Screen::IssueDetail {
             return;
         }
-        let Some(position) = self.detail_position() else {
+        let Some(current) = &self.current_issue else {
             return;
         };
-        let next = (position.0 as isize + delta).clamp(0, position.1 as isize - 1) as usize;
-        if next == position.0 {
+        // One grouping pass serves the position, the neighbour, and the count.
+        let issues = self.visible_issues();
+        let Some(position) = issues.iter().position(|i| i.id == current.id) else {
+            return;
+        };
+        let total = issues.len();
+        let next = (position as isize + delta).clamp(0, total as isize - 1) as usize;
+        if next == position {
             return;
         }
-        let Some(issue) = self.visible_issues().get(next).copied().cloned() else {
-            return;
-        };
+        let issue = issues[next].clone();
         *self.selected_index_mut() = next;
-        self.maybe_prefetch();
+        self.maybe_prefetch_within(total);
         let ret = self.detail_return;
         self.open_issue_from_list(&issue);
         self.detail_return = ret;
@@ -1747,8 +1886,6 @@ impl App {
         self.lists[IssueSource::Team].reset();
         self.projects_page_info = PageInfo::default();
         self.cycles_page_info = PageInfo::default();
-        self.workflow_states.clear();
-        self.team_members.clear();
         // The old team's projects and cycles would otherwise sit on screen,
         // under the new team's name, until the refetch lands.
         self.projects.clear();
@@ -1758,7 +1895,7 @@ impl App {
         self.lists[IssueSource::Team].filters.clear();
         self.invalidate_tab_caches();
         if let Some(team_id) = self.team_id() {
-            self.request(Request::TeamContext { team_id });
+            self.ensure_team_context(team_id);
         }
     }
 

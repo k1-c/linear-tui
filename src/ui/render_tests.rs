@@ -216,3 +216,143 @@ fn every_documented_binding_appears_in_the_help_overlay() {
         );
     }
 }
+
+/// The detail view keeps rendered Markdown between frames; whatever changes
+/// in between must still reach the screen.
+#[test]
+fn the_detail_view_redraws_what_changed_since_the_last_frame() {
+    let mut app = app();
+    app.open_issue_detail();
+    let text = screen_text(&render(&mut app, 100, 40));
+    assert!(text.contains("Loading comments"), "{text}");
+
+    let issue = app.current_issue.as_mut().unwrap();
+    issue.comments =
+        Some(serde_json::from_str(r#"{"nodes":[{"id":"c1","body":"first **draft**"}]}"#).unwrap());
+    let text = screen_text(&render(&mut app, 100, 40));
+    assert!(text.contains("first draft"), "{text}");
+
+    let issue = app.current_issue.as_mut().unwrap();
+    issue.comments.as_mut().unwrap().nodes[0].body = "second take".into();
+    issue.description = Some("A new description".into());
+    let text = screen_text(&render(&mut app, 100, 40));
+    assert!(
+        text.contains("second take") && !text.contains("first draft"),
+        "{text}"
+    );
+    assert!(text.contains("A new description"), "{text}");
+
+    // A narrower pane rewraps rather than reusing the wider lines.
+    let narrow = render(&mut app, 60, 40);
+    assert!(narrow.iter().all(|line| line.chars().count() == 60));
+    assert!(screen_text(&narrow).contains("second take"));
+    assert_eq!(
+        narrow,
+        render(&mut app, 60, 40),
+        "a repeat frame is identical"
+    );
+}
+
+/// Frame and key timings on a long list and a long comment thread.
+///
+/// Ignored by default, since a debug build's timings mean nothing. Run with
+/// `cargo test --release timings -- --ignored --nocapture`.
+mod timings {
+    use std::time::{Duration, Instant};
+
+    use super::*;
+
+    const STATES: [(&str, &str); 5] = [
+        ("Backlog", "backlog"),
+        ("Todo", "unstarted"),
+        ("In Progress", "started"),
+        ("In Review", "started"),
+        ("Done", "completed"),
+    ];
+
+    fn long_list(app: &mut App, n: usize) {
+        app.lists[IssueSource::Team].issues = (0..n)
+            .map(|i| {
+                let (name, kind) = STATES[i % STATES.len()];
+                stated(&i.to_string(), &format!("Issue number {i}"), name, kind)
+            })
+            .collect();
+        app.lists[IssueSource::Team].preset = Preset::All;
+    }
+
+    fn long_thread(n: usize) -> Issue {
+        let comments: Vec<String> = (0..n)
+            .map(|i| {
+                // Every third comment replies to the one before it.
+                let parent = if i % 3 == 2 {
+                    format!(r#","parent":{{"id":"c{}"}}"#, i - 1)
+                } else {
+                    String::new()
+                };
+                let body = format!(
+                    "Comment {i} with **bold**, `code` and a [link](https://example.com).\n\n\
+                     - a first point long enough to wrap across the card at most widths\n\
+                     - a second point\n\n> quoted text from an earlier message"
+                );
+                format!(
+                    r#"{{"id":"c{i}","body":{body:?},"createdAt":"2026-01-01T00:00:00.000Z",
+                        "user":{{"id":"u1","name":"Ada Lovelace"}}{parent}}}"#
+                )
+            })
+            .collect();
+        let description = "## Summary\n\nA description with **bold** and `code`, long \
+                           enough to wrap a few times across the column.\n\n"
+            .repeat(20);
+        serde_json::from_str(&format!(
+            r#"{{"id":"big","identifier":"ENG-9999","title":"A long thread","priority":2,
+                "state":{{"id":"s","name":"Todo","type":"unstarted","position":1}},
+                "assignee":{{"id":"u1","name":"Ada Lovelace"}},
+                "description":{description:?},
+                "comments":{{"nodes":[{}]}},"project":null,"cycle":null}}"#,
+            comments.join(",")
+        ))
+        .unwrap()
+    }
+
+    fn time(label: &str, runs: u32, mut f: impl FnMut()) -> Duration {
+        f(); // warm up
+        let start = Instant::now();
+        for _ in 0..runs {
+            f();
+        }
+        let each = start.elapsed() / runs;
+        println!("{label:<40} {each:>10.1?}");
+        each
+    }
+
+    #[test]
+    #[ignore = "timing run: cargo test --release timings -- --ignored --nocapture"]
+    fn timings() {
+        let mut terminal = Terminal::new(TestBackend::new(160, 50)).unwrap();
+
+        let mut list = app();
+        long_list(&mut list, 1000);
+        time("list frame, 1000 issues", 500, || {
+            terminal.draw(|f| crate::ui::draw(f, &mut list)).unwrap();
+        });
+        time("j then k, 1000 issues", 2000, || {
+            list.move_selection(1);
+            list.move_selection(-1);
+        });
+        list.open_issue_detail();
+        time("detail frame over 1000 issues", 500, || {
+            terminal.draw(|f| crate::ui::draw(f, &mut list)).unwrap();
+        });
+
+        let mut thread = app();
+        thread.open_issue_detail();
+        thread.current_issue = Some(long_thread(0));
+        time("detail frame, no comments", 500, || {
+            terminal.draw(|f| crate::ui::draw(f, &mut thread)).unwrap();
+        });
+        thread.current_issue = Some(long_thread(100));
+        time("detail frame, 100 comments", 500, || {
+            terminal.draw(|f| crate::ui::draw(f, &mut thread)).unwrap();
+        });
+    }
+}
