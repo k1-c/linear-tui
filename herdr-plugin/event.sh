@@ -6,6 +6,7 @@
 # linear-tui. Off by default: the notice takes the agent's first turn, and
 # some agents (Claude Code) name the session after it. See docs/herdr.md.
 set -uo pipefail
+# shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
 [ "$NOTIFY_AGENTS" = 1 ] || exit 0

@@ -35,6 +35,8 @@ pub enum Ctx {
     GoTo,
     Search,
     Comment,
+    /// Typing a note for the agent.
+    Note,
     IssueTitle,
     IssueDescription,
     IssuePriority,
@@ -109,15 +111,22 @@ const NESTED: &[Ctx] = &[IssueDetail, ProjectDetail, CycleDetail];
 /// Team pages, where the team can be switched.
 const TEAM_PAGES: &[Ctx] = &[IssueList, ProjectList, CycleList, Sidebar];
 /// Text fields.
-const TEXT: &[Ctx] = &[Search, Comment, IssueTitle, IssueDescription];
+const TEXT: &[Ctx] = &[Search, Comment, Note, IssueTitle, IssueDescription];
 /// Multi-line text fields.
-const MULTILINE: &[Ctx] = &[Comment, IssueDescription];
+const MULTILINE: &[Ctx] = &[Comment, Note, IssueDescription];
 /// The new-issue form, whichever field has focus.
 const FORM: &[Ctx] = &[IssueTitle, IssueDescription, IssuePriority];
 /// Anything submitted with Ctrl+Enter.
-const SUBMITTABLE: &[Ctx] = &[Comment, IssueTitle, IssueDescription, IssuePriority];
+const SUBMITTABLE: &[Ctx] = &[Comment, Note, IssueTitle, IssueDescription, IssuePriority];
 /// Every input mode that Esc abandons.
-const EDITING: &[Ctx] = &[Search, Comment, IssueTitle, IssueDescription, IssuePriority];
+const EDITING: &[Ctx] = &[
+    Search,
+    Comment,
+    Note,
+    IssueTitle,
+    IssueDescription,
+    IssuePriority,
+];
 
 /// Which modifiers a [`Key`] requires.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -225,6 +234,8 @@ pub enum Section {
     IssueActions,
     CopyOpen,
     SearchFilter,
+    /// Handing work to a coding agent.
+    Agent,
     Mouse,
     Other,
     Scrolling,
@@ -232,7 +243,7 @@ pub enum Section {
 }
 
 impl Section {
-    pub const ALL: [Section; 11] = [
+    pub const ALL: [Section; 12] = [
         Self::Navigation,
         Self::Sidebar,
         Self::GoTo,
@@ -240,6 +251,7 @@ impl Section {
         Self::IssueActions,
         Self::CopyOpen,
         Self::SearchFilter,
+        Self::Agent,
         Self::Mouse,
         Self::Other,
         Self::Scrolling,
@@ -253,6 +265,7 @@ impl Section {
             Self::IssueActions => 0,
             Self::CopyOpen => 1,
             Self::SearchFilter => 2,
+            Self::Agent => 2,
             Self::ListDisplay => 3,
             Self::GoTo => 4,
             Self::Navigation => 5,
@@ -271,6 +284,7 @@ impl Section {
             Self::IssueActions => "Issue actions",
             Self::CopyOpen => "Copy & open",
             Self::SearchFilter => "Search & filter",
+            Self::Agent => "Agent",
             Self::Mouse => "Mouse",
             Self::Other => "Other",
             Self::Scrolling => "Scrolling",
@@ -615,6 +629,23 @@ pub static BINDINGS: &[Binding] = &[
     bind(&[plain('Z')], ISSUE_LISTS, App::toggle_all_groups)
         .command("Fold or unfold all groups", &["collapse", "expand"])
         .in_section(Section::ListDisplay),
+    // --- Notes for the agent, a TUI-only addition: Linear has no agent
+    // beside it to hand remarks to. ---
+    bind(&[plain('n')], ISSUE_SCREENS, App::start_note_on_issue)
+        .help(Section::Agent, "n", "Note on the issue under the cursor")
+        .command(
+            "Add a note for your agent",
+            &["feedback", "remark", "review"],
+        ),
+    bind(&[plain('N')], SCREENS, App::start_note_on_view)
+        .help(Section::Agent, "N", "Note on the whole view")
+        .command("Add a note on this view", &["feedback", "remark", "review"]),
+    bind(&[ctrl('s')], SCREENS, App::send_notes)
+        .help(Section::Agent, "C-s", "Send the notes to your agent")
+        .command("Send notes to your agent", &["prompt", "feedback", "herdr"]),
+    palette_only(SCREENS, App::discard_notes)
+        .command("Discard notes", &["clear", "feedback"])
+        .in_section(Section::Agent),
     // --- Issue actions, matching Linear's single-key bindings ---
     // `c` creates an issue from anywhere, as in Linear.
     bind(&[plain('c')], SCREENS, App::start_new_issue)
@@ -816,6 +847,7 @@ pub fn context(app: &App) -> Ctx {
     match app.view.input_mode {
         InputMode::Search => Search,
         InputMode::Comment => Comment,
+        InputMode::Note => Note,
         InputMode::NewIssue => match app.view.new_issue.as_ref().map(|form| form.field) {
             Some(FormField::Description) => IssueDescription,
             Some(FormField::Priority) => IssuePriority,
@@ -1122,6 +1154,7 @@ fn cancel(app: &mut App) {
     match app.view.input_mode {
         InputMode::Search => app.cancel_search(),
         InputMode::Comment => app.cancel_comment(),
+        InputMode::Note => app.cancel_note(),
         InputMode::NewIssue => app.cancel_new_issue(),
         InputMode::Normal => {}
     }
@@ -1130,6 +1163,7 @@ fn cancel(app: &mut App) {
 fn submit(app: &mut App) {
     match app.view.input_mode {
         InputMode::Comment => app.submit_comment(),
+        InputMode::Note => app.submit_note(),
         InputMode::NewIssue => app.submit_new_issue(),
         InputMode::Search | InputMode::Normal => {}
     }
@@ -1140,6 +1174,7 @@ fn active_input(app: &mut App) -> Option<&mut Input> {
     match app.view.input_mode {
         InputMode::Search => Some(&mut app.list_mut().search),
         InputMode::Comment => Some(&mut app.view.comment),
+        InputMode::Note => Some(&mut app.view.note),
         InputMode::NewIssue => app
             .view
             .new_issue

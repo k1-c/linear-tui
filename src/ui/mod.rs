@@ -4,6 +4,7 @@ pub mod issue_detail;
 pub mod issue_list;
 pub mod markdown;
 pub mod new_issue;
+pub mod note;
 pub mod palette;
 pub mod popup;
 pub mod project_detail;
@@ -221,6 +222,9 @@ pub fn draw(f: &mut Frame, app: &mut App, cache: &mut Cache) {
     if app.view.input_mode == InputMode::NewIssue {
         new_issue::draw(f, app);
     }
+    if app.view.input_mode == InputMode::Note {
+        note::draw(f, app);
+    }
     if app.view.show_help {
         draw_help(f, app);
     }
@@ -426,10 +430,22 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let spans: Vec<Span> = keys::hints(keys::context(app))
-        .into_iter()
-        .flat_map(|h| hint(h.keys, h.what, th))
-        .collect();
+    let mut spans: Vec<Span> = Vec::new();
+    // Notes waiting to be sent stay in view until they are.
+    let notes = app.view.notes.len();
+    if notes > 0 {
+        let plural = if notes == 1 { "" } else { "s" };
+        spans.push(Span::styled(
+            format!(" \u{270e} {notes} note{plural}"),
+            Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
+        ));
+        spans.extend(hint("^S", "send", th));
+    }
+    spans.extend(
+        keys::hints(keys::context(app))
+            .into_iter()
+            .flat_map(|h| hint(h.keys, h.what, th)),
+    );
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 

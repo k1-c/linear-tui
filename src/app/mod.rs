@@ -14,6 +14,7 @@ mod lists;
 mod messages;
 mod mouse;
 mod navigation;
+mod notes;
 mod outbox;
 mod palette;
 mod popups;
@@ -28,6 +29,7 @@ pub use frame::*;
 pub use input::*;
 pub use lists::*;
 pub use navigation::*;
+pub use notes::*;
 pub use outbox::*;
 pub use sidebar::*;
 pub use view::*;
@@ -134,6 +136,8 @@ pub enum InputMode {
     Search,
     Comment,
     NewIssue,
+    /// Typing a note for the agent.
+    Note,
 }
 
 /// The open popup, and what it acts on.
@@ -174,6 +178,9 @@ pub struct App {
     /// Requests and effects waiting for the main loop.
     pub outbox: Outbox,
     pub should_quit: bool,
+    /// Whether linear-tui runs inside herdr, which enables the actions that
+    /// hand work to its plugin.
+    pub herdr: bool,
     /// A snapshot being reopened, while it still has steps to take.
     restore: Option<restore::Restore>,
 
@@ -192,6 +199,7 @@ impl App {
             frame: FrameState::default(),
             outbox: Outbox::default(),
             should_quit: false,
+            herdr: crate::herdr::available(),
             restore: None,
             theme: Theme::from_name(config.ui.theme),
             items_per_page: config.ui.items_per_page,

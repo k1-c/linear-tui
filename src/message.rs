@@ -97,6 +97,8 @@ pub enum Request {
     },
     /// Hand a URL to the desktop's default browser.
     OpenUrl(String),
+    /// Leave work for the herdr plugin; see [`crate::herdr`].
+    Herdr(crate::herdr::Handoff),
 }
 
 /// One page of a cursor-paginated list.
@@ -169,6 +171,7 @@ impl Request {
             Self::CreateComment { .. } => "Failed to post comment",
             Self::CreateIssue { .. } => "Failed to create issue",
             Self::OpenUrl(_) => "Failed to open browser",
+            Self::Herdr(_) => "Failed to reach herdr",
         }
     }
 }

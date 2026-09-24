@@ -79,6 +79,28 @@ impl App {
         });
     }
 
+    /// Open the issue `identifier` names once the teams are in, over the
+    /// team's list — `linear-tui open ENG-42`. Linear looks an issue up by
+    /// identifier as readily as by ID, so the identifier stands in for the
+    /// ID until the detail arrives.
+    pub fn open_on_launch(&mut self, identifier: &str) {
+        self.restore = Some(Restore {
+            team: None,
+            dest: None,
+            search: None,
+            project: None,
+            cycle: None,
+            issue: Some(snap::IssueRef {
+                id: IssueId::new(identifier),
+                identifier: identifier.to_string(),
+                title: String::new(),
+            }),
+            opened_issue: None,
+            row: None,
+            selection: Vec::new(),
+        });
+    }
+
     /// Whether a restore is still finding its way to the destination — in
     /// which case the default first page is not fetched.
     pub(super) fn restoring_destination(&self) -> bool {
@@ -321,7 +343,7 @@ impl App {
             let identifier = self.store.current_issue.take().map(|i| i.identifier);
             self.close_detail();
             if let Some(identifier) = identifier {
-                self.set_status(format!("{identifier} is no longer available"));
+                self.set_status(format!("{identifier} is not available"));
             }
         }
         true
@@ -340,9 +362,18 @@ impl App {
     }
 
     /// The restored issue page loaded; nothing is left to undo.
-    pub(super) fn restored_issue_loaded(&mut self, issue_id: &IssueId) {
+    pub(super) fn restored_issue_loaded(&mut self, issue: &Issue) {
+        // An issue opened by identifier learns its real ID now.
+        let mut adopted = false;
+        if let Some(current) = &mut self.store.current_issue
+            && current.id != issue.id
+            && current.identifier == issue.identifier
+        {
+            *current = issue.clone();
+            adopted = true;
+        }
         if let Some(restore) = &mut self.restore
-            && restore.opened_issue.as_ref() == Some(issue_id)
+            && (adopted || restore.opened_issue.as_ref() == Some(&issue.id))
         {
             restore.opened_issue = None;
             if restore.is_done() {
@@ -645,7 +676,7 @@ mod tests {
         );
         assert_eq!(
             app.view.status_message.as_deref(),
-            Some("ENG-9 is no longer available")
+            Some("ENG-9 is not available")
         );
     }
 
@@ -694,5 +725,25 @@ mod tests {
             }
         )));
         assert_eq!(app.list().filters.priority, Some(Priority::High));
+    }
+
+    #[test]
+    fn an_issue_opened_by_identifier_takes_its_real_id_when_it_arrives() {
+        let mut app = fresh_app();
+        app.open_on_launch("ENG-9");
+        app.handle_message(Message::Teams(vec![team("t1", "ENG")]));
+        assert_eq!(app.nav.screen, Screen::IssueDetail);
+        assert_eq!(app.nav.detail_return, Screen::IssueList);
+        assert!(requested(&app, |r| matches!(
+            r,
+            Request::IssueDetail { issue_id } if issue_id == "ENG-9"
+        )));
+        assert!(requested(&app, |r| matches!(r, Request::Issues { .. })));
+
+        let mut fresh = issue("9");
+        fresh.id = IssueId::from("uuid-9");
+        app.handle_message(Message::IssueDetail(Box::new(fresh)));
+        assert_eq!(app.store.current_issue.as_ref().unwrap().id, "uuid-9");
+        assert!(app.restore.is_none());
     }
 }

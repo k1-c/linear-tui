@@ -36,6 +36,11 @@ pub struct ViewState {
     pub palette: Palette,
     pub detail_scroll: u16,
     pub comment: Input,
+    /// Notes collected for the agent, oldest first.
+    pub notes: Vec<super::Note>,
+    /// The note being typed, and the issue it is about.
+    pub note: Input,
+    pub note_about: Option<(String, String)>,
     /// Draft issue, present only while the create form is open.
     pub new_issue: Option<NewIssueForm>,
     /// First key of a pending multi-key chord (Linear's `g …` sequences).
@@ -105,6 +110,9 @@ impl ViewState {
             palette: Palette::default(),
             detail_scroll: 0,
             comment: Input::default(),
+            notes: Vec::new(),
+            note: Input::default(),
+            note_about: None,
             new_issue: None,
             pending_chord: None,
             show_help: false,

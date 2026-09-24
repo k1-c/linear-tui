@@ -1,18 +1,19 @@
 id = "k1-c.linear-tui"
 name = "linear-tui"
-version = "0.1.0"
+version = "0.2.0"
 # Tested against 0.9.1: plugin panes with --env, and the pane.agent_status_changed event hook.
 min_herdr_version = "0.9.1"
 description = "Linear in a pane: open linear-tui over any workspace and let agents read what you are looking at."
 platforms = ["linux", "macos"]
 
 # The TUI itself. open.sh passes the resolved binary in LINEAR_TUI_BIN, since
-# herdr starts panes with a minimal PATH.
+# herdr starts panes with a minimal PATH, and an issue to open in
+# LINEAR_TUI_OPEN when a link was clicked.
 [[panes]]
 id = "tui"
 title = "linear-tui"
 placement = "overlay"
-command = ["sh", "-c", "exec \"${LINEAR_TUI_BIN:-linear-tui}\""]
+command = ["sh", "-c", "exec \"${LINEAR_TUI_BIN:-linear-tui}\" ${LINEAR_TUI_OPEN:+open \"$LINEAR_TUI_OPEN\"}"]
 
 [[actions]]
 id = "open"
@@ -20,6 +21,31 @@ title = "linear-tui: open"
 description = "Focus this workspace's linear-tui pane, or open one in the focused pane's directory"
 contexts = ["pane", "workspace"]
 command = ["bash", "open.sh", "open"]
+
+# Invoked by linear-tui itself (Ctrl+S) to hand its notes to the agent.
+[[actions]]
+id = "deliver"
+title = "linear-tui: deliver notes to the agent"
+description = "Send what linear-tui left in its outbox"
+contexts = ["pane", "workspace"]
+command = ["bash", "deliver.sh"]
+
+[[actions]]
+id = "open-link"
+title = "linear-tui: open a Linear issue link"
+contexts = ["pane"]
+command = ["bash", "open.sh", "link"]
+
+# Ctrl+click on a Linear issue URL opens it in linear-tui instead of the browser.
+[[link_handlers]]
+id = "issue"
+title = "Open in linear-tui"
+pattern = "^https://linear\\.app/[^/]+/issue/[A-Za-z][A-Za-z0-9]*-[0-9]+([/?#].*)?$"
+action = "open-link"
+
+# After a server restart, run linear-tui again in the panes it was running in.
+[[startup]]
+command = ["bash", "restore.sh"]
 
 # Opt-in (NOTIFY_AGENTS=1): tell a freshly started agent about `linear-tui context`.
 [[events]]

@@ -171,7 +171,7 @@ impl App {
                 self.clear_status();
             }
             Message::IssueDetail(issue) => {
-                self.restored_issue_loaded(&issue.id);
+                self.restored_issue_loaded(&issue);
                 self.store.refresh_issue(*issue);
             }
             Message::ProjectIssues { project_id, page } => {
@@ -215,6 +215,10 @@ impl App {
                     return;
                 }
                 self.restore_lost(&request);
+                if let Request::Herdr(handoff) = request.as_ref() {
+                    self.notes_not_delivered(handoff, &error);
+                    return;
+                }
                 // A failed page must be retryable.
                 if let Some(cursor) = request.cursor() {
                     self.outbox.prefetched.remove(cursor);
