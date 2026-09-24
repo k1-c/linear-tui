@@ -1323,7 +1323,7 @@ impl App {
                 let mut index = self.selected_index();
                 Self::nav_by(len, &mut index, delta);
                 *self.selected_index_mut() = index;
-                self.maybe_prefetch();
+                self.maybe_prefetch_within(len);
             }
         }
     }
@@ -1334,18 +1334,22 @@ impl App {
         if self.screen != Screen::IssueDetail {
             return;
         }
-        let Some(position) = self.detail_position() else {
+        let Some(current) = &self.current_issue else {
             return;
         };
-        let next = (position.0 as isize + delta).clamp(0, position.1 as isize - 1) as usize;
-        if next == position.0 {
+        // One grouping pass serves the position, the neighbour, and the count.
+        let issues = self.visible_issues();
+        let Some(position) = issues.iter().position(|i| i.id == current.id) else {
+            return;
+        };
+        let total = issues.len();
+        let next = (position as isize + delta).clamp(0, total as isize - 1) as usize;
+        if next == position {
             return;
         }
-        let Some(issue) = self.visible_issues().get(next).copied().cloned() else {
-            return;
-        };
+        let issue = issues[next].clone();
         *self.selected_index_mut() = next;
-        self.maybe_prefetch();
+        self.maybe_prefetch_within(total);
         let ret = self.detail_return;
         self.open_issue_from_list(&issue);
         self.detail_return = ret;

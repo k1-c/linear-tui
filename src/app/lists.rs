@@ -122,6 +122,54 @@ pub enum ListRow {
     Issue { ordinal: usize, depth: u8 },
 }
 
+/// The active list as one frame sees it: see [`App::list_view`].
+pub struct ListView<'a> {
+    /// Every issue the cursor can reach, in the order it is drawn.
+    pub issues: Vec<&'a Issue>,
+    /// Group headers interleaved with the issues under them, each issue row
+    /// addressed by its position in `issues`.
+    pub rows: Vec<ListRow>,
+}
+
+/// The issues of the open sections, in the order they are drawn.
+fn visible_of(sections: Vec<Section<'_>>) -> Vec<&Issue> {
+    sections
+        .into_iter()
+        .filter(|s| !s.collapsed)
+        .flat_map(|s| s.issues.into_iter().map(|(issue, _)| issue))
+        .collect()
+}
+
+/// Group headers interleaved with the issues under them. An ungrouped list
+/// has no headers.
+fn layout_of(sections: &[Section<'_>], by: GroupBy) -> Vec<ListRow> {
+    let mut rows = Vec::new();
+    let mut ordinal = 0;
+    for section in sections {
+        if by != GroupBy::None {
+            rows.push(ListRow::Group {
+                key: section.key.clone(),
+                label: section.label.clone(),
+                color: section.color,
+                glyph: section.glyph,
+                count: section.issues.len(),
+                collapsed: section.collapsed,
+            });
+        }
+        if section.collapsed {
+            continue;
+        }
+        for (_, depth) in &section.issues {
+            rows.push(ListRow::Issue {
+                ordinal,
+                depth: *depth,
+            });
+            ordinal += 1;
+        }
+    }
+    rows
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct Filters {
     pub status: Option<String>,
@@ -228,41 +276,20 @@ impl App {
 
     /// Every issue the cursor can currently reach, in the order it is drawn.
     pub fn visible_issues(&self) -> Vec<&Issue> {
-        self.sections()
-            .into_iter()
-            .filter(|s| !s.collapsed)
-            .flat_map(|s| s.issues.into_iter().map(|(issue, _)| issue))
-            .collect()
+        visible_of(self.sections())
     }
 
-    /// The display rows of the active list: group headers interleaved with the
-    /// issues under them, addressed by their position in [`Self::visible_issues`].
-    pub fn list_layout(&self) -> Vec<ListRow> {
-        let mut rows = Vec::new();
-        let mut ordinal = 0;
-        for section in self.sections() {
-            if self.group_by != GroupBy::None {
-                rows.push(ListRow::Group {
-                    key: section.key.clone(),
-                    label: section.label.clone(),
-                    color: section.color,
-                    glyph: section.glyph,
-                    count: section.issues.len(),
-                    collapsed: section.collapsed,
-                });
-            }
-            if section.collapsed {
-                continue;
-            }
-            for (_, depth) in &section.issues {
-                rows.push(ListRow::Issue {
-                    ordinal,
-                    depth: *depth,
-                });
-                ordinal += 1;
-            }
+    /// The visible issues and the display rows of the active list — group
+    /// headers interleaved with the issues under them — from one grouping
+    /// pass. A renderer takes this once per frame rather than grouping the
+    /// whole list for each thing it needs from it.
+    pub fn list_view(&self) -> ListView<'_> {
+        let sections = self.sections();
+        let rows = layout_of(&sections, self.group_by);
+        ListView {
+            issues: visible_of(sections),
+            rows,
         }
-        rows
     }
 
     /// The group the cursor currently sits in, if the list is grouped.
@@ -360,11 +387,17 @@ impl App {
 
     /// Ask for the next page once the cursor nears the end of the active list.
     pub(super) fn maybe_prefetch(&mut self) {
-        let source = self.issue_source();
         // The cursor moves through what is visible, so that is what it can
         // reach the end of — a search or a folded group can leave most of
         // the loaded list off screen.
-        if self.selected_index() + PREFETCH_MARGIN < self.visible_issues().len() {
+        self.maybe_prefetch_within(self.visible_issues().len());
+    }
+
+    /// [`Self::maybe_prefetch`] for a caller that already knows how many
+    /// issues are visible, so the list is not grouped again to count them.
+    pub(super) fn maybe_prefetch_within(&mut self, visible: usize) {
+        let source = self.issue_source();
+        if self.selected_index() + PREFETCH_MARGIN < visible {
             return;
         }
         let info = &self.lists[source].page_info;
