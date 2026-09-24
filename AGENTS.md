@@ -31,7 +31,11 @@ no system OpenSSL or `pkg-config` to install. Keep it that way: a dependency tha
 drags in `openssl-sys` puts a C toolchain back in every contributor's path.
 
 Without mise, a rustup stable toolchain works the same; `mise.toml` only governs
-local work, and CI pins its own (`dtolnay/rust-toolchain@stable`).
+local work, and CI installs its own through `dtolnay/rust-toolchain` with an
+explicit `toolchain:` (`stable`, or `rust-version` from `Cargo.toml` for the
+MSRV job). Every `uses:` in `.github/workflows/` is pinned to a full commit SHA
+with the version in a trailing comment (`@<sha> # v4.4.0`); Dependabot keeps
+the pins current, so never add one by tag or branch.
 
 ## Project Structure
 

@@ -1,0 +1,15 @@
+version: 2
+updates:
+  # Workflows pin every action to a commit SHA; this keeps those pins (and
+  # their version comments) current.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    # PR titles must pass the Conventional Commits check in pr-title.yml.
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns:
+          - "*"
