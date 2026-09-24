@@ -64,18 +64,8 @@ impl TokenStore {
     }
 
     pub fn save(&self, tokens: &OAuthTokens) -> Result<()> {
-        if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         let contents = serde_json::to_string_pretty(tokens)?;
-        fs::write(&self.path, contents)?;
-        // Restrict file permissions on Unix
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(&self.path, fs::Permissions::from_mode(0o600))?;
-        }
-        Ok(())
+        crate::private_file::write(&self.path, contents.as_bytes())
     }
 
     pub fn clear(&self) -> Result<()> {

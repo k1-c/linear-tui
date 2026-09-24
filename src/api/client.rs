@@ -1,9 +1,16 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
 use super::types::*;
 
 const API_URL: &str = "https://api.linear.app/graphql";
+
+/// Upper bound on one API call. A stalled connection would otherwise keep its
+/// request — and the spinner — going until the app is closed.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Fields selected for every issue, list row or detail alike, so that an issue
 /// coming from any query is equally usable everywhere in the UI.
@@ -72,7 +79,11 @@ struct GraphQLError {
 impl LinearClient {
     pub fn new(token: String) -> Self {
         Self {
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .timeout(REQUEST_TIMEOUT)
+                .connect_timeout(CONNECT_TIMEOUT)
+                .build()
+                .expect("a client with only timeouts set always builds"),
             token,
         }
     }
@@ -120,12 +131,15 @@ impl LinearClient {
         let gql_resp: GraphQLResponse<T> = match serde_json::from_str(&text) {
             Ok(v) => v,
             Err(e) => {
+                // The body is workspace content; it goes to the log only when
+                // asked for with RUST_LOG=trace.
                 tracing::error!(
                     query_name,
                     error = %e,
-                    response_body = %text,
+                    body_len = text.len(),
                     "failed to parse GraphQL response"
                 );
+                tracing::trace!(query_name, response_body = %text, "unparsed response");
                 anyhow::bail!("Failed to parse response: {e}");
             }
         };

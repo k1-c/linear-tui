@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use std::io::{Read, Write};
 use std::net::TcpListener;
+use std::time::Duration;
 use tokio::sync::oneshot;
 
 /// Ports registered as redirect URIs on the `k1-c/tui` application.
@@ -14,11 +15,21 @@ const SUCCESS_BODY: &str = "<!doctype html><meta charset=\"utf-8\"><title>linear
 <body style=\"font:16px system-ui;padding:3rem\"><h1>Authorized</h1>\
 <p>linear-tui is connected. You can close this tab and return to your terminal.</p>";
 
+/// How long one connection may take to send its request line. A browser does
+/// it at once; this only stops a silent local connection from holding up the
+/// single-threaded accept loop.
+const READ_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// What the authorization callback carried.
+pub type Callback = std::result::Result<String, String>;
+
 /// Start a local HTTP server to receive the OAuth callback.
-/// Returns the bound port and a receiver for the authorization code.
+///
+/// Returns the bound port and a receiver for the outcome: the authorization
+/// code, or the error Linear redirected with.
 pub async fn start_callback_server(
     expected_state: String,
-) -> Result<(u16, oneshot::Receiver<String>)> {
+) -> Result<(u16, oneshot::Receiver<Callback>)> {
     let (listener, port) = bind_callback_port()?;
     let (tx, rx) = oneshot::channel();
 
@@ -56,78 +67,116 @@ fn bind_callback_port() -> Result<(TcpListener, u16)> {
 ///
 /// Browsers ask for more than the callback — `/favicon.ico` above all — so
 /// anything that is not the callback is answered and ignored rather than
-/// consuming the one connection the flow depends on.
-fn serve(listener: TcpListener, expected_state: &str, tx: oneshot::Sender<String>) {
+/// consuming the one connection the flow depends on. The same goes for a
+/// callback whose `state` is not ours: it did not come from the login this
+/// terminal started, so it must not be able to end it either.
+fn serve(listener: TcpListener, expected_state: &str, tx: oneshot::Sender<Callback>) {
     for stream in listener.incoming() {
         let Ok(mut stream) = stream else { continue };
+        let _ = stream.set_read_timeout(Some(READ_TIMEOUT));
 
         let mut buf = [0u8; 8192];
         let read = stream.read(&mut buf).unwrap_or(0);
         let request = String::from_utf8_lossy(&buf[..read]);
 
-        let Some(target) = request_target(&request) else {
-            respond(&mut stream, "400 Bad Request", "text/plain", "Bad request.");
-            continue;
-        };
-
-        let (path, query) = split_target(target);
-        if path != "/callback" {
-            respond(&mut stream, "404 Not Found", "text/plain", "Not found.");
-            continue;
-        }
-
-        let params = parse_query(query);
-        let param = |key: &str| {
-            params
-                .iter()
-                .find(|(k, _)| k == key)
-                .map(|(_, v)| v.to_string())
-        };
-
-        if let Some(error) = param("error") {
-            let description = param("error_description").unwrap_or_default();
-            tracing::warn!(%error, %description, "authorization denied");
-            respond(
-                &mut stream,
-                "200 OK",
-                "text/html; charset=utf-8",
-                &format!("<h1>Authorization cancelled</h1><p>{error}</p>"),
-            );
-            return;
-        }
-
-        match (param("code"), param("state")) {
-            (Some(code), Some(state)) if state == expected_state => {
-                respond(
-                    &mut stream,
-                    "200 OK",
-                    "text/html; charset=utf-8",
-                    SUCCESS_BODY,
-                );
-                let _ = tx.send(code);
-                return;
+        match route(&request, expected_state) {
+            Route::Reply { status, body } => {
+                respond(&mut stream, status, "text/plain", body);
             }
-            (Some(_), Some(_)) => {
-                tracing::error!("callback state did not match the request");
-                respond(
-                    &mut stream,
-                    "400 Bad Request",
-                    "text/plain",
-                    "State mismatch — the login was not started by this terminal.",
-                );
-                return;
-            }
-            _ => {
-                respond(
-                    &mut stream,
-                    "400 Bad Request",
-                    "text/plain",
-                    "Callback was missing its code.",
-                );
+            Route::Done(outcome) => {
+                let body = match &outcome {
+                    Ok(_) => SUCCESS_BODY.to_string(),
+                    Err(error) => format!(
+                        "<!doctype html><meta charset=\"utf-8\"><title>linear-tui</title>\
+                         <h1>Authorization cancelled</h1><p>{}</p>",
+                        html_escape(error)
+                    ),
+                };
+                respond(&mut stream, "200 OK", "text/html; charset=utf-8", &body);
+                let _ = tx.send(outcome);
                 return;
             }
         }
     }
+}
+
+/// What to do with one request to the callback server.
+#[derive(Debug, PartialEq)]
+enum Route {
+    /// Answer and keep waiting.
+    Reply {
+        status: &'static str,
+        body: &'static str,
+    },
+    /// The login this server was started for has finished.
+    Done(Callback),
+}
+
+fn route(request: &str, expected_state: &str) -> Route {
+    let Some(target) = request_target(request) else {
+        return Route::Reply {
+            status: "400 Bad Request",
+            body: "Bad request.",
+        };
+    };
+
+    let (path, query) = split_target(target);
+    if path != "/callback" {
+        return Route::Reply {
+            status: "404 Not Found",
+            body: "Not found.",
+        };
+    }
+
+    let params = parse_query(query);
+    let param = |key: &str| {
+        params
+            .iter()
+            .find(|(k, _)| k == key)
+            .map(|(_, v)| v.to_string())
+    };
+
+    if param("state").as_deref() != Some(expected_state) {
+        tracing::warn!("ignoring a callback whose state does not match the login");
+        return Route::Reply {
+            status: "400 Bad Request",
+            body: "State mismatch — the login was not started by this terminal.",
+        };
+    }
+
+    if let Some(error) = param("error") {
+        let description = param("error_description").unwrap_or_default();
+        tracing::warn!(%error, %description, "authorization denied");
+        let reason = if description.is_empty() {
+            error
+        } else {
+            format!("{error}: {description}")
+        };
+        return Route::Done(Err(reason));
+    }
+
+    match param("code") {
+        Some(code) => Route::Done(Ok(code)),
+        None => Route::Reply {
+            status: "400 Bad Request",
+            body: "Callback was missing its code.",
+        },
+    }
+}
+
+fn html_escape(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            c => out.push(c),
+        }
+    }
+    out
 }
 
 fn respond(stream: &mut impl Write, status: &str, content_type: &str, body: &str) {
@@ -233,6 +282,61 @@ mod tests {
     fn leaves_a_malformed_escape_intact() {
         assert_eq!(percent_decode("100%"), "100%");
         assert_eq!(percent_decode("%zz"), "%zz");
+    }
+
+    const REQ: &str = " HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+    fn get(target: &str) -> String {
+        format!("GET {target}{REQ}")
+    }
+
+    #[test]
+    fn a_matching_callback_returns_the_code() {
+        assert_eq!(
+            route(&get("/callback?code=abc&state=s1"), "s1"),
+            Route::Done(Ok("abc".into()))
+        );
+    }
+
+    #[test]
+    fn a_foreign_state_is_answered_but_does_not_end_the_login() {
+        for target in [
+            "/callback?code=abc&state=other",
+            "/callback?error=access_denied&state=other",
+            "/callback?error=access_denied",
+        ] {
+            assert!(
+                matches!(route(&get(target), "s1"), Route::Reply { .. }),
+                "{target}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_denial_with_our_state_ends_the_login() {
+        assert_eq!(
+            route(
+                &get("/callback?error=access_denied&error_description=nope&state=s1"),
+                "s1"
+            ),
+            Route::Done(Err("access_denied: nope".into()))
+        );
+    }
+
+    #[test]
+    fn other_paths_are_ignored() {
+        assert!(matches!(
+            route(&get("/favicon.ico"), "s1"),
+            Route::Reply { .. }
+        ));
+    }
+
+    #[test]
+    fn html_is_escaped() {
+        assert_eq!(
+            html_escape("<script>alert('x')</script>&"),
+            "&lt;script&gt;alert(&#39;x&#39;)&lt;/script&gt;&amp;"
+        );
     }
 
     #[test]

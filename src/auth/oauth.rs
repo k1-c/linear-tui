@@ -1,3 +1,5 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use rand::Rng;
@@ -18,6 +20,13 @@ const TOKEN_URL: &str = "https://api.linear.app/oauth/token";
 const DEFAULT_CLIENT_ID: &str = "10a4dc40b91ad9015b7b95cf703a54e3";
 
 const SCOPES: &str = "read,write";
+
+/// How long `auth login` waits for the browser before giving up. Without a
+/// limit, a tab closed without answering would leave the command hanging.
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+/// Upper bound on one call to the token endpoint.
+const TOKEN_TIMEOUT: Duration = Duration::from_secs(30);
 
 fn client_id() -> Result<String> {
     if let Ok(id) = std::env::var("LINEAR_CLIENT_ID") {
@@ -83,8 +92,12 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
     let redirect_uri = format!("http://localhost:{port}/callback");
 
     let auth_url = format!(
-        "{AUTHORIZE_URL}?client_id={client_id}&response_type=code&redirect_uri={}&scope={SCOPES}&state={state}&code_challenge={code_challenge}&code_challenge_method=S256",
+        "{AUTHORIZE_URL}?client_id={}&response_type=code&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
+        percent_encode(&client_id),
         percent_encode(&redirect_uri),
+        percent_encode(SCOPES),
+        percent_encode(&state),
+        percent_encode(&code_challenge),
     );
 
     tracing::info!(redirect_uri = %redirect_uri, "starting OAuth login flow");
@@ -97,9 +110,16 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
     }
     println!("Waiting for the response on {redirect_uri}");
 
-    let code = code_rx
+    let code = tokio::time::timeout(LOGIN_TIMEOUT, code_rx)
         .await
-        .context("Authorization finished without returning a code")?;
+        .map_err(|_| {
+            anyhow::anyhow!(
+                "No answer from the browser within {} minutes. Run the login again.",
+                LOGIN_TIMEOUT.as_secs() / 60
+            )
+        })?
+        .context("Authorization finished without returning a code")?
+        .map_err(|reason| anyhow::anyhow!("Authorization was cancelled ({reason})"))?;
 
     tracing::debug!("exchanging authorization code for tokens");
     let tokens = exchange_code(&code, &code_verifier, &redirect_uri).await?;
@@ -144,7 +164,10 @@ pub async fn refresh_token(refresh_token: &str) -> Result<OAuthTokens> {
 }
 
 async fn post_token(form: &[(&str, String)]) -> Result<OAuthTokens> {
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(TOKEN_TIMEOUT)
+        .build()
+        .context("Could not build the HTTP client")?;
     let resp = client
         .post(TOKEN_URL)
         .form(form)

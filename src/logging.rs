@@ -15,8 +15,14 @@ pub fn init() -> WorkerGuard {
 
     std::fs::create_dir_all(&config_dir).ok();
 
-    let file_appender = tracing_appender::rolling::never(&config_dir, "debug.log");
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    // Request logs name issues and people in the workspace, so the file is
+    // owner-only like the credentials beside it. Logging is best-effort: if
+    // the file cannot be opened, the app runs without it.
+    let (non_blocking, guard) =
+        match crate::private_file::open_append(&config_dir.join("debug.log")) {
+            Ok(file) => tracing_appender::non_blocking(file),
+            Err(_) => tracing_appender::non_blocking(std::io::sink()),
+        };
 
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
 

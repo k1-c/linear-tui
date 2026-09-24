@@ -7,6 +7,7 @@ mod grouping;
 mod keys;
 mod logging;
 mod message;
+mod private_file;
 mod ui;
 
 use std::io::{self, Write};
