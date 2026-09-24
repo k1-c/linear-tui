@@ -23,16 +23,12 @@ impl App {
             return;
         }
         if self.show_help {
-            self.show_help = false;
+            self.close_help();
             return;
         }
         if self.popup != Popup::None {
             if contains(self.popup_area, x, y) {
-                let index = self.popup_offset + (y - self.popup_area.y) as usize;
-                if index < self.popup_list_len() {
-                    self.popup_index = index;
-                    self.apply_popup();
-                }
+                self.popup_pick(self.popup_offset + (y - self.popup_area.y) as usize);
             } else {
                 self.close_popup();
             }
@@ -121,7 +117,7 @@ impl App {
             self.sidebar_offset =
                 (self.sidebar_offset as isize + delta as isize).clamp(0, max as isize) as usize;
         } else if self.show_help {
-            self.help_scroll = (self.help_scroll as i32 + delta as i32).max(0) as u16;
+            self.scroll_help(delta);
         } else {
             self.scroll_list_or_detail(delta);
         }

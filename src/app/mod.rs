@@ -1196,6 +1196,22 @@ impl App {
         }
     }
 
+    pub fn popup_first(&mut self) {
+        self.popup_index = 0;
+    }
+
+    pub fn popup_last(&mut self) {
+        self.popup_index = self.popup_list_len().saturating_sub(1);
+    }
+
+    /// Pick popup entry `index` outright, as a number key or a click does.
+    pub fn popup_pick(&mut self, index: usize) {
+        if index < self.popup_list_len() {
+            self.popup_index = index;
+            self.apply_popup();
+        }
+    }
+
     pub fn popup_prev(&mut self) {
         if self.popup_index > 0 {
             self.popup_index -= 1;
@@ -1527,6 +1543,52 @@ impl App {
     }
 
     // ------------------------------------------------------------------ status
+
+    pub fn quit(&mut self) {
+        self.should_quit = true;
+    }
+
+    pub fn open_help(&mut self) {
+        self.show_help = true;
+        self.help_scroll = 0;
+    }
+
+    pub fn close_help(&mut self) {
+        self.show_help = false;
+    }
+
+    /// Scroll the help overlay. The renderer clamps the offset to what the
+    /// overlay can show, so scrolling past the end does not bank rows that
+    /// then have to be scrolled back through.
+    pub fn scroll_help(&mut self, delta: i16) {
+        self.help_scroll = self.help_scroll.saturating_add_signed(delta);
+    }
+
+    /// Begin Linear's `g …` chord; the next key completes it.
+    pub fn start_goto_chord(&mut self) {
+        self.pending_chord = Some('g');
+    }
+
+    pub fn end_chord(&mut self) {
+        self.pending_chord = None;
+    }
+
+    /// Close the search box, keeping its query as the list's filter.
+    pub fn finish_search(&mut self) {
+        self.input_mode = InputMode::Normal;
+        self.apply_search();
+    }
+
+    /// Close the search box and drop its query.
+    pub fn cancel_search(&mut self) {
+        self.input_mode = InputMode::Normal;
+        self.clear_search();
+    }
+
+    pub fn cancel_comment(&mut self) {
+        self.input_mode = InputMode::Normal;
+        self.comment.clear();
+    }
 
     pub fn set_status(&mut self, msg: impl Into<String>) {
         self.status_message = Some(msg.into());

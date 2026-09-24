@@ -8,7 +8,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
     if ctrl && key.code == KeyCode::Char('c') {
-        app.should_quit = true;
+        app.quit();
         return;
     }
 
@@ -21,11 +21,9 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     // Help overlay: j/k scrolls, anything else closes
     if app.show_help {
         match key.code {
-            KeyCode::Char('j') | KeyCode::Down => {
-                app.help_scroll = app.help_scroll.saturating_add(1)
-            }
-            KeyCode::Char('k') | KeyCode::Up => app.help_scroll = app.help_scroll.saturating_sub(1),
-            _ => app.show_help = false,
+            KeyCode::Char('j') | KeyCode::Down => app.scroll_help(1),
+            KeyCode::Char('k') | KeyCode::Up => app.scroll_help(-1),
+            _ => app.close_help(),
         }
         return;
     }
@@ -54,18 +52,10 @@ fn handle_popup_keys(app: &mut App, key: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('q') => app.close_popup(),
         KeyCode::Char('j') | KeyCode::Down => app.popup_next(),
         KeyCode::Char('k') | KeyCode::Up => app.popup_prev(),
-        KeyCode::Char('g') | KeyCode::Home => app.popup_index = 0,
-        KeyCode::Char('G') | KeyCode::End => {
-            app.popup_index = app.popup_list_len().saturating_sub(1);
-        }
+        KeyCode::Char('g') | KeyCode::Home => app.popup_first(),
+        KeyCode::Char('G') | KeyCode::End => app.popup_last(),
         KeyCode::Enter => app.apply_popup(),
-        KeyCode::Char(c @ '1'..='9') => {
-            let idx = (c as usize) - ('1' as usize);
-            if idx < app.popup_list_len() {
-                app.popup_index = idx;
-                app.apply_popup();
-            }
-        }
+        KeyCode::Char(c @ '1'..='9') => app.popup_pick((c as usize) - ('1' as usize)),
         _ => {}
     }
 }
@@ -108,7 +98,7 @@ fn handle_global_actions(app: &mut App, key: KeyEvent) -> bool {
 /// All issues) and its pages with the other letters; both are mirrored here,
 /// plus vim's `gg`.
 fn handle_goto_chord(app: &mut App, key: KeyEvent) {
-    app.pending_chord = None;
+    app.end_chord();
     match key.code {
         // vim: gg
         KeyCode::Char('g') => {
@@ -148,8 +138,7 @@ fn handle_normal_mode(app: &mut App, key: KeyEvent) {
 
     // Help
     if key.code == KeyCode::Char('?') {
-        app.show_help = true;
-        app.help_scroll = 0;
+        app.open_help();
         return;
     }
 
@@ -276,7 +265,7 @@ fn handle_sidebar_keys(app: &mut App, key: KeyEvent) {
         KeyCode::Enter | KeyCode::Char(' ') => app.sidebar_activate(),
         KeyCode::Tab | KeyCode::Esc => app.focus_sidebar(false),
         KeyCode::Char('t') => app.open_team_select(),
-        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Char('q') => app.quit(),
         _ => {}
     }
 }
@@ -287,7 +276,7 @@ fn handle_view_list_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Char('q') => app.quit(),
         KeyCode::Enter | KeyCode::Char(' ') => app.open_selected_view(),
         // Linear's Issues / Projects tabs on a Views page.
         KeyCode::BackTab => app.cycle_view_kind(),
@@ -318,7 +307,7 @@ fn handle_list_nav(app: &mut App, key: KeyEvent) -> bool {
     }
     match key.code {
         // `g` opens a chord: `gg` jumps to the top, `gm`/`gp`/… switch views.
-        KeyCode::Char('g') => app.pending_chord = Some('g'),
+        KeyCode::Char('g') => app.start_goto_chord(),
         KeyCode::Home => app.select_first(),
         KeyCode::Char('G') | KeyCode::End => app.select_last(),
         _ => return false,
@@ -331,7 +320,7 @@ fn handle_issue_list_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Char('q') => app.quit(),
         // Space is Linear's peek; with no split pane it simply opens the issue.
         KeyCode::Enter | KeyCode::Char(' ') => app.open_issue_detail(),
         KeyCode::Char('t') => app.open_team_select(),
@@ -351,7 +340,7 @@ fn handle_issue_detail_keys(app: &mut App, key: KeyEvent) {
         KeyCode::Char('u') if ctrl => app.scroll_by(-page / 2),
         KeyCode::PageDown => app.scroll_by(page),
         KeyCode::PageUp => app.scroll_by(-page),
-        KeyCode::Char('g') => app.pending_chord = Some('g'),
+        KeyCode::Char('g') => app.start_goto_chord(),
         KeyCode::Home => app.scroll_to_top(),
         KeyCode::Char('G') | KeyCode::End => app.scroll_to_bottom(),
         _ => {}
@@ -363,7 +352,7 @@ fn handle_project_list_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Char('q') => app.quit(),
         KeyCode::Enter | KeyCode::Char(' ') => app.open_project_detail(),
         KeyCode::Char('t') => app.open_team_select(),
         _ => {}
@@ -391,7 +380,7 @@ fn handle_cycle_list_keys(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Char('q') => app.should_quit = true,
+        KeyCode::Char('q') => app.quit(),
         KeyCode::Enter | KeyCode::Char(' ') => app.open_cycle_detail(),
         KeyCode::Char('t') => app.open_team_select(),
         _ => {}
@@ -442,16 +431,8 @@ fn handle_search_mode(app: &mut App, key: KeyEvent) {
         return;
     }
     match key.code {
-        KeyCode::Esc => {
-            app.input_mode = InputMode::Normal;
-            app.clear_search();
-            return;
-        }
-        KeyCode::Enter => {
-            app.input_mode = InputMode::Normal;
-            app.apply_search();
-            return;
-        }
+        KeyCode::Esc => return app.cancel_search(),
+        KeyCode::Enter => return app.finish_search(),
         _ => {}
     }
     if edit_input(&mut app.list_mut().search, key) {
@@ -462,11 +443,7 @@ fn handle_search_mode(app: &mut App, key: KeyEvent) {
 
 fn handle_comment_mode(app: &mut App, key: KeyEvent) {
     match key.code {
-        KeyCode::Esc => {
-            app.input_mode = InputMode::Normal;
-            app.comment.clear();
-            return;
-        }
+        KeyCode::Esc => return app.cancel_comment(),
         KeyCode::Enter => {
             // Ctrl/Alt+Enter submits; a bare Enter inserts a newline.
             if key

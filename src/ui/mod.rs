@@ -511,7 +511,7 @@ fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
     );
 }
 
-fn draw_help(f: &mut Frame, app: &App) {
+fn draw_help(f: &mut Frame, app: &mut App) {
     let th = &app.theme;
     let section = |text: &str| -> Line<'static> {
         Line::from(vec![Span::styled(
@@ -603,6 +603,9 @@ fn draw_help(f: &mut Frame, app: &App) {
     let scroll = app
         .help_scroll
         .min(total.saturating_sub(height.saturating_sub(2)));
+    // Written back, like the detail view's measurements, so the offset never
+    // runs past what the overlay can show.
+    app.help_scroll = scroll;
 
     f.render_widget(Clear, area);
     let help = Paragraph::new(help_text).scroll((scroll, 0)).block(
