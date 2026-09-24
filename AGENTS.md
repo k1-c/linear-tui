@@ -49,7 +49,7 @@ the pins current, so never add one by tag or branch.
   `sidebar.rs` the sidebar (`SidebarAction`, Favorites); `mouse.rs` hit-testing
   (`App::click`); `input.rs` text fields; `tests.rs` the state tests
 - `src/grouping.rs` — Active/Backlog/All presets and grouping of issue lists
-- `src/keys.rs` — keybindings (Controller)
+- `src/keys.rs` — keybindings (Controller): the `BINDINGS` table
 - `src/event.rs` — terminal event polling
 - `src/ui/` — rendering (View): `sidebar`, `issue_list`, `issue_detail`,
   `view_list`, `project_list`, `project_detail`, `cycle_list`, `cycle_detail`,
@@ -101,6 +101,12 @@ Other invariants:
 
 Shortcuts mirror [Linear's own](https://linear.app/docs). Before adding or
 changing one, check what Linear binds that key to.
+
+A binding is one row of `BINDINGS` in `src/keys.rs`: its keys, the contexts it
+applies in, its action, its help-overlay row, and its status-bar hint.
+Dispatch, the status bar, and the help overlay all read that table, so a new
+binding or hint goes there, not into `ui/`. Tests reject two bindings claiming
+one key in the same context.
 
 - Where a terminal cannot deliver Linear's key (`Ctrl`+punctuation, `Ctrl+M`),
   support the original under the kitty keyboard protocol — enabled automatically

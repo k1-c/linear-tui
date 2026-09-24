@@ -22,6 +22,7 @@ use unicode_width::UnicodeWidthStr;
 
 use crate::app::{App, Input, InputMode, Nav, Popup, Screen, TeamSection};
 use crate::config::Theme;
+use crate::keys;
 
 /// Narrowest terminal that still gets the sidebar; below it the content pane
 /// needs every column, and `Tab` has nothing to focus.
@@ -381,13 +382,11 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             Style::default().fg(th.warning).add_modifier(Modifier::BOLD),
         )];
         spans.extend(input_spans(&app.list().search, th));
-        spans.push(Span::styled(
-            format!(
-                "   {} matches \u{00b7} Enter keep \u{00b7} Esc clear \u{00b7} Ctrl+G search all of Linear",
-                app.visible_issues().len()
-            ),
-            Style::default().fg(th.muted),
-        ));
+        let mut tail = format!("   {} matches", app.visible_issues().len());
+        for h in keys::hints(keys::Ctx::Search) {
+            tail.push_str(&format!(" \u{00b7} {} {}", h.keys, h.what));
+        }
+        spans.push(Span::styled(tail, Style::default().fg(th.muted)));
         f.render_widget(Paragraph::new(Line::from(spans)), area);
         return;
     }
@@ -406,71 +405,17 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             format!(" {chord} \u{2026} "),
             Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
         )];
-        for (k, w) in [
-            ("a", "active"),
-            ("b", "backlog"),
-            ("e", "all issues"),
-            ("m", "my issues"),
-            ("v", "views"),
-            ("p", "projects"),
-            ("c", "cycles"),
-            ("g", "top"),
-        ] {
-            spans.extend(hint(k, w, th));
+        for h in keys::hints(keys::Ctx::GoTo) {
+            spans.extend(hint(h.keys, h.what, th));
         }
         f.render_widget(Paragraph::new(Line::from(spans)), area);
         return;
     }
 
-    let keys: &[(&str, &str)] = if app.sidebar_focus {
-        &[
-            ("j/k", "move"),
-            ("Enter", "open"),
-            ("h/l", "fold"),
-            ("Tab", "content"),
-            ("^B", "hide"),
-            ("?", "help"),
-        ]
-    } else {
-        match app.screen {
-            Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => &[
-                ("Enter", "open"),
-                ("s/p/a", "status/priority/assignee"),
-                ("c", "new"),
-                ("/", "filter"),
-                ("S-Tab", "preset"),
-                ("D", "group"),
-                ("z", "fold"),
-                ("Tab", "sidebar"),
-                ("?", "help"),
-            ],
-            Screen::IssueDetail => &[
-                ("Esc", "back"),
-                ("J/K", "next/prev"),
-                ("s/p/a", "status/priority/assignee"),
-                ("m", "comment"),
-                ("o", "open"),
-                ("y", "copy ID"),
-                ("?", "help"),
-            ],
-            Screen::ViewList => &[
-                ("Enter", "open"),
-                ("S-Tab", "issues/projects"),
-                ("j/k", "move"),
-                ("Tab", "sidebar"),
-                ("^R", "refresh"),
-                ("?", "help"),
-            ],
-            Screen::ProjectList | Screen::CycleList => &[
-                ("Enter", "open"),
-                ("j/k", "move"),
-                ("Tab", "sidebar"),
-                ("^R", "refresh"),
-                ("?", "help"),
-            ],
-        }
-    };
-    let spans: Vec<Span> = keys.iter().flat_map(|(k, w)| hint(k, w, th)).collect();
+    let spans: Vec<Span> = keys::hints(keys::context(app))
+        .into_iter()
+        .flat_map(|h| hint(h.keys, h.what, th))
+        .collect();
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
@@ -542,75 +487,18 @@ fn draw_help(f: &mut Frame, app: &mut App) {
         ])
     };
 
-    let help_text = vec![
-        section("Navigation"),
-        key_line("j/k", "Move cursor down/up"),
-        key_line("gg/G", "First/last item"),
-        key_line("Enter", "Open"),
-        key_line("Esc", "Back / close"),
-        key_line("J/K", "Next/previous issue (detail)"),
-        Line::from(""),
-        section("Sidebar"),
-        key_line("Tab", "Focus sidebar / content"),
-        key_line("C-b", "Show/hide sidebar"),
-        key_line("h/l", "Fold/unfold a Favorites folder"),
-        Line::from(""),
-        section("Go to"),
-        key_line("g a", "Active issues"),
-        key_line("g b", "Backlog"),
-        key_line("g e", "All issues"),
-        key_line("g m", "My issues"),
-        key_line("g v", "Views"),
-        key_line("g p", "Projects"),
-        key_line("g c", "Cycles"),
-        key_line("1-5", "Issues/My/Projects/Cycles/Views"),
-        Line::from(""),
-        section("List display"),
-        key_line("S-Tab", "Next preset (Active/Backlog/All)"),
-        key_line("D", "Group by status/assignee/\u{2026}"),
-        key_line("z / Z", "Fold group / all groups"),
-        Line::from(""),
-        section("Issue actions"),
-        key_line("c", "Create issue"),
-        key_line("s", "Change status"),
-        key_line("p", "Change priority"),
-        key_line("!@#$)", "Urgent/High/Medium/Low/None"),
-        key_line("a", "Assign to someone"),
-        key_line("i", "Assign to me"),
-        key_line("m", "Add comment (Ctrl+M)"),
-        Line::from(""),
-        section("Copy & open"),
-        key_line("y", "Copy issue ID (Ctrl+.)"),
-        key_line("Y", "Copy issue URL (Ctrl+Shift+,)"),
-        key_line("b", "Copy branch name (Ctrl+Shift+.)"),
-        key_line("o", "Open on linear.app"),
-        Line::from(""),
-        section("Search & filter"),
-        key_line("/", "Filter as you type"),
-        key_line("C-g", "Search all of Linear"),
-        key_line("f/F", "Filter / clear filters"),
-        Line::from(""),
-        section("Mouse"),
-        key_line("click", "Select; click again to open"),
-        key_line("click", "Sidebar, chips, group headers"),
-        key_line("wheel", "Scroll"),
-        Line::from(""),
-        section("Other"),
-        key_line("t", "Switch team"),
-        key_line("F5/C-r", "Refresh"),
-        key_line("?", "Toggle this help"),
-        key_line("q", "Quit"),
-        Line::from(""),
-        section("Scrolling"),
-        key_line("C-d/C-u", "Half page down/up"),
-        key_line("PgDn/PgUp", "Full page down/up"),
-        Line::from(""),
-        section("Editing"),
-        key_line("C-w", "Delete previous word"),
-        key_line("C-u/C-k", "Delete to start/end"),
-        key_line("C-a/C-e", "Jump to start/end"),
-        key_line("C-Enter", "Submit"),
-    ];
+    let mut help_text = Vec::new();
+    for heading in keys::Section::ALL {
+        let mut rows = keys::help_rows(heading).peekable();
+        if rows.peek().is_none() {
+            continue;
+        }
+        if !help_text.is_empty() {
+            help_text.push(Line::from(""));
+        }
+        help_text.push(section(heading.title()));
+        help_text.extend(rows.map(|row| key_line(row.keys, row.text)));
+    }
 
     let total = help_text.len() as u16;
     let height = (total + 2).min(f.area().height.saturating_sub(4));
