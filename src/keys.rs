@@ -612,4 +612,164 @@ mod tests {
             }
         }
     }
+
+    fn press_with(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
+        handle_key(
+            app,
+            KeyEvent {
+                code,
+                modifiers,
+                kind: KeyEventKind::Press,
+                state: KeyEventState::NONE,
+            },
+        );
+    }
+
+    fn typed(app: &mut App, text: &str) {
+        for c in text.chars() {
+            press(app, KeyCode::Char(c));
+        }
+    }
+
+    /// A team with three active issues on its list.
+    fn team_app() -> App {
+        let mut app = app();
+        app.teams = vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
+        app.lists[IssueSource::Team].issues = reordered();
+        app
+    }
+
+    #[test]
+    fn a_g_chord_jumps_and_esc_abandons_it() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('g'));
+        assert_eq!(app.pending_chord, Some('g'));
+        press(&mut app, KeyCode::Char('m'));
+        assert_eq!(app.nav, Nav::MyIssues);
+        assert_eq!(app.pending_chord, None);
+
+        press(&mut app, KeyCode::Char('g'));
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.pending_chord, None);
+        assert_eq!(app.nav, Nav::MyIssues, "Esc only drops the chord");
+    }
+
+    #[test]
+    fn a_number_key_picks_a_popup_entry() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('p'));
+        assert!(matches!(app.popup, Popup::PriorityChange(_)));
+        // Row 2 of the priority menu is Urgent.
+        press(&mut app, KeyCode::Char('2'));
+        assert_eq!(app.popup, Popup::None);
+        assert!(matches!(
+            app.requests.back(),
+            Some(crate::message::Request::UpdatePriority {
+                priority: Priority::Urgent,
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn search_filters_as_you_type_and_esc_clears_it() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('/'));
+        assert_eq!(app.input_mode, InputMode::Search);
+        typed(&mut app, "t2");
+        assert_eq!(app.visible_issues().len(), 1);
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.visible_issues().len(), 1, "Enter keeps the query");
+
+        press(&mut app, KeyCode::Esc);
+        assert_eq!(app.visible_issues().len(), 3);
+    }
+
+    #[test]
+    fn keys_typed_into_search_are_not_commands() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('/'));
+        typed(&mut app, "q");
+        assert!(!app.should_quit);
+        assert_eq!(app.list().search.value, "q");
+    }
+
+    #[test]
+    fn ctrl_c_quits_from_any_mode() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('/'));
+        press_with(&mut app, KeyCode::Char('c'), KeyModifiers::CONTROL);
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn linears_ctrl_period_and_its_plain_alias_both_copy_the_id() {
+        for (code, modifiers) in [
+            (KeyCode::Char('.'), KeyModifiers::CONTROL),
+            (KeyCode::Char('y'), KeyModifiers::NONE),
+        ] {
+            let mut app = team_app();
+            press_with(&mut app, code, modifiers);
+            assert_eq!(app.pending_clipboard.as_deref(), Some("ENG-2"), "{code:?}");
+        }
+    }
+
+    #[test]
+    fn shift_digits_set_a_priority_directly() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('!'));
+        assert_eq!(app.focused_issue().unwrap().priority, Priority::Urgent);
+    }
+
+    #[test]
+    fn tab_moves_focus_to_the_sidebar_and_back() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Tab);
+        assert!(app.sidebar_focus);
+        press(&mut app, KeyCode::Char('j'));
+        assert!(app.sidebar_focus, "j moves within the sidebar");
+        press(&mut app, KeyCode::Esc);
+        assert!(!app.sidebar_focus);
+    }
+
+    #[test]
+    fn q_quits_a_list_but_only_closes_the_detail() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Enter);
+        assert_eq!(app.screen, Screen::IssueDetail);
+        press(&mut app, KeyCode::Char('q'));
+        assert_eq!(app.screen, Screen::IssueList);
+        assert!(!app.should_quit);
+        press(&mut app, KeyCode::Char('q'));
+        assert!(app.should_quit);
+    }
+
+    #[test]
+    fn enter_breaks_a_comment_line_and_ctrl_enter_posts_it() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('m'));
+        assert_eq!(app.input_mode, InputMode::Comment);
+        typed(&mut app, "hi");
+        press(&mut app, KeyCode::Enter);
+        typed(&mut app, "there");
+        assert_eq!(app.comment.value, "hi\nthere");
+        press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(matches!(
+            app.requests.back(),
+            Some(crate::message::Request::CreateComment { body, .. }) if body == "hi\nthere"
+        ));
+    }
+
+    #[test]
+    fn the_help_overlay_closes_on_any_other_key() {
+        let mut app = team_app();
+        press(&mut app, KeyCode::Char('?'));
+        assert!(app.show_help);
+        press(&mut app, KeyCode::Char('j'));
+        assert!(app.show_help, "j scrolls the help");
+        press(&mut app, KeyCode::Char('x'));
+        assert!(!app.show_help);
+    }
 }

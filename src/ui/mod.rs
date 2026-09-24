@@ -636,6 +636,9 @@ fn draw_help(f: &mut Frame, app: &mut App) {
 }
 
 #[cfg(test)]
+mod render_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
