@@ -18,6 +18,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Popup::StatusChange(_) => draw_status_change(f, app),
         Popup::PriorityChange(_) => draw_priority_change(f, app),
         Popup::AssigneeChange(_) => draw_assignee_change(f, app),
+        Popup::Palette => super::palette::draw(f, app),
         Popup::None => {}
     }
 }

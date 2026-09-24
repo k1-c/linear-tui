@@ -141,6 +141,41 @@ fn a_change_popup_draws_where_it_records_and_a_click_applies_it() {
 }
 
 #[test]
+fn the_palette_draws_its_matches_where_it_records_them() {
+    let mut app = app();
+    app.open_palette();
+    for c in "status".chars() {
+        app.view.palette.query.insert(c);
+    }
+    let lines = render(&mut app, 100, 30);
+    let text = screen_text(&lines);
+    assert!(text.contains("Command palette"));
+    let area = app.frame.popup_area;
+    assert!(area.width > 0 && area.height > 0);
+    // The first recorded row is the best match, with its key beside it.
+    let first = &lines[area.y as usize];
+    assert!(first.contains("Change status"), "{first}");
+    assert!(first.contains("Issue actions  s "), "{first}");
+
+    crate::palette::click(&mut app, area.x + 2, area.y);
+    assert!(matches!(app.view.popup, Popup::StatusChange(_)));
+}
+
+#[test]
+fn a_palette_with_no_match_says_so() {
+    let mut app = app();
+    app.open_palette();
+    for c in "課題zzz".chars() {
+        app.view.palette.query.insert(c);
+    }
+    let lines = render(&mut app, 100, 30);
+    assert!(screen_text(&lines).contains("No matching commands"));
+    // A wide character takes two cells; the second is blank in the buffer.
+    let query = lines.iter().find(|l| l.contains("zzz")).unwrap();
+    assert!(query.contains("課 題 zzz"), "{query}");
+}
+
+#[test]
 fn the_detail_view_renders_markdown_and_measures_itself() {
     let mut app = app();
     app.open_issue_detail();

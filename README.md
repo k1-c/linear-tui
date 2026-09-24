@@ -130,6 +130,14 @@ linear-tui auth set-oauth <client-id> [client-secret]
 Shortcuts follow [Linear's own keyboard shortcuts](https://linear.app/docs) wherever
 a terminal allows it, so muscle memory carries over from the web app.
 
+### Command palette
+
+`Ctrl+K` opens the command palette, as in Linear. It lists everything that can
+be done where you are, with the key that does the same next to each entry, so it
+also teaches the shortcuts. Type to narrow it down — letters match in order,
+`cs` finds **C**hange **s**tatus — then `Enter` to run, or `Esc` to close.
+`↑` / `↓` (or `Ctrl+p` / `Ctrl+n`) move; recently used commands come first.
+
 ### Navigation
 
 | Key | Action |
@@ -164,7 +172,7 @@ a terminal allows it, so muscle memory carries over from the web app.
 | Click a row | Select it; click it again to open it |
 | Click a sidebar entry | Go there; a folder folds, the team row opens the team switcher |
 | Click a preset chip, tab, or group header | Switch preset or tab / fold the group |
-| Click a popup entry | Choose it; click outside to close |
+| Click a popup or palette entry | Choose it; click outside to close |
 | Wheel | Scroll whatever is under the pointer |
 
 ### Issue actions
@@ -211,6 +219,7 @@ actions have no meaning here. Where they differ:
 | Linear | linear-tui | Why |
 | --- | --- | --- |
 | `Ctrl+.`, `Ctrl+Shift+.`, `Ctrl+Shift+,`, `Ctrl+M` | also `y`, `b`, `Y`, `m` | Legacy terminals cannot distinguish `Ctrl`+punctuation, and `Ctrl+M` *is* `Enter`. The originals work in terminals supporting the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (kitty, Ghostty, WezTerm, foot, Alacritty), which is enabled automatically when available. |
+| `Cmd+K` — command menu | `Ctrl+K` | A terminal never receives `Cmd`. `Ctrl+K` is what Linear uses outside macOS; inside a text field it keeps its readline meaning (delete to the end). |
 | `r` — rename issue | *(unbound)* | Renaming isn't supported yet; refreshing uses the terminal's `Ctrl+r` instead. |
 | `j` / `k` — next / previous issue in the issue view | `J` / `K` | In the detail view `j`/`k` scroll the text, which a terminal cannot do with a trackpad. |
 | Display options menu (grouping, collapsing) | `D`, `z`, `Z`, `Shift+Tab` | Linear keeps these behind a menu with no shortcut; the keys are ones Linear leaves free. |

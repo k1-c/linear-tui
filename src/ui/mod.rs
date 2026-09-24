@@ -4,6 +4,7 @@ pub mod issue_detail;
 pub mod issue_list;
 pub mod markdown;
 pub mod new_issue;
+pub mod palette;
 pub mod popup;
 pub mod project_detail;
 pub mod project_list;

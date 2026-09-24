@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::{Input, InputMode, IssueList, IssueLists, NewIssueForm, PerSource, Popup, ViewKind};
-use crate::api::ids::FavoriteId;
+use crate::api::ids::{FavoriteId, IssueId};
 use crate::config::Config;
 use crate::grouping::GroupBy;
 
@@ -25,6 +25,7 @@ pub struct ViewState {
     pub selected_project_index: usize,
     pub selected_cycle_index: usize,
     pub sidebar: Sidebar,
+    pub palette: Palette,
     pub detail_scroll: u16,
     pub comment: Input,
     /// Draft issue, present only while the create form is open.
@@ -36,6 +37,19 @@ pub struct ViewState {
     pub status_message: Option<String>,
     pub error_popup: Option<String>,
     pub spinner_frame: usize,
+}
+
+#[derive(Debug, Default)]
+pub struct Palette {
+    pub query: Input,
+    /// The highlighted entry, as an index into what the query matches.
+    pub selected: usize,
+    /// The issue under the cursor when the palette opened. A command runs on
+    /// that issue or not at all — a page landing under the palette can move
+    /// the cursor to another one.
+    pub issue: Option<IssueId>,
+    /// Commands run from the palette, most recent first, by title.
+    pub recent: Vec<&'static str>,
 }
 
 #[derive(Debug)]
@@ -70,6 +84,7 @@ impl ViewState {
                 index: 0,
                 collapsed_folders: HashSet::new(),
             },
+            palette: Palette::default(),
             detail_scroll: 0,
             comment: Input::default(),
             new_issue: None,
