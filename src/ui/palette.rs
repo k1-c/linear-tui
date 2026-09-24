@@ -21,9 +21,12 @@ const ROWS: u16 = 14;
 pub fn draw(f: &mut Frame, app: &mut App) {
     let th = app.theme;
     let entries = palette::entries(app);
+    let searching = app.view.palette.searching;
     let screen = f.area();
     let width = WIDTH.min(screen.width.saturating_sub(4));
-    let rows = (entries.len().max(1) as u16).min(ROWS);
+    // A trailing line says a workspace search is still on its way.
+    let shown = entries.len() + usize::from(searching);
+    let rows = (shown.max(1) as u16).min(ROWS);
     // Border, query line, and the rule under it.
     let height = (rows + 4).min(screen.height);
     let area = centered_rect(width, height, screen);
@@ -84,7 +87,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .palette
         .selected
         .min(entries.len().saturating_sub(1));
-    app.view.palette.selected = selected;
 
     // Keep the cursor on screen.
     let height = list.height as usize;
@@ -94,28 +96,31 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     } else if height > 0 && selected >= offset + height {
         offset = selected + 1 - height;
     }
-    offset = offset.min(entries.len().saturating_sub(height));
-    app.frame.popup_offset = offset;
-    app.frame.popup_area = list;
+    offset = offset.min(shown.saturating_sub(height));
 
-    if entries.is_empty() {
-        f.render_widget(
-            Paragraph::new(Span::styled(
-                "  No matching commands",
-                Style::default().fg(th.muted),
-            )),
-            list,
-        );
-        return;
-    }
-    let lines: Vec<Line> = entries
+    let muted = |text: String| Line::from(Span::styled(text, Style::default().fg(th.muted)));
+    let mut lines: Vec<Line> = entries
         .iter()
         .enumerate()
         .skip(offset)
         .take(height)
         .map(|(i, entry)| row(entry, i == selected, list.width as usize, &th))
         .collect();
+    let count = entries.len();
+    drop(entries);
+    if searching && lines.len() < height {
+        lines.push(muted(format!(
+            "  {} Searching Linear\u{2026}",
+            app.spinner_symbol()
+        )));
+    } else if count == 0 {
+        lines.push(muted("  No matches".to_string()));
+    }
     f.render_widget(Paragraph::new(lines), list);
+
+    app.view.palette.selected = selected;
+    app.frame.popup_offset = offset;
+    app.frame.popup_area = list;
 }
 
 /// One entry: the title with the matched letters picked out, then its
@@ -126,10 +131,10 @@ fn row(entry: &Entry, selected: bool, width: usize, th: &Theme) -> Line<'static>
     } else {
         Style::default()
     };
-    let trailing = if entry.keys.is_empty() {
+    let trailing = if entry.detail.is_empty() {
         format!("{}  ", entry.section)
     } else {
-        format!("{}  {}  ", entry.section, entry.keys)
+        format!("{}  {}  ", entry.section, entry.detail)
     };
     let marker = if selected { "\u{258c} " } else { "  " };
     let room = width.saturating_sub(marker.width() + trailing.width() + 1);

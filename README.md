@@ -138,6 +138,12 @@ also teaches the shortcuts. Type to narrow it down — letters match in order,
 `cs` finds **C**hange **s**tatus — then `Enter` to run, or `Esc` to close.
 `↑` / `↓` (or `Ctrl+p` / `Ctrl+n`) move; recently used commands come first.
 
+The palette also goes places. Type an issue ID or part of a title, or the name
+of a team page, saved view, favorite, project, or cycle, and `Enter` opens it.
+Issues already loaded match at once. Linear is searched once you stop typing
+for a moment, so an issue in no list on screen turns up too. Start the query
+with `>` to see commands only.
+
 A command that needs a value — *Change status…*, *Assign to…*, *Group by…*,
 *Switch team…*, *Filter…* — turns the palette into a list of choices; `Esc` (or
 `Backspace` on an empty query) steps back to the commands.

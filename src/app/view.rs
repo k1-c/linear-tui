@@ -1,9 +1,11 @@
 //! How the screen is shaped: cursors, filters, what is open over the content.
 
 use std::collections::HashSet;
+use std::time::Instant;
 
 use super::{Input, InputMode, IssueList, IssueLists, NewIssueForm, PerSource, Popup, ViewKind};
 use crate::api::ids::{FavoriteId, IssueId};
+use crate::api::types::Issue;
 use crate::config::Config;
 use crate::grouping::GroupBy;
 
@@ -56,6 +58,14 @@ pub struct Palette {
     pub issue: Option<IssueId>,
     /// Commands run from the palette, most recent first, by title.
     pub recent: Vec<&'static str>,
+    /// Issues Linear's search returned for the query.
+    pub results: Vec<Issue>,
+    /// True while a search for the query is in flight.
+    pub searching: bool,
+    /// When the query has rested long enough to be searched.
+    pub search_due: Option<Instant>,
+    /// Which search `results` must answer; older answers are dropped.
+    pub seq: u64,
 }
 
 #[derive(Debug)]

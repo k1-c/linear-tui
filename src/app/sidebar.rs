@@ -318,6 +318,14 @@ impl App {
         }
     }
 
+    /// Open a favorite the way its sidebar row does.
+    pub fn open_favorite_entry(&mut self, index: usize) {
+        if index < self.store.favorites.len() {
+            let action = self.favorite_action(index);
+            self.run_sidebar_action(action);
+        }
+    }
+
     /// Enter on the sidebar.
     pub fn sidebar_activate(&mut self) {
         if let Some(action) = self.sidebar_item(self.view.sidebar.index).map(|i| i.action) {
@@ -325,7 +333,7 @@ impl App {
         }
     }
 
-    pub(super) fn run_sidebar_action(&mut self, action: SidebarAction) {
+    pub fn run_sidebar_action(&mut self, action: SidebarAction) {
         match action {
             SidebarAction::Go(nav) => self.activate(nav),
             SidebarAction::Fold(index) => self.toggle_folder(index),

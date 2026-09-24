@@ -146,6 +146,11 @@ async fn run_tui(client: LinearClient, config: Config) -> Result<()> {
     let mut dirty = true;
 
     loop {
+        // A palette query that has rested long enough is searched now.
+        if app.flush_palette_search(Instant::now()) {
+            dirty = true;
+        }
+
         // Spawn everything the UI has queued since the last pass. Each request
         // runs on the tokio runtime, so the UI never blocks on the network.
         while let Some(req) = app.outbox.requests.pop_front() {

@@ -69,6 +69,10 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
                 issues,
             }
         }
+        Request::PaletteSearch { term, seq } => {
+            let (issues, _) = client.search_issues(term, None, per_page).await?;
+            Message::PaletteResults { seq: *seq, issues }
+        }
         Request::CustomViews => Message::CustomViews(client.custom_views().await?),
         Request::Favorites => Message::Favorites(client.favorites().await?),
         Request::ViewIssues { view_id, after } => {
