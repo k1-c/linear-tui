@@ -67,6 +67,11 @@ jobs:
   audit:
     name: Security audit
     runs-on: ubuntu-latest
+    # audit-check reports through a check run, and the repository's default
+    # token is read-only, so this job alone gets to write checks.
+    permissions:
+      contents: read
+      checks: write
     steps:
       - uses: actions/checkout@v4
       - uses: rustsec/audit-check@v2
