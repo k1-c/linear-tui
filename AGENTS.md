@@ -52,6 +52,8 @@ local work, and CI pins its own (`dtolnay/rust-toolchain@stable`).
 - `tests/fixtures/` — API response fixtures for deserialization tests
 - `src/auth/` — OAuth2 + PKCE, token storage, API key fallback
 - `src/config.rs` — config file + theme (`~/.config/linear-tui/config.toml`)
+- `demo/` — the README GIF: `seed.py` fills a throwaway workspace, `demo.tape`
+  is the VHS script, `record.sh` records it into `assets/demo.gif`
 
 ## Architecture
 
