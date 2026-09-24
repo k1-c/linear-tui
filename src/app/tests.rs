@@ -1194,8 +1194,7 @@ fn a_filtered_list_still_prefetches_at_its_last_visible_row() {
 fn filtering_resets_the_cursor_of_the_list_on_screen() {
     let mut app = app_with(vec![]);
     app.nav = Nav::MyIssues;
-    app.lists[IssueSource::My].issues =
-        vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
+    app.lists[IssueSource::My].issues = vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
     app.lists[IssueSource::My].selected = 1;
     app.clear_filters();
     assert_eq!(app.lists[IssueSource::My].selected, 0);

@@ -35,7 +35,9 @@ local work, and CI pins its own (`dtolnay/rust-toolchain@stable`).
 
 ## Project Structure
 
-- `src/main.rs` — entry point, CLI subcommands, TUI main loop, request dispatch
+- `src/main.rs` — entry point, terminal setup, TUI main loop
+- `src/cli.rs` — the `linear-tui auth …` subcommands
+- `src/dispatch.rs` — `execute_request`: runs one `Request` against the API
 - `src/message.rs` — `Request` / `Message` / `Page`, the boundary between UI and I/O
 - `src/app/` — app state (Model) and every state transition. `mod.rs` holds
   `App`, navigation, requests and `handle_message`; `lists.rs` the issue lists
@@ -67,7 +69,7 @@ App::handle_message(Message)  ←  mpsc channel  ←  execute_request
 ```
 
 Adding an API call means adding a `Request` variant, a `Message` variant, and an
-arm in `execute_request` — never an `.await` inside the main loop, `ui/`, or
+arm in `dispatch::run_request` — never an `.await` inside the main loop, `ui/`, or
 `keys.rs`. An inline await freezes input and animation for the whole request.
 
 Other invariants:
