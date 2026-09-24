@@ -305,10 +305,14 @@ impl App {
     }
 
     pub fn cycle_group_by(&mut self) {
-        self.view.group_by = self.view.group_by.next();
+        self.set_group_by(self.view.group_by.next());
+    }
+
+    pub fn set_group_by(&mut self, group_by: GroupBy) {
+        self.view.group_by = group_by;
         self.view.collapsed_groups.clear();
         *self.selected_index_mut() = 0;
-        self.set_status(format!("Grouped by {}", self.view.group_by.label()));
+        self.set_status(format!("Grouped by {}", group_by.label()));
     }
 
     /// The preset chip selected on the list currently on screen.

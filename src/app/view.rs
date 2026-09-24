@@ -11,8 +11,14 @@ use crate::grouping::GroupBy;
 pub struct ViewState {
     pub input_mode: InputMode,
     pub popup: Popup,
-    /// The highlighted row of the open popup.
+    /// The highlighted row of the open popup, counted in what its query
+    /// leaves — see `App::popup_rows`.
     pub popup_index: usize,
+    /// What has been typed into the open popup to narrow it.
+    pub popup_query: Input,
+    /// Whether the open popup was reached from the command palette, so Esc
+    /// steps back there instead of closing.
+    pub popup_from_palette: bool,
     /// How each of the five issue lists is shaped.
     pub lists: IssueLists,
     pub group_by: GroupBy,
@@ -69,6 +75,8 @@ impl ViewState {
             input_mode: InputMode::Normal,
             popup: Popup::None,
             popup_index: 0,
+            popup_query: Input::default(),
+            popup_from_palette: false,
             lists: PerSource::from_fn(IssueList::new),
             group_by: GroupBy::from_config(config.ui.group_by),
             collapsed_groups: HashSet::new(),

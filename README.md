@@ -138,6 +138,14 @@ also teaches the shortcuts. Type to narrow it down — letters match in order,
 `cs` finds **C**hange **s**tatus — then `Enter` to run, or `Esc` to close.
 `↑` / `↓` (or `Ctrl+p` / `Ctrl+n`) move; recently used commands come first.
 
+A command that needs a value — *Change status…*, *Assign to…*, *Group by…*,
+*Switch team…*, *Filter…* — turns the palette into a list of choices; `Esc` (or
+`Backspace` on an empty query) steps back to the commands.
+
+The same pickers open directly with `s`, `p`, `a`, `t` and `f`, and narrow as you
+type there too. Until you type, they keep their single keys — `j` / `k` to move,
+`1`-`9` to pick, `q` to close; an upper-case letter always starts a query.
+
 ### Navigation
 
 | Key | Action |

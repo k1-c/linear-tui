@@ -356,6 +356,7 @@ fn changing_team_invalidates_the_other_tabs() {
     ];
     app.store.projects.loaded = true;
     app.store.issues[IssueSource::My].loaded = true;
+    app.open_team_select();
     app.view.popup_index = 1;
 
     app.select_team();
