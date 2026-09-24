@@ -32,6 +32,12 @@ pub enum Request {
         term: String,
         team_id: Option<TeamId>,
     },
+    /// Issues across the workspace matching what is typed into the command
+    /// palette. `seq` tells a stale answer from the one for the latest query.
+    PaletteSearch {
+        term: String,
+        seq: u64,
+    },
     /// The saved views the user can open. Fetched once at startup, because the
     /// sidebar shows them whatever destination is on screen.
     CustomViews,
@@ -147,7 +153,7 @@ impl Request {
             Self::TeamContext { .. } => "Failed to load team context",
             Self::Issues { .. } => "Failed to load issues",
             Self::MyIssues { .. } => "Failed to load my issues",
-            Self::Search { .. } => "Search failed",
+            Self::Search { .. } | Self::PaletteSearch { .. } => "Search failed",
             Self::CustomViews => "Failed to load views",
             Self::Favorites => "Failed to load favorites",
             Self::ViewIssues { .. } => "Failed to load view issues",
@@ -186,6 +192,10 @@ pub enum Message {
         page: Page<Issue>,
     },
     MyIssues(Page<Issue>),
+    PaletteResults {
+        seq: u64,
+        issues: Vec<Issue>,
+    },
     SearchResults {
         term: String,
         team_id: Option<TeamId>,

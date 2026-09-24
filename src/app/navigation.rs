@@ -379,6 +379,19 @@ impl App {
         self.queue_detail_fetches();
     }
 
+    /// Open a project's page from anywhere, as if picked from the team's
+    /// project list — which is where Esc then leads.
+    pub fn go_to_project(&mut self, project: Project) {
+        self.activate(Nav::Team(self.nav.team, TeamSection::Projects));
+        self.open_project(project);
+    }
+
+    /// Open a cycle's page from anywhere, over the team's cycle list.
+    pub fn go_to_cycle(&mut self, cycle: Cycle) {
+        self.activate(Nav::Team(self.nav.team, TeamSection::Cycles));
+        self.open_cycle(cycle);
+    }
+
     pub fn open_project_detail(&mut self) {
         if let Some(project) = self.project_rows().get(self.project_cursor()).cloned() {
             self.open_project(project);

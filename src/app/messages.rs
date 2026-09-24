@@ -75,6 +75,7 @@ impl App {
                 self.accept_issue_page(IssueSource::My, page);
                 self.clear_status();
             }
+            Message::PaletteResults { seq, issues } => self.accept_palette_results(seq, issues),
             Message::SearchResults {
                 term,
                 team_id,
@@ -193,6 +194,15 @@ impl App {
                 // A failed page must be retryable.
                 if let Some(cursor) = request.cursor() {
                     self.outbox.prefetched.remove(cursor);
+                }
+                // A palette search that failed is not worth an error over
+                // the palette; the local matches are still there.
+                if let Request::PaletteSearch { seq, .. } = request.as_ref() {
+                    if *seq == self.view.palette.seq {
+                        self.view.palette.searching = false;
+                    }
+                    self.set_status(format!("Search failed: {error}"));
+                    return;
                 }
                 // Reopening the popup asks again.
                 if let Request::TeamContext { team_id } = request.as_ref() {

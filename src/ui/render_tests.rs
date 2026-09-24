@@ -182,6 +182,23 @@ fn a_narrowed_picker_draws_its_query_and_a_click_picks_the_filtered_row() {
 }
 
 #[test]
+fn the_palette_finds_an_issue_by_a_wide_character_title() {
+    let mut app = app();
+    app.open_palette();
+    for c in "課題".chars() {
+        app.view.palette.query.insert(c);
+    }
+    let lines = render(&mut app, 80, 30);
+    let area = app.frame.popup_area;
+    let first = &lines[area.y as usize];
+    assert!(first.contains("ENG-3"), "{first}");
+    assert!(first.contains("Issue"), "{first}");
+    // Cut to fit, wide characters counted as two cells: the section label
+    // still sits against the box's right edge.
+    assert!(first.contains("Issue  Todo  \u{2502}"), "{first}");
+}
+
+#[test]
 fn a_palette_with_no_match_says_so() {
     let mut app = app();
     app.open_palette();
@@ -189,7 +206,7 @@ fn a_palette_with_no_match_says_so() {
         app.view.palette.query.insert(c);
     }
     let lines = render(&mut app, 100, 30);
-    assert!(screen_text(&lines).contains("No matching commands"));
+    assert!(screen_text(&lines).contains("No matches"));
     // A wide character takes two cells; the second is blank in the buffer.
     let query = lines.iter().find(|l| l.contains("zzz")).unwrap();
     assert!(query.contains("課 題 zzz"), "{query}");
