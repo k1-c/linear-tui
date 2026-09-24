@@ -43,11 +43,22 @@ the pins current, so never add one by tag or branch.
 - `src/cli.rs` — the `linear-tui auth …` subcommands
 - `src/dispatch.rs` — `execute_request`: runs one `Request` against the API
 - `src/message.rs` — `Request` / `Message` / `Page`, the boundary between UI and I/O
-- `src/app/` — app state (Model) and every state transition. `mod.rs` holds
-  `App`, navigation, requests and `handle_message`; `lists.rs` the issue lists
-  (`IssueSource`, `IssueList`) and their filtering, grouping and prefetch;
-  `sidebar.rs` the sidebar (`SidebarAction`, Favorites); `mouse.rs` hit-testing
-  (`App::click`); `input.rs` text fields; `tests.rs` the state tests
+- `src/store/` — `Store`: everything Linear has told us (teams, team
+  contexts, viewer, views, favorites, projects, cycles, each issue list's
+  rows, the open issue) and the rules that keep it consistent (`patch_issue`,
+  `refresh_issue`, page merging)
+- `src/usecase/` — what the user can do, as functions over `&mut Store` with
+  explicit arguments that apply the optimistic change and return the
+  `Request`; `issue.rs` holds status, priority, assignee, comment, create
+- `src/app/` — session state and every state transition. `App` in `mod.rs`
+  is `store` + `nav` (`navigation.rs`: screen, destination, team, way back)
+  + `view` (`view.rs`: cursors, list shapes, popup, forms, sidebar, status)
+  + `frame` (`frame.rs`: what the last frame drew) + `outbox` (`outbox.rs`:
+  queued requests). Transitions live by concern: `messages.rs`
+  (`handle_message`), `navigation.rs`, `popups.rs`, `actions.rs` (intents that
+  resolve the target and call a use case), `cursor.rs`, `lists.rs` (filtering,
+  grouping, prefetch), `sidebar.rs`, `mouse.rs` (`App::click`), `input.rs`;
+  `tests.rs` the state tests
 - `src/grouping.rs` — Active/Backlog/All presets and grouping of issue lists
 - `src/keys.rs` — keybindings (Controller): the `BINDINGS` table
 - `src/event.rs` — terminal event polling
@@ -76,22 +87,42 @@ Adding an API call means adding a `Request` variant, a `Message` variant, and an
 arm in `dispatch::run_request` — never an `.await` inside the main loop, `ui/`, or
 `keys.rs`. An inline await freezes input and animation for the whole request.
 
+The layers only depend downwards:
+
+```
+keys.rs · App::click · (palette, cli)   input: decide what the user asked for
+app/                                    intents resolve which issue / value
+usecase/                                the operation, with explicit arguments
+store/                                  the data, kept consistent
+dispatch · api                          Linear
+```
+
+- A use case never reads a cursor, a popup row, or a screen. Resolving "the
+  issue under the cursor" is an intent on `App` (`actions.rs`, `popups.rs`);
+  the intent passes ids and values to `usecase::…`, so a key, a click, a
+  palette entry and a subcommand run the same code.
+- `store/` and `usecase/` import neither `app` nor `ui`, and no ratatui.
+- `app` does not import `ui`. A cache only the renderer needs lives in
+  `ui::Cache`, owned by the main loop.
+
 Other invariants:
 
 - `ui::draw` takes `&mut App` so renderers can write back measurements
-  (`detail_lines`, `list_viewport`, table offsets). Rendering must not do I/O.
-- Mutations are optimistic. `App::patch_issue` updates every copy of an issue,
-  including `current_issue`, and the request only confirms it. Do not trigger a
+  (`app.frame`: `detail_lines`, `list_viewport`, scroll offsets). Rendering
+  must not do I/O.
+- Mutations are optimistic. `Store::patch_issue` updates every copy of an
+  issue, including `current_issue`, and the request only confirms it. Do not trigger a
   full list reload to reflect a single-field change — it costs a round trip and
   throws away the cursor position.
 - A refetch restores the selection by issue id, not by row index.
-- Every paginated list has a `*_page_info` field and is prefetched from
-  `App::move_selection`; a new issue list becomes an `IssueSource` variant and
-  gets grouping, prefetch, and selection for free. A cursor is requested at
-  most once (`prefetched`), because the next page is still in flight while the
-  user keeps scrolling.
-- Renderers record what they drew (`list_rows`, `row_targets`, `sidebar_rows`,
-  `chip_areas`, `popup_area`) so a click is hit-tested against the last frame.
+- Every paginated list is a `store::Rows` (items, `page_info`, `loaded`) and
+  is prefetched from `App::move_selection`; a new issue list becomes an
+  `IssueSource` variant and gets grouping, prefetch, and selection for free.
+  A cursor is requested at most once (`outbox.prefetched`), because the next
+  page is still in flight while the user keeps scrolling.
+- Renderers record what they drew in `app.frame` (`list_rows`, `row_targets`,
+  `sidebar_rows`, `chip_areas`, `popup_area`) so a click is hit-tested against
+  the last frame.
   A new clickable element records its area the same way and is routed in
   `App::click`.
 - Measure text by display width (`unicode-width`), never by `len()` or char
