@@ -22,7 +22,7 @@ fn stated(id: &str, title: &str, state: &str, kind: &str) -> Issue {
 
 fn app() -> App {
     let mut app = App::new(&Config::default());
-    app.requests.clear();
+    app.outbox.requests.clear();
     app.store.teams =
         vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
     app.store.issues[IssueSource::Team].items = vec![
@@ -133,7 +133,7 @@ fn a_change_popup_draws_where_it_records_and_a_click_applies_it() {
     assert!(area.width > 0 && area.height > 0);
     // The second entry is Urgent.
     app.click(area.x + 1, area.y + 1);
-    assert_eq!(app.popup, Popup::None);
+    assert_eq!(app.view.popup, Popup::None);
     assert_eq!(
         app.store.issues[IssueSource::Team].items[1].priority,
         crate::api::types::Priority::Urgent
@@ -145,7 +145,7 @@ fn the_detail_view_renders_markdown_and_measures_itself() {
     let mut app = app();
     app.open_issue_detail();
     let text = screen_text(&render(&mut app, 100, 30));
-    assert_eq!(app.screen, Screen::IssueDetail);
+    assert_eq!(app.nav.screen, Screen::IssueDetail);
     assert!(text.contains("Fix the build"), "{text}");
     assert!(
         text.contains("bold") && !text.contains("**bold**"),
@@ -281,7 +281,7 @@ mod timings {
                 stated(&i.to_string(), &format!("Issue number {i}"), name, kind)
             })
             .collect();
-        app.lists[IssueSource::Team].preset = Preset::All;
+        app.view.lists[IssueSource::Team].preset = Preset::All;
     }
 
     fn long_thread(n: usize) -> Issue {

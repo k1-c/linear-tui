@@ -32,7 +32,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         let message = if !app.store.views_loaded {
             "Loading views\u{2026}".to_string()
         } else {
-            let (this, other) = match app.view_kind {
+            let (this, other) = match app.view.view_kind {
                 ViewKind::Issues => ("issue", "project"),
                 ViewKind::Projects => ("project", "issue"),
             };
@@ -46,7 +46,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         return;
     }
 
-    let shared_caption = match app.nav {
+    let shared_caption = match app.nav.dest {
         Nav::Team(index, TeamSection::Views) => app
             .store
             .teams
@@ -55,7 +55,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             .unwrap_or_else(|| ("Team".into(), "Shared with the team")),
         _ => ("Workspace".into(), "Shared with everyone"),
     };
-    let icon = match app.view_kind {
+    let icon = match app.view.view_kind {
         ViewKind::Issues => "\u{2261}",
         ViewKind::Projects => "\u{25a3}",
     };
@@ -91,7 +91,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
             rows.push((Line::from(caption), None));
         }
 
-        let selected = position == app.selected_view_index;
+        let selected = position == app.view.selected_view_index;
         let color = view
             .color
             .as_deref()
@@ -144,7 +144,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let height = area.height as usize;
     let sel_row = rows
         .iter()
-        .position(|(_, t)| *t == Some(app.selected_view_index))
+        .position(|(_, t)| *t == Some(app.view.selected_view_index))
         .unwrap_or(0);
     let mut offset = app.frame.offsets.views;
     if sel_row < offset {
@@ -171,7 +171,7 @@ fn draw_tabs(f: &mut Frame, app: &mut App, area: Rect) {
     for kind in [ViewKind::Issues, ViewKind::Projects] {
         let label = format!(" {} ", kind.label());
         let width = label.width() as u16;
-        let style = if kind == app.view_kind {
+        let style = if kind == app.view.view_kind {
             Style::default()
                 .fg(th.text)
                 .bg(th.selection_bg)

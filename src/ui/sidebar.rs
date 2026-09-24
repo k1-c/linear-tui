@@ -47,10 +47,10 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
 
     // Keep the cursor on screen.
     let height = list.height as usize;
-    if app.sidebar_index < app.frame.sidebar_offset {
-        app.frame.sidebar_offset = app.sidebar_index;
-    } else if height > 0 && app.sidebar_index >= app.frame.sidebar_offset + height {
-        app.frame.sidebar_offset = app.sidebar_index + 1 - height;
+    if app.view.sidebar.index < app.frame.sidebar_offset {
+        app.frame.sidebar_offset = app.view.sidebar.index;
+    } else if height > 0 && app.view.sidebar.index >= app.frame.sidebar_offset + height {
+        app.frame.sidebar_offset = app.view.sidebar.index + 1 - height;
     }
     app.frame.sidebar_offset = app
         .frame
@@ -63,13 +63,13 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .frame
         .sidebar_rows
         .iter()
-        .any(|r| matches!(r, SidebarRow::Item(i) if i.nav() == Some(app.nav)));
+        .any(|r| matches!(r, SidebarRow::Item(i) if i.nav() == Some(app.nav.dest)));
     // A team's view lights its team's Views row; any other, the workspace's.
-    let fallback = match app.nav {
+    let fallback = match app.nav.dest {
         Nav::View(i) if !exact => Some(
             match app.store.custom_views.get(i).and_then(|v| v.team.as_ref()) {
                 Some(team) if app.current_team().is_some_and(|t| t.id == team.id) => {
-                    Nav::Team(app.selected_team_index, TeamSection::Views)
+                    Nav::Team(app.nav.team, TeamSection::Views)
                 }
                 _ => Nav::Views,
             },
@@ -90,9 +90,9 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                 Style::default().fg(th.muted).add_modifier(Modifier::BOLD),
             )),
             SidebarRow::Item(item) => {
-                let active =
-                    item.nav() == Some(app.nav) || (item.nav().is_some() && item.nav() == fallback);
-                let cursor = app.sidebar_focus && index == app.sidebar_index;
+                let active = item.nav() == Some(app.nav.dest)
+                    || (item.nav().is_some() && item.nav() == fallback);
+                let cursor = app.view.sidebar.focus && index == app.view.sidebar.index;
                 let bg = if cursor {
                     Some(th.selection_bg)
                 } else if active {

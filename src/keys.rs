@@ -682,17 +682,17 @@ pub static BINDINGS: &[Binding] = &[
 
 /// The context a key press lands in.
 pub fn context(app: &App) -> Ctx {
-    match app.input_mode {
+    match app.view.input_mode {
         InputMode::Search => Search,
         InputMode::Comment => Comment,
-        InputMode::NewIssue => match app.new_issue.as_ref().map(|form| form.field) {
+        InputMode::NewIssue => match app.view.new_issue.as_ref().map(|form| form.field) {
             Some(FormField::Description) => IssueDescription,
             Some(FormField::Priority) => IssuePriority,
             Some(FormField::Title) | None => IssueTitle,
         },
-        InputMode::Normal if app.pending_chord == Some('g') => GoTo,
-        InputMode::Normal if app.sidebar_focus => Sidebar,
-        InputMode::Normal => app.screen.into(),
+        InputMode::Normal if app.view.pending_chord == Some('g') => GoTo,
+        InputMode::Normal if app.view.sidebar.focus => Sidebar,
+        InputMode::Normal => app.nav.screen.into(),
     }
 }
 
@@ -724,13 +724,13 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // Error popup dismisses on any key
-    if app.error_popup.is_some() {
+    if app.view.error_popup.is_some() {
         app.dismiss_error();
         return;
     }
 
     // Help overlay: j/k scrolls, anything else closes
-    if app.show_help {
+    if app.view.show_help {
         match key.code {
             KeyCode::Char('j') | KeyCode::Down => app.scroll_help(1),
             KeyCode::Char('k') | KeyCode::Up => app.scroll_help(-1),
@@ -740,12 +740,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 
     // Esc abandons a half-typed chord
-    if key.code == KeyCode::Esc && app.pending_chord.take().is_some() {
+    if key.code == KeyCode::Esc && app.view.pending_chord.take().is_some() {
         return;
     }
 
     // Popup takes priority
-    if app.popup != Popup::None {
+    if app.view.popup != Popup::None {
         handle_popup_keys(app, key);
         return;
     }
@@ -787,9 +787,9 @@ fn handle_popup_keys(app: &mut App, key: KeyEvent) {
 // --- Actions that depend on where they run ---
 
 fn down(app: &mut App) {
-    if app.sidebar_focus {
+    if app.view.sidebar.focus {
         app.sidebar_move(1);
-    } else if app.screen == Screen::IssueDetail {
+    } else if app.nav.screen == Screen::IssueDetail {
         app.scroll_down();
     } else {
         app.move_selection(1);
@@ -797,9 +797,9 @@ fn down(app: &mut App) {
 }
 
 fn up(app: &mut App) {
-    if app.sidebar_focus {
+    if app.view.sidebar.focus {
         app.sidebar_move(-1);
-    } else if app.screen == Screen::IssueDetail {
+    } else if app.nav.screen == Screen::IssueDetail {
         app.scroll_up();
     } else {
         app.move_selection(-1);
@@ -807,9 +807,9 @@ fn up(app: &mut App) {
 }
 
 fn half_page_down(app: &mut App) {
-    if app.sidebar_focus {
+    if app.view.sidebar.focus {
         app.sidebar_move(app.half_page());
-    } else if app.screen == Screen::IssueDetail {
+    } else if app.nav.screen == Screen::IssueDetail {
         app.scroll_by(app.frame.detail_viewport as i16 / 2);
     } else {
         app.move_selection(app.half_page());
@@ -817,9 +817,9 @@ fn half_page_down(app: &mut App) {
 }
 
 fn half_page_up(app: &mut App) {
-    if app.sidebar_focus {
+    if app.view.sidebar.focus {
         app.sidebar_move(-app.half_page());
-    } else if app.screen == Screen::IssueDetail {
+    } else if app.nav.screen == Screen::IssueDetail {
         app.scroll_by(-(app.frame.detail_viewport as i16) / 2);
     } else {
         app.move_selection(-app.half_page());
@@ -827,7 +827,7 @@ fn half_page_up(app: &mut App) {
 }
 
 fn page_down(app: &mut App) {
-    if app.screen == Screen::IssueDetail {
+    if app.nav.screen == Screen::IssueDetail {
         app.scroll_by(app.frame.detail_viewport as i16);
     } else {
         app.move_selection(app.frame.list_viewport.max(1) as isize);
@@ -835,7 +835,7 @@ fn page_down(app: &mut App) {
 }
 
 fn page_up(app: &mut App) {
-    if app.screen == Screen::IssueDetail {
+    if app.nav.screen == Screen::IssueDetail {
         app.scroll_by(-(app.frame.detail_viewport as i16));
     } else {
         app.move_selection(-(app.frame.list_viewport.max(1) as isize));
@@ -843,9 +843,9 @@ fn page_up(app: &mut App) {
 }
 
 fn first(app: &mut App) {
-    if app.sidebar_focus {
+    if app.view.sidebar.focus {
         app.sidebar_move(isize::MIN / 2);
-    } else if app.screen == Screen::IssueDetail {
+    } else if app.nav.screen == Screen::IssueDetail {
         app.scroll_to_top();
     } else {
         app.select_first();
@@ -853,9 +853,9 @@ fn first(app: &mut App) {
 }
 
 fn last(app: &mut App) {
-    if app.sidebar_focus {
+    if app.view.sidebar.focus {
         app.sidebar_move(isize::MAX / 2);
-    } else if app.screen == Screen::IssueDetail {
+    } else if app.nav.screen == Screen::IssueDetail {
         app.scroll_to_bottom();
     } else {
         app.select_last();
@@ -863,7 +863,7 @@ fn last(app: &mut App) {
 }
 
 fn open(app: &mut App) {
-    match app.screen {
+    match app.nav.screen {
         Screen::ProjectList => app.open_project_detail(),
         Screen::CycleList => app.open_cycle_detail(),
         Screen::ViewList => app.open_selected_view(),
@@ -877,7 +877,7 @@ fn open(app: &mut App) {
 /// Esc: close the issue view; elsewhere drop a search first, and only then
 /// leave a project or cycle page.
 fn back(app: &mut App) {
-    match app.screen {
+    match app.nav.screen {
         Screen::IssueDetail => app.close_detail(),
         Screen::ProjectDetail | Screen::CycleDetail if app.list().search.is_empty() => {
             app.leave_container()
@@ -888,7 +888,7 @@ fn back(app: &mut App) {
 
 /// `q` on a nested page steps back instead of quitting.
 fn leave(app: &mut App) {
-    if app.screen == Screen::IssueDetail {
+    if app.nav.screen == Screen::IssueDetail {
         app.close_detail();
     } else {
         app.leave_container();
@@ -896,7 +896,7 @@ fn leave(app: &mut App) {
 }
 
 fn refresh(app: &mut App) {
-    if app.screen == Screen::IssueDetail {
+    if app.nav.screen == Screen::IssueDetail {
         app.refresh_detail();
     } else {
         app.force_reload();
@@ -909,7 +909,7 @@ fn team_preset(app: &mut App, preset: Preset) {
 }
 
 fn cancel(app: &mut App) {
-    match app.input_mode {
+    match app.view.input_mode {
         InputMode::Search => app.cancel_search(),
         InputMode::Comment => app.cancel_comment(),
         InputMode::NewIssue => app.cancel_new_issue(),
@@ -918,7 +918,7 @@ fn cancel(app: &mut App) {
 }
 
 fn submit(app: &mut App) {
-    match app.input_mode {
+    match app.view.input_mode {
         InputMode::Comment => app.submit_comment(),
         InputMode::NewIssue => app.submit_new_issue(),
         InputMode::Search | InputMode::Normal => {}
@@ -927,14 +927,18 @@ fn submit(app: &mut App) {
 
 /// The text field keys are typed into, if any.
 fn active_input(app: &mut App) -> Option<&mut Input> {
-    match app.input_mode {
+    match app.view.input_mode {
         InputMode::Search => Some(&mut app.list_mut().search),
-        InputMode::Comment => Some(&mut app.comment),
-        InputMode::NewIssue => app.new_issue.as_mut().and_then(|form| match form.field {
-            FormField::Title => Some(&mut form.title),
-            FormField::Description => Some(&mut form.description),
-            FormField::Priority => None,
-        }),
+        InputMode::Comment => Some(&mut app.view.comment),
+        InputMode::NewIssue => app
+            .view
+            .new_issue
+            .as_mut()
+            .and_then(|form| match form.field {
+                FormField::Title => Some(&mut form.title),
+                FormField::Description => Some(&mut form.description),
+                FormField::Priority => None,
+            }),
         InputMode::Normal => None,
     }
 }
@@ -945,7 +949,7 @@ fn edit(app: &mut App, change: impl FnOnce(&mut Input)) {
     if let Some(input) = active_input(app) {
         change(input);
     }
-    if app.input_mode == InputMode::Search {
+    if app.view.input_mode == InputMode::Search {
         app.apply_search();
     }
 }
@@ -991,7 +995,7 @@ mod tests {
 
     fn app() -> App {
         let mut app = App::new(&Config::default());
-        app.requests.clear();
+        app.outbox.requests.clear();
         app
     }
 
@@ -1001,11 +1005,11 @@ mod tests {
     fn enter_on_a_project_issue_opens_the_highlighted_one() {
         let mut app = app();
         app.store.issues[IssueSource::Project].items = reordered();
-        app.screen = Screen::ProjectDetail;
+        app.nav.screen = Screen::ProjectDetail;
         press(&mut app, KeyCode::Char('j'));
         let highlighted = app.focused_issue().unwrap().id.clone();
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.screen, Screen::IssueDetail);
+        assert_eq!(app.nav.screen, Screen::IssueDetail);
         assert_eq!(app.store.current_issue.as_ref().unwrap().id, highlighted);
         assert_eq!(highlighted, "1");
     }
@@ -1014,7 +1018,7 @@ mod tests {
     fn enter_on_a_cycle_issue_opens_the_highlighted_one() {
         let mut app = app();
         app.store.issues[IssueSource::Cycle].items = reordered();
-        app.screen = Screen::CycleDetail;
+        app.nav.screen = Screen::CycleDetail;
         press(&mut app, KeyCode::Char('j'));
         press(&mut app, KeyCode::Char('j'));
         let highlighted = app.focused_issue().unwrap().id.clone();
@@ -1039,13 +1043,13 @@ mod tests {
             app.store.issues[IssueSource::Project].items = reordered();
             app.store.issues[IssueSource::Cycle].items = reordered();
             app.set_preset(crate::grouping::Preset::All);
-            app.requests.clear();
+            app.outbox.requests.clear();
             if let Some(nav) = nav {
-                app.nav = nav;
+                app.nav.dest = nav;
             }
-            app.screen = screen;
+            app.nav.screen = screen;
             for downs in 0..3 {
-                app.screen = screen;
+                app.nav.screen = screen;
                 app.set_selected_index(0);
                 for _ in 0..downs {
                     press(&mut app, KeyCode::Char('j'));
@@ -1093,27 +1097,27 @@ mod tests {
     fn a_g_chord_jumps_and_esc_abandons_it() {
         let mut app = team_app();
         press(&mut app, KeyCode::Char('g'));
-        assert_eq!(app.pending_chord, Some('g'));
+        assert_eq!(app.view.pending_chord, Some('g'));
         press(&mut app, KeyCode::Char('m'));
-        assert_eq!(app.nav, Nav::MyIssues);
-        assert_eq!(app.pending_chord, None);
+        assert_eq!(app.nav.dest, Nav::MyIssues);
+        assert_eq!(app.view.pending_chord, None);
 
         press(&mut app, KeyCode::Char('g'));
         press(&mut app, KeyCode::Esc);
-        assert_eq!(app.pending_chord, None);
-        assert_eq!(app.nav, Nav::MyIssues, "Esc only drops the chord");
+        assert_eq!(app.view.pending_chord, None);
+        assert_eq!(app.nav.dest, Nav::MyIssues, "Esc only drops the chord");
     }
 
     #[test]
     fn a_number_key_picks_a_popup_entry() {
         let mut app = team_app();
         press(&mut app, KeyCode::Char('p'));
-        assert!(matches!(app.popup, Popup::PriorityChange(_)));
+        assert!(matches!(app.view.popup, Popup::PriorityChange(_)));
         // Row 2 of the priority menu is Urgent.
         press(&mut app, KeyCode::Char('2'));
-        assert_eq!(app.popup, Popup::None);
+        assert_eq!(app.view.popup, Popup::None);
         assert!(matches!(
-            app.requests.back(),
+            app.outbox.requests.back(),
             Some(crate::message::Request::UpdatePriority {
                 priority: Priority::Urgent,
                 ..
@@ -1125,11 +1129,11 @@ mod tests {
     fn search_filters_as_you_type_and_esc_clears_it() {
         let mut app = team_app();
         press(&mut app, KeyCode::Char('/'));
-        assert_eq!(app.input_mode, InputMode::Search);
+        assert_eq!(app.view.input_mode, InputMode::Search);
         typed(&mut app, "t2");
         assert_eq!(app.visible_issues().len(), 1);
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.view.input_mode, InputMode::Normal);
         assert_eq!(app.visible_issues().len(), 1, "Enter keeps the query");
 
         press(&mut app, KeyCode::Esc);
@@ -1161,7 +1165,7 @@ mod tests {
         ] {
             let mut app = team_app();
             press_with(&mut app, code, modifiers);
-            assert_eq!(app.pending_clipboard.as_deref(), Some("ENG-2"), "{code:?}");
+            assert_eq!(app.outbox.clipboard.as_deref(), Some("ENG-2"), "{code:?}");
         }
     }
 
@@ -1176,20 +1180,20 @@ mod tests {
     fn tab_moves_focus_to_the_sidebar_and_back() {
         let mut app = team_app();
         press(&mut app, KeyCode::Tab);
-        assert!(app.sidebar_focus);
+        assert!(app.view.sidebar.focus);
         press(&mut app, KeyCode::Char('j'));
-        assert!(app.sidebar_focus, "j moves within the sidebar");
+        assert!(app.view.sidebar.focus, "j moves within the sidebar");
         press(&mut app, KeyCode::Esc);
-        assert!(!app.sidebar_focus);
+        assert!(!app.view.sidebar.focus);
     }
 
     #[test]
     fn q_quits_a_list_but_only_closes_the_detail() {
         let mut app = team_app();
         press(&mut app, KeyCode::Enter);
-        assert_eq!(app.screen, Screen::IssueDetail);
+        assert_eq!(app.nav.screen, Screen::IssueDetail);
         press(&mut app, KeyCode::Char('q'));
-        assert_eq!(app.screen, Screen::IssueList);
+        assert_eq!(app.nav.screen, Screen::IssueList);
         assert!(!app.should_quit);
         press(&mut app, KeyCode::Char('q'));
         assert!(app.should_quit);
@@ -1199,15 +1203,15 @@ mod tests {
     fn enter_breaks_a_comment_line_and_ctrl_enter_posts_it() {
         let mut app = team_app();
         press(&mut app, KeyCode::Char('m'));
-        assert_eq!(app.input_mode, InputMode::Comment);
+        assert_eq!(app.view.input_mode, InputMode::Comment);
         typed(&mut app, "hi");
         press(&mut app, KeyCode::Enter);
         typed(&mut app, "there");
-        assert_eq!(app.comment.value, "hi\nthere");
+        assert_eq!(app.view.comment.value, "hi\nthere");
         press_with(&mut app, KeyCode::Enter, KeyModifiers::CONTROL);
-        assert_eq!(app.input_mode, InputMode::Normal);
+        assert_eq!(app.view.input_mode, InputMode::Normal);
         assert!(matches!(
-            app.requests.back(),
+            app.outbox.requests.back(),
             Some(crate::message::Request::CreateComment { body, .. }) if body == "hi\nthere"
         ));
     }
@@ -1216,11 +1220,11 @@ mod tests {
     fn the_help_overlay_closes_on_any_other_key() {
         let mut app = team_app();
         press(&mut app, KeyCode::Char('?'));
-        assert!(app.show_help);
+        assert!(app.view.show_help);
         press(&mut app, KeyCode::Char('j'));
-        assert!(app.show_help, "j scrolls the help");
+        assert!(app.view.show_help, "j scrolls the help");
         press(&mut app, KeyCode::Char('x'));
-        assert!(!app.show_help);
+        assert!(!app.view.show_help);
     }
 }
 

@@ -20,15 +20,15 @@ impl App {
     /// selects it; clicking the selected row again opens it — the terminal's
     /// stand-in for a double-click, which crossterm cannot report.
     pub fn click(&mut self, x: u16, y: u16) {
-        if self.error_popup.is_some() {
+        if self.view.error_popup.is_some() {
             self.dismiss_error();
             return;
         }
-        if self.show_help {
+        if self.view.show_help {
             self.close_help();
             return;
         }
-        if self.popup != Popup::None {
+        if self.view.popup != Popup::None {
             if contains(self.frame.popup_area, x, y) {
                 self.popup_pick(self.frame.popup_offset + (y - self.frame.popup_area.y) as usize);
             } else {
@@ -36,7 +36,7 @@ impl App {
             }
             return;
         }
-        if self.input_mode != InputMode::Normal {
+        if self.view.input_mode != InputMode::Normal {
             return;
         }
 
@@ -45,7 +45,7 @@ impl App {
             let Some(SidebarRow::Item(item)) = self.frame.sidebar_rows.get(index).cloned() else {
                 return;
             };
-            self.sidebar_index = index;
+            self.view.sidebar.index = index;
             self.run_sidebar_action(item.action);
             return;
         }
@@ -57,7 +57,7 @@ impl App {
             .find(|(r, _)| contains(*r, x, y))
         {
             let chip = *chip;
-            self.sidebar_focus = false;
+            self.view.sidebar.focus = false;
             match chip {
                 Chip::Preset(preset) => self.set_preset(preset),
                 Chip::ViewKind(kind) => self.set_view_kind(kind),
@@ -68,9 +68,9 @@ impl App {
         if !contains(self.frame.list_area, x, y) {
             return;
         }
-        self.sidebar_focus = false;
+        self.view.sidebar.focus = false;
         let row = (y - self.frame.list_area.y) as usize;
-        match self.screen {
+        match self.nav.screen {
             Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => {
                 match self.frame.list_rows.get(row).cloned() {
                     Some(ListRow::Group { key, .. }) => self.toggle_group(&key),
@@ -89,16 +89,16 @@ impl App {
                 let Some(Some(target)) = self.frame.row_targets.get(row).copied() else {
                     return;
                 };
-                let current = match self.screen {
+                let current = match self.nav.screen {
                     Screen::ProjectList => self.project_cursor_mut(),
-                    Screen::CycleList => &mut self.selected_cycle_index,
-                    _ => &mut self.selected_view_index,
+                    Screen::CycleList => &mut self.view.selected_cycle_index,
+                    _ => &mut self.view.selected_view_index,
                 };
                 if *current != target {
                     *current = target;
                     return;
                 }
-                match self.screen {
+                match self.nav.screen {
                     Screen::ProjectList => self.open_project_detail(),
                     Screen::CycleList => self.open_cycle_detail(),
                     _ => self.open_selected_view(),
@@ -110,7 +110,7 @@ impl App {
 
     /// The mouse wheel at `(x, y)`: scroll whatever is under the pointer.
     pub fn wheel(&mut self, x: u16, y: u16, delta: i16) {
-        if self.popup != Popup::None {
+        if self.view.popup != Popup::None {
             if delta > 0 {
                 self.popup_next();
             } else {
@@ -124,7 +124,7 @@ impl App {
                 .saturating_sub(self.frame.sidebar_area.height as usize);
             self.frame.sidebar_offset = (self.frame.sidebar_offset as isize + delta as isize)
                 .clamp(0, max as isize) as usize;
-        } else if self.show_help {
+        } else if self.view.show_help {
             self.scroll_help(delta);
         } else {
             self.scroll_list_or_detail(delta);

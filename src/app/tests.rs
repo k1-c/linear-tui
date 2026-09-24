@@ -17,7 +17,7 @@ fn app_with(issues: Vec<Issue>) -> App {
     // Every list response names the team it was fetched for.
     app.store.teams = vec![team("t", "Core")];
     app.store.issues[IssueSource::Team].items = issues;
-    app.requests.clear();
+    app.outbox.requests.clear();
     app
 }
 
@@ -157,9 +157,9 @@ fn a_priority_change_updates_every_copy_of_the_issue() {
     app.store.issues[IssueSource::My].items = vec![issue("1", "ENG-1", "a")];
     app.store.issues[IssueSource::View].items = vec![issue("1", "ENG-1", "a")];
     app.store.current_issue = Some(issue("1", "ENG-1", "a"));
-    app.screen = Screen::IssueDetail;
+    app.nav.screen = Screen::IssueDetail;
     app.open_priority_change();
-    app.popup_index = Priority::High.as_index();
+    app.view.popup_index = Priority::High.as_index();
 
     app.apply_priority_selection();
 
@@ -179,18 +179,18 @@ fn a_priority_change_updates_every_copy_of_the_issue() {
         app.store.current_issue.as_ref().unwrap().priority,
         Priority::High
     );
-    assert_eq!(app.popup, Popup::None);
+    assert_eq!(app.view.popup, Popup::None);
 }
 
 #[test]
 fn a_mutation_queues_exactly_one_request() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.open_priority_change();
-    app.popup_index = Priority::Low.as_index();
+    app.view.popup_index = Priority::Low.as_index();
     app.apply_priority_selection();
-    assert_eq!(app.requests.len(), 1);
+    assert_eq!(app.outbox.requests.len(), 1);
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::UpdatePriority {
             priority: Priority::Low,
             ..
@@ -208,7 +208,7 @@ fn identical_requests_are_not_queued_twice() {
     };
     app.request(req.clone());
     app.request(req);
-    assert_eq!(app.requests.len(), 1);
+    assert_eq!(app.outbox.requests.len(), 1);
 }
 
 // ------------------------------------------------------------ pagination
@@ -241,11 +241,11 @@ fn a_page_is_requested_once_while_scrolling() {
     };
     app.select_last();
     // The main loop takes the request off the queue: it is now in flight.
-    app.requests.clear();
+    app.outbox.requests.clear();
     app.move_selection(-1);
     app.move_selection(1);
     assert!(
-        app.requests.is_empty(),
+        app.outbox.requests.is_empty(),
         "the in-flight page is not asked for again"
     );
 }
@@ -273,7 +273,7 @@ fn an_appended_page_never_duplicates_an_issue() {
 #[test]
 fn a_fresh_page_replaces_the_list_and_keeps_the_selection() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")]);
-    app.lists[IssueSource::Team].selected = 1;
+    app.view.lists[IssueSource::Team].selected = 1;
     // ENG-2 comes back first this time; the cursor must follow the issue,
     // not stay on row 1.
     app.handle_message(Message::Issues {
@@ -286,18 +286,18 @@ fn a_fresh_page_replaces_the_list_and_keeps_the_selection() {
         ),
     });
     assert_eq!(app.store.issues[IssueSource::Team].items.len(), 2);
-    assert_eq!(app.lists[IssueSource::Team].selected, 0);
+    assert_eq!(app.view.lists[IssueSource::Team].selected, 0);
 }
 
 #[test]
 fn a_shrinking_list_clamps_the_selection() {
     let mut app = app_with(vec![]);
-    app.selected_project_index = 4;
+    app.view.selected_project_index = 4;
     app.handle_message(Message::Projects {
         team_id: "t".into(),
         page: Page::new(Vec::new(), PageInfo::default(), false),
     });
-    assert_eq!(app.selected_project_index, 0);
+    assert_eq!(app.view.selected_project_index, 0);
 }
 
 // ---------------------------------------------------------------- scroll
@@ -308,11 +308,11 @@ fn detail_scroll_clamps_to_the_content() {
     app.frame.detail_lines = 30;
     app.frame.detail_viewport = 10;
     app.scroll_to_bottom();
-    assert_eq!(app.detail_scroll, 20);
+    assert_eq!(app.view.detail_scroll, 20);
     app.scroll_down();
-    assert_eq!(app.detail_scroll, 20, "must not scroll past the end");
+    assert_eq!(app.view.detail_scroll, 20, "must not scroll past the end");
     app.scroll_by(-100);
-    assert_eq!(app.detail_scroll, 0);
+    assert_eq!(app.view.detail_scroll, 0);
 }
 
 #[test]
@@ -321,7 +321,7 @@ fn a_short_body_cannot_scroll_at_all() {
     app.frame.detail_lines = 4;
     app.frame.detail_viewport = 20;
     app.scroll_down();
-    assert_eq!(app.detail_scroll, 0);
+    assert_eq!(app.view.detail_scroll, 0);
 }
 
 // ------------------------------------------------------------------ tabs
@@ -331,8 +331,8 @@ fn switching_to_a_cached_tab_does_not_refetch() {
     let mut app = app_with(vec![]);
     app.store.projects.loaded = true;
     app.go_to_team_section(TeamSection::Projects);
-    assert_eq!(app.screen, Screen::ProjectList);
-    assert!(app.requests.is_empty());
+    assert_eq!(app.nav.screen, Screen::ProjectList);
+    assert!(app.outbox.requests.is_empty());
 }
 
 #[test]
@@ -341,7 +341,10 @@ fn switching_to_an_uncached_tab_fetches_it() {
     app.store.teams =
         vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
     app.go_to_team_section(TeamSection::Cycles);
-    assert!(matches!(app.requests.front(), Some(Request::Cycles { .. })));
+    assert!(matches!(
+        app.outbox.requests.front(),
+        Some(Request::Cycles { .. })
+    ));
 }
 
 #[test]
@@ -353,11 +356,11 @@ fn changing_team_invalidates_the_other_tabs() {
     ];
     app.store.projects.loaded = true;
     app.store.issues[IssueSource::My].loaded = true;
-    app.popup_index = 1;
+    app.view.popup_index = 1;
 
     app.select_team();
 
-    assert_eq!(app.selected_team_index, 1);
+    assert_eq!(app.nav.team, 1);
     assert!(!app.store.projects.loaded);
     assert!(!app.store.issues[IssueSource::My].loaded);
     assert!(app.store.issues[IssueSource::Team].items.is_empty());
@@ -372,8 +375,8 @@ fn creating_an_issue_requires_a_title() {
         vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
     app.start_new_issue();
     app.submit_new_issue();
-    assert!(app.requests.is_empty());
-    assert!(app.new_issue.is_some(), "the form stays open");
+    assert!(app.outbox.requests.is_empty());
+    assert!(app.view.new_issue.is_some(), "the form stays open");
 }
 
 #[test]
@@ -382,15 +385,15 @@ fn a_completed_form_queues_a_create_request() {
     app.store.teams =
         vec![serde_json::from_str(r#"{"id":"t","name":"Core","key":"ENG"}"#).unwrap()];
     app.start_new_issue();
-    if let Some(form) = &mut app.new_issue {
+    if let Some(form) = &mut app.view.new_issue {
         form.title.value = "Ship it".into();
         form.priority = Priority::Urgent;
     }
     app.submit_new_issue();
 
-    assert!(app.new_issue.is_none());
+    assert!(app.view.new_issue.is_none());
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::CreateIssue {
             priority: Priority::Urgent,
             ..
@@ -422,7 +425,7 @@ fn a_created_issue_appears_at_the_top() {
         app.store.issues[IssueSource::Team].items[0].identifier,
         "ENG-2"
     );
-    assert_eq!(app.lists[IssueSource::Team].selected, 0);
+    assert_eq!(app.view.lists[IssueSource::Team].selected, 0);
 }
 
 // -------------------------------------------------------------- clipboard
@@ -431,15 +434,15 @@ fn a_created_issue_appears_at_the_top() {
 fn copying_reports_when_there_is_nothing_to_copy() {
     let mut app = app_with(vec![]);
     app.copy_url();
-    assert!(app.pending_clipboard.is_none());
-    assert!(app.status_message.is_some());
+    assert!(app.outbox.clipboard.is_none());
+    assert!(app.view.status_message.is_some());
 }
 
 #[test]
 fn copying_an_identifier_queues_the_clipboard_write() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.copy_identifier();
-    assert_eq!(app.pending_clipboard.as_deref(), Some("ENG-1"));
+    assert_eq!(app.outbox.clipboard.as_deref(), Some("ENG-1"));
 }
 
 // -------------------------------------------------- Linear-aligned keys
@@ -467,7 +470,7 @@ fn assign_to_me_sets_the_viewer_as_assignee() {
         "u1"
     );
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::UpdateAssignee { .. })
     ));
 }
@@ -477,8 +480,8 @@ fn assign_to_me_waits_for_the_viewer() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.store.viewer_id = None;
     app.assign_to_me();
-    assert!(app.requests.is_empty());
-    assert!(app.status_message.is_some());
+    assert!(app.outbox.requests.is_empty());
+    assert!(app.view.status_message.is_some());
 }
 
 /// Linear's Shift+1…Shift+4 set a priority without opening the menu.
@@ -490,9 +493,9 @@ fn set_priority_applies_without_a_popup() {
         app.store.issues[IssueSource::Team].items[0].priority,
         Priority::Urgent
     );
-    assert_eq!(app.popup, Popup::None);
+    assert_eq!(app.view.popup, Popup::None);
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::UpdatePriority {
             priority: Priority::Urgent,
             ..
@@ -562,7 +565,7 @@ fn issues_are_listed_in_group_order() {
     let layout = app.list_view().rows;
     assert!(matches!(layout[0], ListRow::Group { count: 1, .. }));
     assert!(matches!(layout[2], ListRow::Group { count: 2, .. }));
-    app.group_by = GroupBy::None;
+    app.view.group_by = GroupBy::None;
     assert!(
         app.list_view()
             .rows
@@ -578,10 +581,10 @@ fn folding_a_group_keeps_the_cursor_on_a_visible_issue() {
         stated("2", "s-todo", "Todo", "unstarted"),
         stated("3", "s-todo", "Todo", "unstarted"),
     ]);
-    app.lists[IssueSource::Team].selected = 2;
+    app.view.lists[IssueSource::Team].selected = 2;
     app.toggle_selected_group();
     assert_eq!(app.visible_issues().len(), 1);
-    assert_eq!(app.lists[IssueSource::Team].selected, 0);
+    assert_eq!(app.view.lists[IssueSource::Team].selected, 0);
     app.toggle_group("status:s-todo");
     assert_eq!(app.visible_issues().len(), 3);
 }
@@ -604,7 +607,7 @@ fn switching_a_team_preset_refetches_that_slice() {
     app.store.teams = vec![team("t1", "Core")];
     app.set_preset(Preset::Backlog);
     assert!(matches!(
-        app.requests.back(),
+        app.outbox.requests.back(),
         Some(Request::Issues {
             preset: Preset::Backlog,
             after: None,
@@ -633,14 +636,15 @@ fn a_sidebar_team_entry_switches_team() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.store.teams = vec![team("t1", "Core"), team("t2", "Ops")];
     app.activate(Nav::Team(1, TeamSection::Cycles));
-    assert_eq!(app.selected_team_index, 1);
-    assert_eq!(app.screen, Screen::CycleList);
+    assert_eq!(app.nav.team, 1);
+    assert_eq!(app.nav.screen, Screen::CycleList);
     assert!(
         app.store.issues[IssueSource::Team].items.is_empty(),
         "the old team's issues are dropped"
     );
     assert!(
-        app.requests
+        app.outbox
+            .requests
             .iter()
             .any(|r| matches!(r, Request::Cycles { team_id, .. } if team_id == "t2"))
     );
@@ -682,11 +686,11 @@ fn the_sidebar_shows_only_the_current_team() {
         SidebarRow::Item(i) if i.action == SidebarAction::SwitchTeam
     )));
 
-    app.sidebar_index = 0;
+    app.view.sidebar.index = 0;
     for _ in 0..app.frame.sidebar_rows.len() {
         app.sidebar_move(1);
         assert!(matches!(
-            app.frame.sidebar_rows[app.sidebar_index],
+            app.frame.sidebar_rows[app.view.sidebar.index],
             SidebarRow::Item(_)
         ));
     }
@@ -696,13 +700,13 @@ fn the_sidebar_shows_only_the_current_team() {
 fn the_team_switcher_goes_to_the_picked_team() {
     let mut app = app_with(vec![]);
     app.store.teams = vec![team("t1", "Core"), team("t2", "Ops")];
-    app.nav = Nav::MyIssues;
+    app.nav.dest = Nav::MyIssues;
     app.run_sidebar_action(SidebarAction::SwitchTeam);
-    assert_eq!(app.popup, Popup::TeamSelect);
-    app.popup_index = 1;
+    assert_eq!(app.view.popup, Popup::TeamSelect);
+    app.view.popup_index = 1;
     app.select_team();
-    assert_eq!(app.nav, Nav::Team(1, TeamSection::Issues));
-    assert_eq!(app.selected_team_index, 1);
+    assert_eq!(app.nav.dest, Nav::Team(1, TeamSection::Issues));
+    assert_eq!(app.nav.team, 1);
 }
 
 #[test]
@@ -711,9 +715,9 @@ fn switching_team_keeps_the_page() {
     app.store.teams = vec![team("t1", "Core"), team("t2", "Ops")];
     app.go_to_team_section(TeamSection::Cycles);
     app.open_team_select();
-    app.popup_index = 1;
+    app.view.popup_index = 1;
     app.select_team();
-    assert_eq!(app.nav, Nav::Team(1, TeamSection::Cycles));
+    assert_eq!(app.nav.dest, Nav::Team(1, TeamSection::Cycles));
 }
 
 #[test]
@@ -781,16 +785,16 @@ fn a_project_favorite_opens_the_project_and_esc_returns_to_the_sidebar() {
         r#"{"id":"x","type":"project","sortOrder":1,"project":{"id":"p1","name":"Launch","lead":null}}"#,
     )];
     app.activate(Nav::Favorite(0));
-    assert_eq!(app.screen, Screen::ProjectDetail);
-    assert_eq!(app.current_project.as_ref().unwrap().id, "p1");
+    assert_eq!(app.nav.screen, Screen::ProjectDetail);
+    assert_eq!(app.nav.current_project.as_ref().unwrap().id, "p1");
     assert!(matches!(
-        app.requests.back(),
+        app.outbox.requests.back(),
         Some(Request::ProjectIssues { .. })
     ));
     app.leave_container();
-    assert!(app.sidebar_focus);
+    assert!(app.view.sidebar.focus);
     assert_eq!(
-        app.screen,
+        app.nav.screen,
         Screen::ProjectDetail,
         "nothing behind it to go back to"
     );
@@ -801,17 +805,17 @@ fn an_issue_favorite_opens_the_detail_and_esc_restores_where_you_were() {
     let mut app = app_with(vec![]);
     app.store.favorites = vec![fav(r#"{"id":"x","type":"issue","sortOrder":1,
             "issue":{"id":"i1","identifier":"ENG-1","title":"Bug"}}"#)];
-    app.nav = Nav::MyIssues;
+    app.nav.dest = Nav::MyIssues;
     app.activate(Nav::Favorite(0));
-    assert_eq!(app.screen, Screen::IssueDetail);
-    assert_eq!(app.nav, Nav::Favorite(0));
+    assert_eq!(app.nav.screen, Screen::IssueDetail);
+    assert_eq!(app.nav.dest, Nav::Favorite(0));
     assert!(matches!(
-        app.requests.back(),
+        app.outbox.requests.back(),
         Some(Request::IssueDetail { .. })
     ));
     app.close_detail();
-    assert_eq!(app.nav, Nav::MyIssues);
-    assert_eq!(app.screen, Screen::IssueList);
+    assert_eq!(app.nav.dest, Nav::MyIssues);
+    assert_eq!(app.nav.screen, Screen::IssueList);
 }
 
 #[test]
@@ -820,11 +824,11 @@ fn a_favorite_with_no_page_here_opens_in_the_browser() {
     app.store.favorites = vec![fav(
         r#"{"id":"x","type":"document","sortOrder":1,"url":"https://linear.app/d"}"#,
     )];
-    let before = app.nav;
+    let before = app.nav.dest;
     app.activate(Nav::Favorite(0));
-    assert_eq!(app.nav, before);
+    assert_eq!(app.nav.dest, before);
     assert!(
-        matches!(app.requests.back(), Some(Request::OpenUrl(u)) if u == "https://linear.app/d")
+        matches!(app.outbox.requests.back(), Some(Request::OpenUrl(u)) if u == "https://linear.app/d")
     );
 }
 
@@ -832,12 +836,12 @@ fn a_favorite_with_no_page_here_opens_in_the_browser() {
 fn a_views_refetch_keeps_the_open_view_by_identity() {
     let mut app = app_with(vec![]);
     app.store.custom_views = vec![view("a", "A", false), view("b", "B", false)];
-    app.nav = Nav::View(1);
+    app.nav.dest = Nav::View(1);
     app.handle_message(Message::CustomViews(vec![
         view("b", "B", false),
         view("z", "Z", true),
     ]));
-    assert_eq!(app.nav, Nav::View(0));
+    assert_eq!(app.nav.dest, Nav::View(0));
     assert_eq!(app.store.custom_views[0].id, "b");
 }
 
@@ -875,7 +879,7 @@ fn views_pages_list_by_scope_and_kind() {
     assert_eq!(names(&app), ["Roadmap"]);
 
     app.activate(Nav::Team(0, TeamSection::Views));
-    assert_eq!(app.screen, Screen::ViewList);
+    assert_eq!(app.nav.screen, Screen::ViewList);
     assert_eq!(names(&app), ["Core roadmap"]);
     app.set_view_kind(ViewKind::Issues);
     assert_eq!(names(&app), ["Core board"]);
@@ -886,9 +890,9 @@ fn a_project_view_opens_as_a_project_list() {
     let mut app = app_with(vec![]);
     app.store.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
     app.activate(Nav::View(0));
-    assert_eq!(app.screen, Screen::ProjectList);
+    assert_eq!(app.nav.screen, Screen::ProjectList);
     assert!(matches!(
-        app.requests.back(),
+        app.outbox.requests.back(),
         Some(Request::ViewProjects { after: None, .. })
     ));
 
@@ -904,9 +908,9 @@ fn a_project_view_opens_as_a_project_list() {
         "rows come from the view, not the team"
     );
     app.open_project_detail();
-    assert_eq!(app.current_project.as_ref().unwrap().id, "p1");
+    assert_eq!(app.nav.current_project.as_ref().unwrap().id, "p1");
     app.leave_container();
-    assert_eq!(app.screen, Screen::ProjectList, "back to the view");
+    assert_eq!(app.nav.screen, Screen::ProjectList, "back to the view");
 }
 
 #[test]
@@ -915,7 +919,7 @@ fn opening_the_same_project_view_again_does_not_refetch() {
     app.store.custom_views = vec![scoped_view("p", "Roadmap", None, "Project")];
     app.store.loaded_view_projects_id = Some("p".into());
     app.activate(Nav::View(0));
-    assert!(app.requests.is_empty());
+    assert!(app.outbox.requests.is_empty());
 }
 
 #[test]
@@ -938,7 +942,7 @@ fn stepping_through_issues_from_the_detail_view() {
     assert_eq!(app.detail_position(), Some((0, 2)));
     app.step_issue(1);
     assert_eq!(app.store.current_issue.as_ref().unwrap().id, "2");
-    assert_eq!(app.lists[IssueSource::Team].selected, 1);
+    assert_eq!(app.view.lists[IssueSource::Team].selected, 1);
     app.step_issue(1);
     assert_eq!(
         app.store.current_issue.as_ref().unwrap().id,
@@ -946,18 +950,18 @@ fn stepping_through_issues_from_the_detail_view() {
         "clamped at the end"
     );
     app.close_detail();
-    assert_eq!(app.screen, Screen::IssueList);
+    assert_eq!(app.nav.screen, Screen::IssueList);
 }
 
 #[test]
 fn the_detail_view_returns_to_the_project_it_came_from() {
     let mut app = app_with(vec![]);
     app.store.issues[IssueSource::Project].items = vec![stated("1", "s", "Todo", "unstarted")];
-    app.screen = Screen::ProjectDetail;
+    app.nav.screen = Screen::ProjectDetail;
     app.open_issue_detail();
-    assert_eq!(app.screen, Screen::IssueDetail);
+    assert_eq!(app.nav.screen, Screen::IssueDetail);
     app.close_detail();
-    assert_eq!(app.screen, Screen::ProjectDetail);
+    assert_eq!(app.nav.screen, Screen::ProjectDetail);
 }
 
 // ------------------------------------------------------------------ mouse
@@ -976,10 +980,10 @@ fn clicking_a_row_selects_it_and_clicking_again_opens_it() {
     clickable(&mut app);
     // Row 0 is the "Todo" header, rows 1 and 2 the issues.
     app.click(40, 7);
-    assert_eq!(app.lists[IssueSource::Team].selected, 1);
-    assert_eq!(app.screen, Screen::IssueList);
+    assert_eq!(app.view.lists[IssueSource::Team].selected, 1);
+    assert_eq!(app.nav.screen, Screen::IssueList);
     app.click(40, 7);
-    assert_eq!(app.screen, Screen::IssueDetail);
+    assert_eq!(app.nav.screen, Screen::IssueDetail);
     assert_eq!(app.store.current_issue.as_ref().unwrap().id, "2");
 }
 
@@ -988,7 +992,7 @@ fn clicking_a_group_header_folds_it() {
     let mut app = app_with(vec![stated("1", "s", "Todo", "unstarted")]);
     clickable(&mut app);
     app.click(40, 5);
-    assert!(app.collapsed_groups.contains("status:s"));
+    assert!(app.view.collapsed_groups.contains("status:s"));
 }
 
 #[test]
@@ -1007,9 +1011,9 @@ fn clicking_a_sidebar_entry_navigates() {
     app.frame.sidebar_area = Rect::new(0, 2, 25, 30);
     // Row 0 is My Issues.
     app.click(10, 2);
-    assert_eq!(app.nav, Nav::MyIssues);
+    assert_eq!(app.nav.dest, Nav::MyIssues);
     assert!(matches!(
-        app.requests.back(),
+        app.outbox.requests.back(),
         Some(Request::MyIssues { .. })
     ));
 }
@@ -1020,7 +1024,7 @@ fn clicking_a_popup_entry_applies_it() {
     app.open_priority_change();
     app.frame.popup_area = Rect::new(10, 10, 30, 5);
     app.click(15, 11); // second entry: Urgent
-    assert_eq!(app.popup, Popup::None);
+    assert_eq!(app.view.popup, Popup::None);
     assert_eq!(
         app.store.issues[IssueSource::Team].items[0].priority,
         Priority::Urgent
@@ -1033,8 +1037,8 @@ fn clicking_outside_a_popup_closes_it() {
     app.open_priority_change();
     app.frame.popup_area = Rect::new(10, 10, 30, 5);
     app.click(0, 0);
-    assert_eq!(app.popup, Popup::None);
-    assert!(app.requests.is_empty());
+    assert_eq!(app.view.popup, Popup::None);
+    assert!(app.outbox.requests.is_empty());
 }
 
 // ------------------------------------------------------- stale responses
@@ -1064,7 +1068,7 @@ fn switching_team_forgets_the_old_teams_cursors() {
     };
     app.activate(Nav::Team(1, TeamSection::Issues));
     assert!(!app.store.issues[IssueSource::Team].page_info.has_next_page);
-    assert!(app.requests.contains(&Request::TeamContext {
+    assert!(app.outbox.requests.contains(&Request::TeamContext {
         team_id: "t2".into()
     }));
 }
@@ -1106,9 +1110,9 @@ fn my_issues_with_team_b_issue() -> App {
         &[("a-todo", "Todo"), ("a-done", "Done")],
         vec![member("ua", "Ann")],
     ));
-    app.nav = Nav::MyIssues;
+    app.nav.dest = Nav::MyIssues;
     app.store.issues[IssueSource::My].items = vec![of_team("1", "b", "b-doing")];
-    app.requests.clear();
+    app.outbox.requests.clear();
     app
 }
 
@@ -1119,14 +1123,14 @@ fn status_popup_on_another_teams_issue_lists_that_teams_states() {
     app.open_status_change();
 
     // Team B is not loaded yet: fetch it, and offer nothing to pick meanwhile.
-    assert_eq!(app.popup, Popup::StatusChange("1".into()));
-    assert!(app.requests.contains(&Request::TeamContext {
+    assert_eq!(app.view.popup, Popup::StatusChange("1".into()));
+    assert!(app.outbox.requests.contains(&Request::TeamContext {
         team_id: "b".into()
     }));
     assert!(app.popup_loading());
     assert_eq!(app.popup_list_len(), 0);
     app.apply_popup();
-    assert_eq!(app.popup, Popup::StatusChange("1".into()));
+    assert_eq!(app.view.popup, Popup::StatusChange("1".into()));
 
     app.handle_message(context_message(
         "b",
@@ -1138,11 +1142,11 @@ fn status_popup_on_another_teams_issue_lists_that_teams_states() {
     let names: Vec<&str> = app.popup_states().iter().map(|s| s.name.as_str()).collect();
     assert_eq!(names, ["Backlog", "Doing"]);
     // Starts on the issue's current state.
-    assert_eq!(app.popup_index, 1);
+    assert_eq!(app.view.popup_index, 1);
 
-    app.popup_index = 0;
+    app.view.popup_index = 0;
     app.apply_popup();
-    assert!(app.requests.contains(&Request::UpdateStatus {
+    assert!(app.outbox.requests.contains(&Request::UpdateStatus {
         issue_id: "1".into(),
         state_id: "b-todo".into(),
     }));
@@ -1154,11 +1158,11 @@ fn status_popup_on_another_teams_issue_lists_that_teams_states() {
 fn a_loaded_team_is_not_fetched_again() {
     let mut app = my_issues_with_team_b_issue();
     app.handle_message(context_message("b", &[("b-doing", "Doing")], Vec::new()));
-    app.requests.clear();
+    app.outbox.requests.clear();
 
     app.open_status_change();
 
-    assert!(app.requests.is_empty());
+    assert!(app.outbox.requests.is_empty());
     assert_eq!(app.popup_list_len(), 1);
 }
 
@@ -1167,28 +1171,28 @@ fn a_team_in_flight_is_asked_for_once() {
     let mut app = my_issues_with_team_b_issue();
     app.open_status_change();
     app.close_popup();
-    app.requests.clear();
+    app.outbox.requests.clear();
 
     app.open_status_change();
 
-    assert!(app.requests.is_empty());
+    assert!(app.outbox.requests.is_empty());
 }
 
 #[test]
 fn a_failed_team_context_is_asked_for_again() {
     let mut app = my_issues_with_team_b_issue();
     app.open_status_change();
-    let request = app.requests.pop_front().unwrap();
+    let request = app.outbox.requests.pop_front().unwrap();
     app.handle_message(Message::Failed {
         request: Box::new(request),
         error: "boom".into(),
     });
-    app.error_popup = None;
+    app.view.error_popup = None;
     app.close_popup();
 
     app.open_status_change();
 
-    assert!(app.requests.contains(&Request::TeamContext {
+    assert!(app.outbox.requests.contains(&Request::TeamContext {
         team_id: "b".into()
     }));
 }
@@ -1200,9 +1204,9 @@ fn assignee_popup_on_another_teams_issue_lists_that_teams_members() {
     app.open_assignee_change();
     // Unassign needs no team, so it stays pickable while members load.
     assert_eq!(app.popup_list_len(), 1);
-    app.popup_index = 1;
+    app.view.popup_index = 1;
     app.apply_popup();
-    assert_eq!(app.popup, Popup::AssigneeChange("1".into()));
+    assert_eq!(app.view.popup, Popup::AssigneeChange("1".into()));
 
     app.handle_message(context_message("b", &[], vec![member("ub", "Bob")]));
 
@@ -1240,9 +1244,9 @@ fn status_filter_offers_the_states_of_the_teams_in_the_list() {
 #[test]
 fn issues_for_a_project_already_left_are_dropped() {
     let mut app = app_with(vec![]);
-    app.current_project =
+    app.nav.current_project =
         Some(serde_json::from_str(r#"{"id":"p2","name":"B","lead":null}"#).unwrap());
-    app.screen = Screen::ProjectDetail;
+    app.nav.screen = Screen::ProjectDetail;
     app.handle_message(Message::ProjectIssues {
         project_id: "p1".into(),
         page: page(vec![issue("9", "ENG-9", "stale")], false),
@@ -1255,7 +1259,7 @@ fn issues_for_a_project_already_left_are_dropped() {
 fn a_first_page_for_a_view_no_longer_open_is_dropped() {
     let mut app = app_with(vec![]);
     app.store.custom_views = vec![view("v1", "Mine", false), view("v2", "Theirs", false)];
-    app.nav = Nav::View(1);
+    app.nav.dest = Nav::View(1);
     app.handle_message(Message::ViewIssues {
         view_id: "v1".into(),
         page: page(vec![issue("9", "ENG-9", "stale")], false),
@@ -1273,7 +1277,7 @@ fn search_results_for_a_team_already_left_are_dropped() {
         issues: vec![issue("9", "OPS-9", "x")],
     });
     assert_eq!(app.store.issues[IssueSource::Team].items[0].id, "1");
-    assert_eq!(app.global_search, None);
+    assert_eq!(app.nav.global_search, None);
 }
 
 // ------------------------------------------------------------- failures
@@ -1282,16 +1286,22 @@ fn search_results_for_a_team_already_left_are_dropped() {
 fn a_failed_mutation_rereads_the_issue_from_the_server() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.set_priority(Priority::Urgent);
-    let request = app.requests.pop_front().unwrap();
+    let request = app.outbox.requests.pop_front().unwrap();
     app.handle_message(Message::Failed {
         request: Box::new(request),
         error: "nope".into(),
     });
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::IssueDetail { issue_id }) if issue_id == "1"
     ));
-    assert!(app.error_popup.as_deref().unwrap().contains("priority"));
+    assert!(
+        app.view
+            .error_popup
+            .as_deref()
+            .unwrap()
+            .contains("priority")
+    );
 
     // Linear's answer puts every copy back.
     app.handle_message(Message::IssueDetail(Box::new(issue("1", "ENG-1", "a"))));
@@ -1313,7 +1323,7 @@ fn a_failed_page_can_be_requested_again() {
         end_cursor: Some("c1".into()),
     };
     app.select_last();
-    let request = app.requests.pop_front().unwrap();
+    let request = app.outbox.requests.pop_front().unwrap();
     app.handle_message(Message::Failed {
         request: Box::new(request),
         error: "timeout".into(),
@@ -1321,7 +1331,7 @@ fn a_failed_page_can_be_requested_again() {
     app.move_selection(-1);
     app.move_selection(1);
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::Issues { after: Some(c), .. }) if c == "c1"
     ));
 }
@@ -1343,10 +1353,10 @@ fn an_appended_page_keeps_the_cursor_and_the_popup_on_their_issue() {
     assert_eq!(app.visible_issues()[0].id, "b");
     assert_eq!(app.focused_issue().unwrap().id, "a");
 
-    app.popup_index = Priority::High.as_index();
+    app.view.popup_index = Priority::High.as_index();
     app.apply_priority_selection();
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::UpdatePriority { issue_id, .. }) if issue_id == "a"
     ));
 }
@@ -1369,7 +1379,7 @@ fn a_filtered_list_still_prefetches_at_its_last_visible_row() {
     }
     app.move_selection(1);
     assert!(matches!(
-        app.requests.front(),
+        app.outbox.requests.front(),
         Some(Request::Issues { after: Some(_), .. })
     ));
 }
@@ -1377,12 +1387,12 @@ fn a_filtered_list_still_prefetches_at_its_last_visible_row() {
 #[test]
 fn filtering_resets_the_cursor_of_the_list_on_screen() {
     let mut app = app_with(vec![]);
-    app.nav = Nav::MyIssues;
+    app.nav.dest = Nav::MyIssues;
     app.store.issues[IssueSource::My].items =
         vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
-    app.lists[IssueSource::My].selected = 1;
+    app.view.lists[IssueSource::My].selected = 1;
     app.clear_filters();
-    assert_eq!(app.lists[IssueSource::My].selected, 0);
+    assert_eq!(app.view.lists[IssueSource::My].selected, 0);
 }
 
 /// Regression: the search box and filters were one set shared by every
@@ -1390,9 +1400,9 @@ fn filtering_resets_the_cursor_of_the_list_on_screen() {
 #[test]
 fn each_list_keeps_its_own_search_and_filters() {
     let mut app = app_with(vec![issue("1", "ENG-1", "alpha")]);
-    app.current_project =
+    app.nav.current_project =
         Some(serde_json::from_str(r#"{"id":"p1","name":"P","lead":null}"#).unwrap());
-    app.screen = Screen::ProjectDetail;
+    app.nav.screen = Screen::ProjectDetail;
     app.store.issues[IssueSource::Project].items = vec![issue("2", "ENG-2", "beta")];
     app.start_search();
     for c in "zzz".chars() {
@@ -1402,7 +1412,7 @@ fn each_list_keeps_its_own_search_and_filters() {
     assert!(app.visible_issues().is_empty());
 
     app.leave_container();
-    app.screen = Screen::IssueList;
+    app.nav.screen = Screen::IssueList;
     assert_eq!(app.visible_issues().len(), 1, "the team list is untouched");
 }
 
@@ -1410,6 +1420,12 @@ fn each_list_keeps_its_own_search_and_filters() {
 fn config_warnings_are_shown_at_startup() {
     let config = Config::parse("[ui]\ntheem = 1\n").unwrap();
     let app = App::new(&config);
-    assert!(app.error_popup.as_deref().unwrap().contains("ui.theem"));
-    assert!(App::new(&Config::default()).error_popup.is_none());
+    assert!(
+        app.view
+            .error_popup
+            .as_deref()
+            .unwrap()
+            .contains("ui.theem")
+    );
+    assert!(App::new(&Config::default()).view.error_popup.is_none());
 }

@@ -11,7 +11,7 @@ use crate::config::Theme;
 
 /// Draw the modal issue-creation form.
 pub fn draw(f: &mut Frame, app: &App) {
-    let Some(form) = &app.new_issue else {
+    let Some(form) = &app.view.new_issue else {
         return;
     };
     let th = &app.theme;

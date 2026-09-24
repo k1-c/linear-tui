@@ -38,10 +38,10 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
     let Some(issue) = app.store.current_issue.as_ref() else {
         return;
     };
-    let comment_mode = app.input_mode == InputMode::Comment;
+    let comment_mode = app.view.input_mode == InputMode::Comment;
 
     let comment_height = if comment_mode {
-        let entered = app.comment.value.split('\n').count() as u16;
+        let entered = app.view.comment.value.split('\n').count() as u16;
         entered.saturating_add(2).clamp(4, 12)
     } else {
         0
@@ -69,7 +69,7 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
 
     app.frame.detail_lines = u16::try_from(body.len).unwrap_or(u16::MAX);
     app.frame.detail_viewport = body_area.height;
-    app.detail_scroll = app.detail_scroll.min(
+    app.view.detail_scroll = app.view.detail_scroll.min(
         app.frame
             .detail_lines
             .saturating_sub(app.frame.detail_viewport),
@@ -77,7 +77,11 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
 
     // Only the lines in view go to the widget, already scrolled: the body is
     // pre-wrapped, so this draws exactly what `Paragraph::scroll` would.
-    let in_view = body.window(memo, app.detail_scroll as usize, body_area.height as usize);
+    let in_view = body.window(
+        memo,
+        app.view.detail_scroll as usize,
+        body_area.height as usize,
+    );
     f.render_widget(Paragraph::new(in_view), body_area);
 
     if app.frame.detail_lines > app.frame.detail_viewport {
@@ -86,7 +90,7 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
                 .detail_lines
                 .saturating_sub(app.frame.detail_viewport) as usize,
         )
-        .position(app.detail_scroll as usize);
+        .position(app.view.detail_scroll as usize);
         f.render_stateful_widget(
             Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -113,7 +117,7 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
 
 fn draw_comment_editor(f: &mut Frame, app: &App, area: Rect) {
     let th = &app.theme;
-    let editor = Paragraph::new(super::input_lines(&app.comment, th)).block(
+    let editor = Paragraph::new(super::input_lines(&app.view.comment, th)).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(th.accent))

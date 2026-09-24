@@ -63,7 +63,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         app.frame.row_targets.clear();
         let message = if app.loading() {
             format!("{} Loading projects\u{2026}", app.spinner_symbol())
-        } else if matches!(app.nav, crate::app::Nav::View(_)) {
+        } else if matches!(app.nav.dest, crate::app::Nav::View(_)) {
             "No projects in this view".to_string()
         } else {
             "No projects in this team".to_string()

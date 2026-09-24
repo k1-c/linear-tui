@@ -84,7 +84,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     }
 
     let height = list.height as usize;
-    let sel = app.selected_cycle_index;
+    let sel = app.view.selected_cycle_index;
     let mut offset = app.frame.offsets.cycles;
     if sel < offset {
         offset = sel;

@@ -82,7 +82,7 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect, count: usize) {
         ));
     }
     right.push(Span::styled(
-        format!("{} ", app.group_by.label()),
+        format!("{} ", app.view.group_by.label()),
         Style::default().fg(th.text_dim),
     ));
     right.push(Span::styled("\u{00b7} ", Style::default().fg(th.muted)));
@@ -170,8 +170,9 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) -> usize {
     // says is left out: the project inside a project, the assignee when
     // grouped by assignee.
     let columns = Columns {
-        project: app.issue_source() != IssueSource::Project && app.group_by != GroupBy::Project,
-        assignee: app.group_by != GroupBy::Assignee,
+        project: app.issue_source() != IssueSource::Project
+            && app.view.group_by != GroupBy::Project,
+        assignee: app.view.group_by != GroupBy::Assignee,
     };
 
     let lines: Vec<Line> = rows

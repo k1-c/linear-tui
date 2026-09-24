@@ -15,7 +15,7 @@ use crate::api::types::hex_color;
 use crate::app::App;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
-    let Some(project) = app.current_project.clone() else {
+    let Some(project) = app.nav.current_project.clone() else {
         return;
     };
     let th = app.theme;

@@ -106,7 +106,7 @@ impl App {
                     continue;
                 }
                 rows.push(self.favorite_row(index, 0));
-                if fav.is_folder() && !self.collapsed_folders.contains(&fav.id) {
+                if fav.is_folder() && !self.view.sidebar.collapsed_folders.contains(&fav.id) {
                     for (child, _) in self
                         .store
                         .favorites
@@ -123,7 +123,7 @@ impl App {
         // The team is a switcher: one row naming the current team, and only
         // that team's pages beneath it.
         if let Some(team) = self.current_team() {
-            let index = self.selected_team_index;
+            let index = self.nav.team;
             rows.push(SidebarRow::Gap);
             rows.push(SidebarRow::Header("Team".into()));
             rows.push(SidebarRow::Item(SidebarItem {
@@ -212,7 +212,7 @@ impl App {
             action: self.favorite_action(index),
             expanded: fav
                 .is_folder()
-                .then(|| !self.collapsed_folders.contains(&fav.id)),
+                .then(|| !self.view.sidebar.collapsed_folders.contains(&fav.id)),
             trailing: None,
             tone: Tone::Strong,
         })
@@ -261,12 +261,12 @@ impl App {
         let Some(fav) = self.store.favorites.get(index).cloned() else {
             return;
         };
-        self.sidebar_focus = false;
+        self.view.sidebar.focus = false;
         if let Some(project) = fav.project {
-            self.nav = Nav::Favorite(index);
+            self.nav.dest = Nav::Favorite(index);
             self.open_project(project);
         } else if let Some(cycle) = fav.cycle {
-            self.nav = Nav::Favorite(index);
+            self.nav.dest = Nav::Favorite(index);
             self.open_cycle(cycle);
         } else if let Some(issue) = fav.issue {
             // Just enough to draw the header; the detail fetch fills the rest.
@@ -278,7 +278,7 @@ impl App {
                 ..Issue::default()
             };
             self.open_issue_from_list(&stub);
-            self.nav = Nav::Favorite(index);
+            self.nav.dest = Nav::Favorite(index);
         } else if let Some(url) = fav.url {
             self.request(Request::OpenUrl(url));
         } else {
@@ -304,11 +304,11 @@ impl App {
         }
         let current = stops
             .iter()
-            .position(|i| *i == self.sidebar_index)
+            .position(|i| *i == self.view.sidebar.index)
             .unwrap_or(0);
         let mut next = current;
         Self::nav_by(stops.len(), &mut next, delta);
-        self.sidebar_index = stops[next];
+        self.view.sidebar.index = stops[next];
     }
 
     fn sidebar_item(&self, index: usize) -> Option<&SidebarItem> {
@@ -320,7 +320,7 @@ impl App {
 
     /// Enter on the sidebar.
     pub fn sidebar_activate(&mut self) {
-        if let Some(action) = self.sidebar_item(self.sidebar_index).map(|i| i.action) {
+        if let Some(action) = self.sidebar_item(self.view.sidebar.index).map(|i| i.action) {
             self.run_sidebar_action(action);
         }
     }
@@ -336,7 +336,7 @@ impl App {
     /// `h`/`l` on the sidebar: fold or unfold the folder under the cursor.
     pub fn sidebar_toggle(&mut self) {
         if let Some(SidebarAction::Fold(index)) =
-            self.sidebar_item(self.sidebar_index).map(|i| i.action)
+            self.sidebar_item(self.view.sidebar.index).map(|i| i.action)
         {
             self.toggle_folder(index);
         }
@@ -346,33 +346,33 @@ impl App {
         let Some(id) = self.store.favorites.get(index).map(|f| f.id.clone()) else {
             return;
         };
-        if !self.collapsed_folders.remove(&id) {
-            self.collapsed_folders.insert(id);
+        if !self.view.sidebar.collapsed_folders.remove(&id) {
+            self.view.sidebar.collapsed_folders.insert(id);
         }
         self.frame.sidebar_rows = self.sidebar_layout();
     }
 
     /// Move focus between the sidebar and the content pane.
     pub fn focus_sidebar(&mut self, focused: bool) {
-        if focused && !self.sidebar_visible {
+        if focused && !self.view.sidebar.visible {
             return;
         }
-        self.sidebar_focus = focused;
+        self.view.sidebar.focus = focused;
         if focused {
             // Start on the row matching where the content pane already is, so
             // the sidebar opens pointing at you rather than at the top.
             if let Some(index) = self.frame.sidebar_rows.iter().position(
-                |row| matches!(row, SidebarRow::Item(item) if item.nav() == Some(self.nav)),
+                |row| matches!(row, SidebarRow::Item(item) if item.nav() == Some(self.nav.dest)),
             ) {
-                self.sidebar_index = index;
+                self.view.sidebar.index = index;
             }
         }
     }
 
     pub fn toggle_sidebar(&mut self) {
-        self.sidebar_visible = !self.sidebar_visible;
-        if !self.sidebar_visible {
-            self.sidebar_focus = false;
+        self.view.sidebar.visible = !self.view.sidebar.visible;
+        if !self.view.sidebar.visible {
+            self.view.sidebar.focus = false;
         }
     }
 }
