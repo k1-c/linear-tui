@@ -11,8 +11,9 @@ keywords = ["tui", "linear", "issue-tracker", "cli", "project-management"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
 # The README links the GIF by URL, so the crate need not carry it, and the
-# demo scripts are only for recording it.
-exclude = ["assets/demo.gif", "demo/"]
+# demo scripts are only for recording it. The herdr plugin is installed from
+# the repository, not from the crate.
+exclude = ["assets/demo.gif", "demo/", "herdr-plugin/"]
 
 [dependencies]
 # TUI

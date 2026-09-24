@@ -80,6 +80,8 @@ the pins current, so never add one by tag or branch.
 - `tests/fixtures/` — API response fixtures for deserialization tests
 - `src/auth/` — OAuth2 + PKCE, token storage, API key fallback
 - `src/config.rs` — config file + theme (`~/.config/linear-tui/config.toml`)
+- `herdr-plugin/` — the herdr plugin (`docs/herdr.md`): a manifest and shell
+  scripts; every herdr call lives here, never in the Rust code
 - `demo/` — the README GIF: `seed.py` fills a throwaway workspace, `demo.tape`
   is the VHS script, `record.sh` records it into `assets/demo.gif`
 

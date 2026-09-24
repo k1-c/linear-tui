@@ -142,6 +142,18 @@ linear-tui issue create --team ENG --title "Retry payment webhooks"
 Every command takes `--json`. The output formats are specified in
 [docs/cli.md](docs/cli.md).
 
+### In herdr
+
+With [herdr](https://herdr.dev/), the plugin in `herdr-plugin/` opens
+linear-tui as a pane over any workspace and can introduce it to the agents you
+start:
+
+```sh
+herdr plugin install k1-c/linear-tui/herdr-plugin
+```
+
+See [docs/herdr.md](docs/herdr.md) for keybindings and settings.
+
 ## Keybindings
 
 Shortcuts follow [Linear's own keyboard shortcuts](https://linear.app/docs) wherever
