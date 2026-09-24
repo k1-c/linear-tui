@@ -111,15 +111,75 @@ impl<T> Page<T> {
     }
 }
 
+impl Request {
+    /// The page cursor this request continues from, if it is a next-page fetch.
+    pub fn cursor(&self) -> Option<&str> {
+        match self {
+            Self::Issues { after, .. }
+            | Self::MyIssues { after, .. }
+            | Self::ViewIssues { after, .. }
+            | Self::ViewProjects { after, .. }
+            | Self::Projects { after, .. }
+            | Self::Cycles { after, .. }
+            | Self::ProjectIssues { after, .. }
+            | Self::CycleIssues { after, .. } => after.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// The issue an optimistic mutation already patched locally, whose copy
+    /// must be re-read from the server if the mutation fails.
+    pub fn patched_issue(&self) -> Option<&str> {
+        match self {
+            Self::UpdateStatus { issue_id, .. }
+            | Self::UpdatePriority { issue_id, .. }
+            | Self::UpdateAssignee { issue_id, .. } => Some(issue_id),
+            _ => None,
+        }
+    }
+
+    /// What failed, as the error popup phrases it.
+    pub fn failure(&self) -> &'static str {
+        match self {
+            Self::Teams => "Failed to load teams",
+            Self::Viewer => "Failed to identify current user",
+            Self::TeamContext { .. } => "Failed to load team context",
+            Self::Issues { .. } => "Failed to load issues",
+            Self::MyIssues { .. } => "Failed to load my issues",
+            Self::Search { .. } => "Search failed",
+            Self::CustomViews => "Failed to load views",
+            Self::Favorites => "Failed to load favorites",
+            Self::ViewIssues { .. } => "Failed to load view issues",
+            Self::ViewProjects { .. } => "Failed to load view projects",
+            Self::Projects { .. } => "Failed to load projects",
+            Self::Cycles { .. } => "Failed to load cycles",
+            Self::IssueDetail { .. } => "Failed to load detail",
+            Self::ProjectIssues { .. } => "Failed to load project issues",
+            Self::CycleIssues { .. } => "Failed to load cycle issues",
+            Self::UpdateStatus { .. } => "Failed to update status",
+            Self::UpdatePriority { .. } => "Failed to update priority",
+            Self::UpdateAssignee { .. } => "Failed to update assignee",
+            Self::CreateComment { .. } => "Failed to post comment",
+            Self::CreateIssue { .. } => "Failed to create issue",
+            Self::OpenUrl(_) => "Failed to open browser",
+        }
+    }
+}
+
+/// Every response that fills a list names what it was fetched for — the team,
+/// view, project, or cycle — so a reply that lands after the user has moved
+/// on can be told apart from one for the list on screen and dropped.
 #[derive(Debug)]
 pub enum Message {
     Teams(Vec<Team>),
     Viewer(String),
     TeamContext {
+        team_id: String,
         states: Vec<WorkflowState>,
         members: Vec<User>,
     },
     Issues {
+        team_id: String,
         /// Echoed back so a page fetched for another preset can be dropped.
         preset: Preset,
         page: Page<Issue>,
@@ -127,6 +187,7 @@ pub enum Message {
     MyIssues(Page<Issue>),
     SearchResults {
         term: String,
+        team_id: Option<String>,
         issues: Vec<Issue>,
     },
     CustomViews(Vec<CustomView>),
@@ -140,13 +201,34 @@ pub enum Message {
         view_id: String,
         page: Page<Project>,
     },
-    Projects(Page<Project>),
-    Cycles(Page<Cycle>),
+    Projects {
+        team_id: String,
+        page: Page<Project>,
+    },
+    Cycles {
+        team_id: String,
+        page: Page<Cycle>,
+    },
     IssueDetail(Box<Issue>),
-    ProjectIssues(Page<Issue>),
-    CycleIssues(Page<Issue>),
-    IssueCreated(Box<Issue>),
+    ProjectIssues {
+        project_id: String,
+        page: Page<Issue>,
+    },
+    CycleIssues {
+        cycle_id: String,
+        page: Page<Issue>,
+    },
+    IssueCreated {
+        team_id: String,
+        issue: Box<Issue>,
+    },
     /// A mutation succeeded; carries the status line to show.
     Mutated(&'static str),
-    Error(String),
+    /// A request failed. Carries the request itself, so the failure can be
+    /// undone precisely: a page cursor made retryable, an optimistic patch
+    /// re-read from the server.
+    Failed {
+        request: Box<Request>,
+        error: String,
+    },
 }

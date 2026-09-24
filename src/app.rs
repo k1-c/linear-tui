@@ -370,8 +370,6 @@ pub struct TableStates {
 enum Field {
     Projects,
     Cycles,
-    ProjectIssues,
-    CycleIssues,
 }
 
 /// Which field of the new-issue form has focus.
@@ -430,6 +428,10 @@ pub struct App {
     // Popup
     pub popup: Popup,
     pub popup_index: usize,
+    /// The issue a status, priority, or assignee popup was opened on. Held
+    /// by id, because the cursor can move under an open popup when a page
+    /// lands, and Enter must change the issue the user picked.
+    popup_issue: Option<String>,
 
     // Teams
     pub teams: Vec<Team>,
@@ -604,6 +606,7 @@ impl App {
             nav: Nav::Team(0, TeamSection::Issues),
             popup: Popup::None,
             popup_index: 0,
+            popup_issue: None,
             teams: Vec::new(),
             selected_team_index: 0,
             team_members: Vec::new(),
@@ -843,11 +846,6 @@ impl App {
     // ---------------------------------------------------------------- messages
 
     pub fn handle_message(&mut self, msg: Message) {
-        // Captured before the match moves `msg`; several arms need it.
-        let page_appended = match &msg {
-            Message::Issues { page: p, .. } | Message::MyIssues(p) => p.append,
-            _ => false,
-        };
         match msg {
             Message::Teams(teams) => {
                 if let Some(default_team) = &self.default_team
@@ -876,32 +874,49 @@ impl App {
                     self.reload_current_tab();
                 }
             }
-            Message::TeamContext { states, members } => {
+            Message::TeamContext {
+                team_id,
+                states,
+                members,
+            } => {
+                // The old team's states would offer status changes the new
+                // team's issues cannot take.
+                if !self.is_current_team(&team_id) {
+                    return;
+                }
                 self.workflow_states = states;
                 self.team_members = members;
             }
-            Message::Issues { preset, page } => {
-                // A page for a preset the user has since left would mix, say,
-                // backlog issues into the Active list.
-                if preset != self.presets[IssueSource::Team.slot()] {
+            Message::Issues {
+                team_id,
+                preset,
+                page,
+            } => {
+                // A page for a team or preset the user has since left would
+                // file, say, another team's backlog under this team's Active.
+                if !self.is_current_team(&team_id)
+                    || preset != self.presets[IssueSource::Team.slot()]
+                {
                     return;
                 }
-                let keep = self.selected_issue_id();
-                Self::merge_issues(&mut self.issues, page, &mut self.page_info);
-                if !page_appended {
-                    self.restore_issue_selection(keep.as_deref());
-                }
+                self.accept_issue_page(IssueSource::Team, page);
                 self.clear_status();
             }
             Message::MyIssues(page) => {
-                Self::merge_issues(&mut self.my_issues, page, &mut self.my_issues_page_info);
-                if !page_appended {
-                    self.selected_my_issue_index = 0;
-                }
+                self.accept_issue_page(IssueSource::My, page);
                 self.my_issues_loaded = true;
                 self.clear_status();
             }
-            Message::SearchResults { term, issues } => {
+            Message::SearchResults {
+                term,
+                team_id,
+                issues,
+            } => {
+                // Results scoped to a team the user has left would be shown
+                // under the new team's name.
+                if team_id.is_some() && team_id != self.team_id() {
+                    return;
+                }
                 self.nav = Nav::Team(self.selected_team_index, TeamSection::Issues);
                 self.screen = Screen::IssueList;
                 self.issues = issues;
@@ -916,6 +931,9 @@ impl App {
                 self.global_search = Some(term);
             }
             Message::ViewProjects { view_id, page } => {
+                if !self.accepts_view_page(&view_id, page.append, ViewKind::Projects) {
+                    return;
+                }
                 let append = page.append;
                 Self::merge(
                     &mut self.view_projects,
@@ -928,13 +946,19 @@ impl App {
                 self.loaded_view_projects_id = Some(view_id);
                 self.clear_status();
             }
-            Message::Projects(page) => {
+            Message::Projects { team_id, page } => {
+                if !self.is_current_team(&team_id) {
+                    return;
+                }
                 Self::merge(&mut self.projects, page, &mut self.projects_page_info);
                 self.clamp(Field::Projects);
                 self.projects_loaded = true;
                 self.clear_status();
             }
-            Message::Cycles(page) => {
+            Message::Cycles { team_id, page } => {
+                if !self.is_current_team(&team_id) {
+                    return;
+                }
                 Self::merge(&mut self.cycles, page, &mut self.cycles_page_info);
                 self.clamp(Field::Cycles);
                 self.cycles_loaded = true;
@@ -971,44 +995,35 @@ impl App {
                 self.favorites = favorites;
             }
             Message::ViewIssues { view_id, page } => {
-                let append = page.append;
-                Self::merge_issues(&mut self.view_issues, page, &mut self.view_issues_page_info);
-                if !append {
-                    self.selected_view_issue_index = 0;
+                if !self.accepts_view_page(&view_id, page.append, ViewKind::Issues) {
+                    return;
                 }
                 self.loaded_view_id = Some(view_id);
+                self.accept_issue_page(IssueSource::View, page);
                 self.clear_status();
             }
-            Message::IssueDetail(issue) => {
-                // Ignore a detail response for an issue the user already navigated away from.
-                if self
-                    .current_issue
-                    .as_ref()
-                    .is_some_and(|c| c.id == issue.id)
-                {
-                    self.current_issue = Some(*issue);
+            Message::IssueDetail(issue) => self.refresh_issue(*issue),
+            Message::ProjectIssues { project_id, page } => {
+                if self.current_project.as_ref().map(|p| p.id.as_str()) != Some(&project_id) {
+                    return;
                 }
-            }
-            Message::ProjectIssues(page) => {
-                Self::merge_issues(
-                    &mut self.project_issues,
-                    page,
-                    &mut self.project_issues_page_info,
-                );
-                self.clamp(Field::ProjectIssues);
+                self.accept_issue_page(IssueSource::Project, page);
                 self.project_issues_loaded = true;
             }
-            Message::CycleIssues(page) => {
-                Self::merge_issues(
-                    &mut self.cycle_issues,
-                    page,
-                    &mut self.cycle_issues_page_info,
-                );
-                self.clamp(Field::CycleIssues);
+            Message::CycleIssues { cycle_id, page } => {
+                if self.current_cycle.as_ref().map(|c| c.id.as_str()) != Some(&cycle_id) {
+                    return;
+                }
+                self.accept_issue_page(IssueSource::Cycle, page);
                 self.cycle_issues_loaded = true;
             }
-            Message::IssueCreated(issue) => {
+            Message::IssueCreated { team_id, issue } => {
                 self.set_status(format!("Created {}", issue.identifier));
+                // Another team's list is not on screen; its next fetch will
+                // include the issue anyway.
+                if !self.is_current_team(&team_id) {
+                    return;
+                }
                 // Show it immediately rather than waiting for a refetch, with
                 // the cursor on it — found by id, since grouping decides where
                 // in the list it lands.
@@ -1023,11 +1038,86 @@ impl App {
                 // A posted comment clears the cached thread; pull it back in.
                 self.queue_detail_fetches();
             }
-            Message::Error(err) => {
+            Message::Failed { request, error } => {
                 // A failed page must be retryable.
-                self.prefetched.clear();
-                self.set_error(err);
+                if let Some(cursor) = request.cursor() {
+                    self.prefetched.remove(cursor);
+                }
+                // The change is already on screen; ask Linear what the issue
+                // really looks like now rather than guess what to undo.
+                if let Some(issue_id) = request.patched_issue() {
+                    self.request(Request::IssueDetail {
+                        issue_id: issue_id.to_string(),
+                    });
+                }
+                self.set_error(format!("{}: {error}", request.failure()));
             }
+        }
+    }
+
+    fn is_current_team(&self, team_id: &str) -> bool {
+        self.current_team().is_some_and(|t| t.id == team_id)
+    }
+
+    /// Whether a page of saved view `view_id` belongs on screen.
+    ///
+    /// A first page is taken only for the view that is open; a next page only
+    /// when the list it would extend is that view's.
+    fn accepts_view_page(&self, view_id: &str, append: bool, kind: ViewKind) -> bool {
+        if append {
+            let loaded = match kind {
+                ViewKind::Issues => &self.loaded_view_id,
+                ViewKind::Projects => &self.loaded_view_projects_id,
+            };
+            return loaded.as_deref() == Some(view_id);
+        }
+        matches!(self.nav, Nav::View(i) if self.custom_views.get(i).is_some_and(|v| v.id == view_id))
+    }
+
+    /// Fold a page into one of the issue lists, keeping the cursor on the
+    /// issue it was on.
+    ///
+    /// Grouping decides where each row lands, so even an appended page can
+    /// slot issues in above the cursor; restoring by index would quietly move
+    /// the selection — and whatever popup is open — to another issue.
+    fn accept_issue_page(&mut self, source: IssueSource, page: Page<Issue>) {
+        let on_screen = source == self.issue_source();
+        let keep = if on_screen {
+            self.selected_issue_id()
+        } else {
+            None
+        };
+        let append = page.append;
+        let (list, info) = match source {
+            IssueSource::Team => (&mut self.issues, &mut self.page_info),
+            IssueSource::My => (&mut self.my_issues, &mut self.my_issues_page_info),
+            IssueSource::View => (&mut self.view_issues, &mut self.view_issues_page_info),
+            IssueSource::Project => (&mut self.project_issues, &mut self.project_issues_page_info),
+            IssueSource::Cycle => (&mut self.cycle_issues, &mut self.cycle_issues_page_info),
+        };
+        Self::merge_issues(list, page, info);
+        if on_screen {
+            self.restore_issue_selection(keep.as_deref());
+        } else if !append {
+            *self.selected_index_of(source) = 0;
+        }
+    }
+
+    /// Take a freshly fetched issue as the truth for every copy we hold.
+    ///
+    /// List copies keep their own `comments`: whether a copy has its thread
+    /// loaded is what decides that opening it fetches the detail.
+    fn refresh_issue(&mut self, fresh: Issue) {
+        let id = fresh.id.clone();
+        self.patch_issue(&id, |issue| {
+            let comments = issue.comments.take();
+            *issue = fresh.clone();
+            issue.comments = comments;
+        });
+        if let Some(current) = &mut self.current_issue
+            && current.id == id
+        {
+            *current = fresh;
         }
     }
 
@@ -1065,14 +1155,6 @@ impl App {
         let (len, index) = match field {
             Field::Projects => (self.projects.len(), &mut self.selected_project_index),
             Field::Cycles => (self.cycles.len(), &mut self.selected_cycle_index),
-            Field::ProjectIssues => (
-                self.project_issues.len(),
-                &mut self.selected_project_issue_index,
-            ),
-            Field::CycleIssues => (
-                self.cycle_issues.len(),
-                &mut self.selected_cycle_issue_index,
-            ),
         };
         *index = (*index).min(len.saturating_sub(1));
     }
@@ -1140,7 +1222,11 @@ impl App {
     }
 
     fn selected_index_mut(&mut self) -> &mut usize {
-        match self.issue_source() {
+        self.selected_index_of(self.issue_source())
+    }
+
+    fn selected_index_of(&mut self, source: IssueSource) -> &mut usize {
+        match source {
             IssueSource::Team => &mut self.selected_issue_index,
             IssueSource::My => &mut self.selected_my_issue_index,
             IssueSource::View => &mut self.selected_view_issue_index,
@@ -1353,7 +1439,10 @@ impl App {
     /// Ask for the next page once the cursor nears the end of the active list.
     fn maybe_prefetch(&mut self) {
         let source = self.issue_source();
-        if self.selected_index() + PREFETCH_MARGIN < self.source_issues().len() {
+        // The cursor moves through what is visible, so that is what it can
+        // reach the end of — a search or a folded group can leave most of
+        // the loaded list off screen.
+        if self.selected_index() + PREFETCH_MARGIN < self.visible_issues().len() {
             return;
         }
         let info = match source {
@@ -1591,13 +1680,15 @@ impl App {
             self.popup_index = current
                 .and_then(|id| self.workflow_states.iter().position(|s| s.id == id))
                 .unwrap_or(0);
+            self.popup_issue = self.focused_issue().map(|i| i.id.clone());
             self.popup = Popup::StatusChange;
         }
     }
 
     pub fn open_priority_change(&mut self) {
-        if let Some(issue) = self.focused_issue() {
-            self.popup_index = issue.priority.as_index();
+        if let Some((id, priority)) = self.focused_issue().map(|i| (i.id.clone(), i.priority)) {
+            self.popup_index = priority.as_index();
+            self.popup_issue = Some(id);
             self.popup = Popup::PriorityChange;
         }
     }
@@ -1612,6 +1703,7 @@ impl App {
                 .and_then(|id| self.team_members.iter().position(|u| u.id == id))
                 .map(|i| i + 1)
                 .unwrap_or(0);
+            self.popup_issue = self.focused_issue().map(|i| i.id.clone());
             self.popup = Popup::AssigneeChange;
         }
     }
@@ -1685,6 +1777,7 @@ impl App {
         let lists = [
             &mut self.issues,
             &mut self.my_issues,
+            &mut self.view_issues,
             &mut self.project_issues,
             &mut self.cycle_issues,
         ];
@@ -1701,10 +1794,9 @@ impl App {
     }
 
     pub fn apply_status_selection(&mut self) {
-        if let Some(issue) = self.focused_issue()
+        if let Some(issue_id) = self.popup_issue.take()
             && let Some(state) = self.workflow_states.get(self.popup_index)
         {
-            let issue_id = issue.id.clone();
             let state = state.clone();
             let state_id = state.id.clone();
             self.patch_issue(&issue_id, |i| i.state = Some(state.clone()));
@@ -1714,8 +1806,7 @@ impl App {
     }
 
     pub fn apply_priority_selection(&mut self) {
-        if let Some(issue) = self.focused_issue() {
-            let issue_id = issue.id.clone();
+        if let Some(issue_id) = self.popup_issue.take() {
             let priority = Priority::from_index(self.popup_index);
             self.patch_issue(&issue_id, |i| {
                 i.priority = priority;
@@ -1730,8 +1821,7 @@ impl App {
     }
 
     pub fn apply_assignee_selection(&mut self) {
-        if let Some(issue) = self.focused_issue() {
-            let issue_id = issue.id.clone();
+        if let Some(issue_id) = self.popup_issue.take() {
             let assignee = if self.popup_index == 0 {
                 None // Unassign
             } else {
@@ -1751,6 +1841,7 @@ impl App {
 
     pub fn close_popup(&mut self) {
         self.popup = Popup::None;
+        self.popup_issue = None;
     }
 
     pub fn popup_next(&mut self) {
@@ -1797,14 +1888,14 @@ impl App {
                     n => Some(Priority::from_index(n)),
                 };
                 self.popup = Popup::None;
-                self.selected_issue_index = 0;
+                *self.selected_index_mut() = 0;
             }
         }
     }
 
     pub fn clear_filters(&mut self) {
         self.filters.clear();
-        self.selected_issue_index = 0;
+        *self.selected_index_mut() = 0;
     }
 
     // ------------------------------------------------------------------ scroll
@@ -2350,6 +2441,12 @@ impl App {
         self.selected_team_index = index;
         self.issues.clear();
         self.selected_issue_index = 0;
+        // The old team's cursors mean nothing to the new team's lists.
+        self.page_info = PageInfo::default();
+        self.projects_page_info = PageInfo::default();
+        self.cycles_page_info = PageInfo::default();
+        self.workflow_states.clear();
+        self.team_members.clear();
         // The old team's projects and cycles would otherwise sit on screen,
         // under the new team's name, until the refetch lands.
         self.projects.clear();
@@ -2737,6 +2834,8 @@ mod tests {
 
     fn app_with(issues: Vec<Issue>) -> App {
         let mut app = App::new(&Config::default());
+        // Every list response names the team it was fetched for.
+        app.teams = vec![team("t", "Core")];
         app.issues = issues;
         app.requests.clear();
         app
@@ -2876,14 +2975,17 @@ mod tests {
     fn a_priority_change_updates_every_copy_of_the_issue() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
         app.my_issues = vec![issue("1", "ENG-1", "a")];
+        app.view_issues = vec![issue("1", "ENG-1", "a")];
         app.current_issue = Some(issue("1", "ENG-1", "a"));
         app.screen = Screen::IssueDetail;
+        app.open_priority_change();
         app.popup_index = Priority::High.as_index();
 
         app.apply_priority_selection();
 
         assert_eq!(app.issues[0].priority, Priority::High);
         assert_eq!(app.my_issues[0].priority, Priority::High);
+        assert_eq!(app.view_issues[0].priority, Priority::High);
         assert_eq!(app.current_issue.as_ref().unwrap().priority, Priority::High);
         assert_eq!(app.popup, Popup::None);
     }
@@ -2891,6 +2993,7 @@ mod tests {
     #[test]
     fn a_mutation_queues_exactly_one_request() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.open_priority_change();
         app.popup_index = Priority::Low.as_index();
         app.apply_priority_selection();
         assert_eq!(app.requests.len(), 1);
@@ -2919,6 +3022,7 @@ mod tests {
     fn appending_a_page_extends_the_list() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
         app.handle_message(Message::Issues {
+            team_id: "t".into(),
             preset: Preset::Active,
             page: Page::new(vec![issue("2", "ENG-2", "b")], PageInfo::default(), true),
         });
@@ -2954,6 +3058,7 @@ mod tests {
     fn an_appended_page_never_duplicates_an_issue() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")]);
         app.handle_message(Message::Issues {
+            team_id: "t".into(),
             preset: Preset::Active,
             page: Page::new(
                 vec![issue("2", "ENG-2", "b"), issue("3", "ENG-3", "c")],
@@ -2972,6 +3077,7 @@ mod tests {
         // ENG-2 comes back first this time; the cursor must follow the issue,
         // not stay on row 1.
         app.handle_message(Message::Issues {
+            team_id: "t".into(),
             preset: Preset::Active,
             page: Page::new(
                 vec![issue("2", "ENG-2", "b"), issue("9", "ENG-9", "c")],
@@ -2987,11 +3093,10 @@ mod tests {
     fn a_shrinking_list_clamps_the_selection() {
         let mut app = app_with(vec![]);
         app.selected_project_index = 4;
-        app.handle_message(Message::Projects(Page::new(
-            Vec::new(),
-            PageInfo::default(),
-            false,
-        )));
+        app.handle_message(Message::Projects {
+            team_id: "t".into(),
+            page: Page::new(Vec::new(), PageInfo::default(), false),
+        });
         assert_eq!(app.selected_project_index, 0);
     }
 
@@ -3092,6 +3197,7 @@ mod tests {
         let mut app = app_with(vec![]);
         app.handle_message(Message::SearchResults {
             term: "x".into(),
+            team_id: Some("t".into()),
             issues: vec![stated("1", "s", "Done", "completed")],
         });
         assert_eq!(app.visible_issues().len(), 1);
@@ -3102,7 +3208,10 @@ mod tests {
     #[test]
     fn a_created_issue_appears_at_the_top() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
-        app.handle_message(Message::IssueCreated(Box::new(issue("2", "ENG-2", "new"))));
+        app.handle_message(Message::IssueCreated {
+            team_id: "t".into(),
+            issue: Box::new(issue("2", "ENG-2", "new")),
+        });
         assert_eq!(app.issues[0].identifier, "ENG-2");
         assert_eq!(app.selected_issue_index, 0);
     }
@@ -3280,6 +3389,7 @@ mod tests {
     fn a_page_for_a_preset_already_left_is_dropped() {
         let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
         app.handle_message(Message::Issues {
+            team_id: "t".into(),
             preset: Preset::All,
             page: Page::new(
                 vec![issue("9", "ENG-9", "stale")],
@@ -3683,5 +3793,191 @@ mod tests {
         app.click(0, 0);
         assert_eq!(app.popup, Popup::None);
         assert!(app.requests.is_empty());
+    }
+
+    // ------------------------------------------------------- stale responses
+
+    fn page(issues: Vec<Issue>, append: bool) -> Page<Issue> {
+        Page::new(issues, PageInfo::default(), append)
+    }
+
+    #[test]
+    fn a_page_for_a_team_already_left_is_dropped() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.handle_message(Message::Issues {
+            team_id: "other".into(),
+            preset: Preset::Active,
+            page: page(vec![issue("9", "OPS-9", "stale")], false),
+        });
+        assert_eq!(app.issues[0].id, "1");
+    }
+
+    #[test]
+    fn team_context_for_a_team_already_left_is_dropped() {
+        let mut app = app_with(vec![]);
+        app.handle_message(Message::TeamContext {
+            team_id: "other".into(),
+            states: vec![stated("1", "s-x", "Doing", "started").state.unwrap()],
+            members: Vec::new(),
+        });
+        assert!(app.workflow_states.is_empty());
+    }
+
+    #[test]
+    fn switching_team_forgets_the_old_teams_cursors_and_states() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.teams.push(team("t2", "Ops"));
+        app.page_info = PageInfo {
+            has_next_page: true,
+            end_cursor: Some("c1".into()),
+        };
+        app.workflow_states = vec![stated("1", "s-x", "Doing", "started").state.unwrap()];
+        app.activate(Nav::Team(1, TeamSection::Issues));
+        assert!(!app.page_info.has_next_page);
+        assert!(app.workflow_states.is_empty());
+    }
+
+    #[test]
+    fn issues_for_a_project_already_left_are_dropped() {
+        let mut app = app_with(vec![]);
+        app.current_project =
+            Some(serde_json::from_str(r#"{"id":"p2","name":"B","lead":null}"#).unwrap());
+        app.screen = Screen::ProjectDetail;
+        app.handle_message(Message::ProjectIssues {
+            project_id: "p1".into(),
+            page: page(vec![issue("9", "ENG-9", "stale")], false),
+        });
+        assert!(app.project_issues.is_empty());
+        assert!(!app.project_issues_loaded);
+    }
+
+    #[test]
+    fn a_first_page_for_a_view_no_longer_open_is_dropped() {
+        let mut app = app_with(vec![]);
+        app.custom_views = vec![view("v1", "Mine", false), view("v2", "Theirs", false)];
+        app.nav = Nav::View(1);
+        app.handle_message(Message::ViewIssues {
+            view_id: "v1".into(),
+            page: page(vec![issue("9", "ENG-9", "stale")], false),
+        });
+        assert!(app.view_issues.is_empty());
+        assert_eq!(app.loaded_view_id, None);
+    }
+
+    #[test]
+    fn search_results_for_a_team_already_left_are_dropped() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.handle_message(Message::SearchResults {
+            term: "x".into(),
+            team_id: Some("other".into()),
+            issues: vec![issue("9", "OPS-9", "x")],
+        });
+        assert_eq!(app.issues[0].id, "1");
+        assert_eq!(app.global_search, None);
+    }
+
+    // ------------------------------------------------------------- failures
+
+    #[test]
+    fn a_failed_mutation_rereads_the_issue_from_the_server() {
+        let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
+        app.set_priority(Priority::Urgent);
+        let request = app.requests.pop_front().unwrap();
+        app.handle_message(Message::Failed {
+            request: Box::new(request),
+            error: "nope".into(),
+        });
+        assert!(matches!(
+            app.requests.front(),
+            Some(Request::IssueDetail { issue_id }) if issue_id == "1"
+        ));
+        assert!(app.error_popup.as_deref().unwrap().contains("priority"));
+
+        // Linear's answer puts every copy back.
+        app.handle_message(Message::IssueDetail(Box::new(issue("1", "ENG-1", "a"))));
+        assert_eq!(app.issues[0].priority, Priority::None);
+    }
+
+    #[test]
+    fn a_failed_page_can_be_requested_again() {
+        let mut app = app_with(
+            (0..10)
+                .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), "t"))
+                .collect(),
+        );
+        app.page_info = PageInfo {
+            has_next_page: true,
+            end_cursor: Some("c1".into()),
+        };
+        app.select_last();
+        let request = app.requests.pop_front().unwrap();
+        app.handle_message(Message::Failed {
+            request: Box::new(request),
+            error: "timeout".into(),
+        });
+        app.move_selection(-1);
+        app.move_selection(1);
+        assert!(matches!(
+            app.requests.front(),
+            Some(Request::Issues { after: Some(c), .. }) if c == "c1"
+        ));
+    }
+
+    // ------------------------------------------------------------- selection
+
+    /// Regression: a page that grouped rows in above the cursor moved the
+    /// selection — and the open popup's target — to another issue.
+    #[test]
+    fn an_appended_page_keeps_the_cursor_and_the_popup_on_their_issue() {
+        let mut app = app_with(vec![stated("a", "s-todo", "Todo", "unstarted")]);
+        app.open_priority_change();
+        app.handle_message(Message::Issues {
+            team_id: "t".into(),
+            preset: Preset::Active,
+            page: page(vec![stated("b", "s-doing", "Doing", "started")], true),
+        });
+        // In Progress groups above Todo, so the new issue lands on row 0.
+        assert_eq!(app.visible_issues()[0].id, "b");
+        assert_eq!(app.focused_issue().unwrap().id, "a");
+
+        app.popup_index = Priority::High.as_index();
+        app.apply_priority_selection();
+        assert!(matches!(
+            app.requests.front(),
+            Some(Request::UpdatePriority { issue_id, .. }) if issue_id == "a"
+        ));
+    }
+
+    /// Regression: the prefetch compared the cursor with the unfiltered list,
+    /// so a narrowed list could reach its last row without loading more.
+    #[test]
+    fn a_filtered_list_still_prefetches_at_its_last_visible_row() {
+        let mut app = app_with(
+            (0..20)
+                .map(|i| issue(&i.to_string(), &format!("ENG-{i}"), &format!("t{i}")))
+                .collect(),
+        );
+        app.page_info = PageInfo {
+            has_next_page: true,
+            end_cursor: Some("c1".into()),
+        };
+        for c in "t19".chars() {
+            app.search.insert(c);
+        }
+        app.move_selection(1);
+        assert!(matches!(
+            app.requests.front(),
+            Some(Request::Issues { after: Some(_), .. })
+        ));
+    }
+
+    #[test]
+    fn filtering_resets_the_cursor_of_the_list_on_screen() {
+        let mut app = app_with(vec![]);
+        app.nav = Nav::MyIssues;
+        app.my_issues = vec![issue("1", "ENG-1", "a"), issue("2", "ENG-2", "b")];
+        app.selected_my_issue_index = 1;
+        app.clear_filters();
+        assert_eq!(app.selected_my_issue_index, 0);
     }
 }
