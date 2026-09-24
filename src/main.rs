@@ -345,27 +345,34 @@ fn copy_to_clipboard(text: &str) -> Result<()> {
 }
 
 /// Run one request against the API and turn the outcome into a [`Message`].
+///
+/// A failure comes back as [`Message::Failed`] carrying the request, so the app
+/// can undo exactly what that request stood for.
 async fn execute_request(client: &LinearClient, req: Request, per_page: u32) -> Message {
-    match req {
-        Request::Teams => match client.teams().await {
-            Ok(teams) => Message::Teams(teams),
-            Err(e) => Message::Error(format!("Failed to load teams: {e}")),
+    match run_request(client, &req, per_page).await {
+        Ok(msg) => msg,
+        Err(e) => Message::Failed {
+            request: Box::new(req),
+            error: e.to_string(),
         },
-        Request::Viewer => match client.viewer().await {
-            Ok(viewer) => Message::Viewer(viewer.id),
-            Err(e) => Message::Error(format!("Failed to identify current user: {e}")),
-        },
+    }
+}
+
+async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Result<Message> {
+    let append = req.cursor().is_some();
+    Ok(match req {
+        Request::Teams => Message::Teams(client.teams().await?),
+        Request::Viewer => Message::Viewer(client.viewer().await?.id),
         Request::TeamContext { team_id } => {
             // Independent queries — fetch them concurrently.
             let (states, members) = tokio::join!(
-                client.workflow_states(&team_id),
-                client.team_members(&team_id)
+                client.workflow_states(team_id),
+                client.team_members(team_id)
             );
-            match (states, members) {
-                (Ok(states), Ok(members)) => Message::TeamContext { states, members },
-                (Err(e), _) | (_, Err(e)) => {
-                    Message::Error(format!("Failed to load team context: {e}"))
-                }
+            Message::TeamContext {
+                team_id: team_id.clone(),
+                states: states?,
+                members: members?,
             }
         }
         Request::Issues {
@@ -373,129 +380,102 @@ async fn execute_request(client: &LinearClient, req: Request, per_page: u32) -> 
             after,
             preset,
         } => {
-            let append = after.is_some();
-            match client
-                .issues(&team_id, preset.state_filter(), after.as_deref(), per_page)
-                .await
-            {
-                Ok((issues, info)) => Message::Issues {
-                    preset,
-                    page: Page::new(issues, info, append),
-                },
-                Err(e) => Message::Error(format!("Failed to load issues: {e}")),
+            let (issues, info) = client
+                .issues(team_id, preset.state_filter(), after.as_deref(), per_page)
+                .await?;
+            Message::Issues {
+                team_id: team_id.clone(),
+                preset: *preset,
+                page: Page::new(issues, info, append),
             }
         }
         Request::MyIssues { user_id, after } => {
-            let append = after.is_some();
-            match client.my_issues(&user_id, after.as_deref(), per_page).await {
-                Ok((issues, info)) => Message::MyIssues(Page::new(issues, info, append)),
-                Err(e) => Message::Error(format!("Failed to load my issues: {e}")),
-            }
+            let (issues, info) = client
+                .my_issues(user_id, after.as_deref(), per_page)
+                .await?;
+            Message::MyIssues(Page::new(issues, info, append))
         }
         Request::Search { term, team_id } => {
-            match client
-                .search_issues(&term, team_id.as_deref(), per_page)
-                .await
-            {
-                Ok((issues, _)) => Message::SearchResults { term, issues },
-                Err(e) => Message::Error(format!("Search failed: {e}")),
+            let (issues, _) = client
+                .search_issues(term, team_id.as_deref(), per_page)
+                .await?;
+            Message::SearchResults {
+                term: term.clone(),
+                team_id: team_id.clone(),
+                issues,
             }
         }
-        Request::CustomViews => match client.custom_views().await {
-            Ok(views) => Message::CustomViews(views),
-            Err(e) => Message::Error(format!("Failed to load views: {e}")),
-        },
-        Request::Favorites => match client.favorites().await {
-            Ok(favorites) => Message::Favorites(favorites),
-            Err(e) => Message::Error(format!("Failed to load favorites: {e}")),
-        },
+        Request::CustomViews => Message::CustomViews(client.custom_views().await?),
+        Request::Favorites => Message::Favorites(client.favorites().await?),
         Request::ViewIssues { view_id, after } => {
-            let append = after.is_some();
-            match client
-                .custom_view_issues(&view_id, after.as_deref(), per_page)
-                .await
-            {
-                Ok((issues, info)) => Message::ViewIssues {
-                    view_id,
-                    page: Page::new(issues, info, append),
-                },
-                Err(e) => Message::Error(format!("Failed to load view issues: {e}")),
+            let (issues, info) = client
+                .custom_view_issues(view_id, after.as_deref(), per_page)
+                .await?;
+            Message::ViewIssues {
+                view_id: view_id.clone(),
+                page: Page::new(issues, info, append),
             }
         }
         Request::ViewProjects { view_id, after } => {
-            let append = after.is_some();
-            match client
-                .custom_view_projects(&view_id, after.as_deref())
-                .await
-            {
-                Ok((projects, info)) => Message::ViewProjects {
-                    view_id,
-                    page: Page::new(projects, info, append),
-                },
-                Err(e) => Message::Error(format!("Failed to load view projects: {e}")),
+            let (projects, info) = client
+                .custom_view_projects(view_id, after.as_deref())
+                .await?;
+            Message::ViewProjects {
+                view_id: view_id.clone(),
+                page: Page::new(projects, info, append),
             }
         }
         Request::Projects { team_id, after } => {
-            let append = after.is_some();
-            match client.projects(&team_id, after.as_deref()).await {
-                Ok((projects, info)) => Message::Projects(Page::new(projects, info, append)),
-                Err(e) => Message::Error(format!("Failed to load projects: {e}")),
+            let (projects, info) = client.projects(team_id, after.as_deref()).await?;
+            Message::Projects {
+                team_id: team_id.clone(),
+                page: Page::new(projects, info, append),
             }
         }
         Request::Cycles { team_id, after } => {
-            let append = after.is_some();
-            match client.cycles(&team_id, after.as_deref()).await {
-                Ok((cycles, info)) => Message::Cycles(Page::new(cycles, info, append)),
-                Err(e) => Message::Error(format!("Failed to load cycles: {e}")),
+            let (cycles, info) = client.cycles(team_id, after.as_deref()).await?;
+            Message::Cycles {
+                team_id: team_id.clone(),
+                page: Page::new(cycles, info, append),
             }
         }
-        Request::IssueDetail { issue_id } => match client.issue_detail(&issue_id).await {
-            Ok(issue) => Message::IssueDetail(Box::new(issue)),
-            Err(e) => Message::Error(format!("Failed to load detail: {e}")),
-        },
+        Request::IssueDetail { issue_id } => {
+            Message::IssueDetail(Box::new(client.issue_detail(issue_id).await?))
+        }
         Request::ProjectIssues { project_id, after } => {
-            let append = after.is_some();
-            match client.project_issues(&project_id, after.as_deref()).await {
-                Ok((issues, info)) => Message::ProjectIssues(Page::new(issues, info, append)),
-                Err(e) => Message::Error(format!("Failed to load project issues: {e}")),
+            let (issues, info) = client.project_issues(project_id, after.as_deref()).await?;
+            Message::ProjectIssues {
+                project_id: project_id.clone(),
+                page: Page::new(issues, info, append),
             }
         }
         Request::CycleIssues { cycle_id, after } => {
-            let append = after.is_some();
-            match client.cycle_issues(&cycle_id, after.as_deref()).await {
-                Ok((issues, info)) => Message::CycleIssues(Page::new(issues, info, append)),
-                Err(e) => Message::Error(format!("Failed to load cycle issues: {e}")),
+            let (issues, info) = client.cycle_issues(cycle_id, after.as_deref()).await?;
+            Message::CycleIssues {
+                cycle_id: cycle_id.clone(),
+                page: Page::new(issues, info, append),
             }
         }
         Request::UpdateStatus { issue_id, state_id } => {
-            match client.update_issue_state(&issue_id, &state_id).await {
-                Ok(()) => Message::Mutated("Status updated"),
-                Err(e) => Message::Error(format!("Failed to update status: {e}")),
-            }
+            client.update_issue_state(issue_id, state_id).await?;
+            Message::Mutated("Status updated")
         }
         Request::UpdatePriority { issue_id, priority } => {
-            match client.update_issue_priority(&issue_id, priority).await {
-                Ok(()) => Message::Mutated("Priority updated"),
-                Err(e) => Message::Error(format!("Failed to update priority: {e}")),
-            }
+            client.update_issue_priority(issue_id, *priority).await?;
+            Message::Mutated("Priority updated")
         }
         Request::UpdateAssignee {
             issue_id,
             assignee_id,
         } => {
-            match client
-                .update_issue_assignee(&issue_id, assignee_id.as_deref())
-                .await
-            {
-                Ok(()) => Message::Mutated("Assignee updated"),
-                Err(e) => Message::Error(format!("Failed to update assignee: {e}")),
-            }
+            client
+                .update_issue_assignee(issue_id, assignee_id.as_deref())
+                .await?;
+            Message::Mutated("Assignee updated")
         }
         Request::CreateComment { issue_id, body } => {
-            match client.create_comment(&issue_id, &body).await {
-                Ok(()) => Message::Mutated("Comment posted"),
-                Err(e) => Message::Error(format!("Failed to post comment: {e}")),
-            }
+            client.create_comment(issue_id, body).await?;
+            Message::Mutated("Comment posted")
         }
         Request::CreateIssue {
             team_id,
@@ -503,17 +483,17 @@ async fn execute_request(client: &LinearClient, req: Request, per_page: u32) -> 
             description,
             priority,
         } => {
-            match client
-                .create_issue(&team_id, &title, description.as_deref(), priority)
-                .await
-            {
-                Ok(issue) => Message::IssueCreated(Box::new(issue)),
-                Err(e) => Message::Error(format!("Failed to create issue: {e}")),
+            let issue = client
+                .create_issue(team_id, title, description.as_deref(), *priority)
+                .await?;
+            Message::IssueCreated {
+                team_id: team_id.clone(),
+                issue: Box::new(issue),
             }
         }
-        Request::OpenUrl(url) => match open::that_detached(&url) {
-            Ok(()) => Message::Mutated("Opened in browser"),
-            Err(e) => Message::Error(format!("Failed to open browser: {e}")),
-        },
-    }
+        Request::OpenUrl(url) => {
+            open::that_detached(url)?;
+            Message::Mutated("Opened in browser")
+        }
+    })
 }

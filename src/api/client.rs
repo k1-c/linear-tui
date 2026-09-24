@@ -630,50 +630,42 @@ impl LinearClient {
 
     // --- Mutations ---
 
-    pub async fn update_issue_state(&self, issue_id: &str, state_id: &str) -> Result<()> {
+    /// Apply one `IssueUpdateInput` to an issue.
+    ///
+    /// Linear reports a refused update as `success: false` rather than as a
+    /// GraphQL error, so it is checked here: the UI has already applied the
+    /// change optimistically and has to hear that it did not stick.
+    async fn update_issue(&self, issue_id: &str, input: serde_json::Value) -> Result<()> {
         #[derive(Deserialize)]
         struct Resp {
             #[serde(rename = "issueUpdate")]
-            _issue_update: MutationSuccess,
+            issue_update: MutationSuccess,
         }
-        let variables = serde_json::json!({
-            "id": issue_id,
-            "stateId": state_id,
-        });
-        let _: Resp = self
+        let variables = serde_json::json!({ "id": issue_id, "input": input });
+        let resp: Resp = self
             .query(
-                r#"mutation($id: String!, $stateId: String!) {
-                    issueUpdate(id: $id, input: { stateId: $stateId }) {
+                r#"mutation($id: String!, $input: IssueUpdateInput!) {
+                    issueUpdate(id: $id, input: $input) {
                         success
                     }
                 }"#,
                 Some(variables),
             )
             .await?;
+        if !resp.issue_update.success {
+            anyhow::bail!("Linear rejected the update");
+        }
         Ok(())
     }
 
+    pub async fn update_issue_state(&self, issue_id: &str, state_id: &str) -> Result<()> {
+        self.update_issue(issue_id, serde_json::json!({ "stateId": state_id }))
+            .await
+    }
+
     pub async fn update_issue_priority(&self, issue_id: &str, priority: u8) -> Result<()> {
-        #[derive(Deserialize)]
-        struct Resp {
-            #[serde(rename = "issueUpdate")]
-            _issue_update: MutationSuccess,
-        }
-        let variables = serde_json::json!({
-            "id": issue_id,
-            "priority": priority,
-        });
-        let _: Resp = self
-            .query(
-                r#"mutation($id: String!, $priority: Int!) {
-                    issueUpdate(id: $id, input: { priority: $priority }) {
-                        success
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
-        Ok(())
+        self.update_issue(issue_id, serde_json::json!({ "priority": priority }))
+            .await
     }
 
     pub async fn update_issue_assignee(
@@ -681,39 +673,21 @@ impl LinearClient {
         issue_id: &str,
         assignee_id: Option<&str>,
     ) -> Result<()> {
-        #[derive(Deserialize)]
-        struct Resp {
-            #[serde(rename = "issueUpdate")]
-            _issue_update: MutationSuccess,
-        }
-        let variables = serde_json::json!({
-            "id": issue_id,
-            "assigneeId": assignee_id,
-        });
-        let _: Resp = self
-            .query(
-                r#"mutation($id: String!, $assigneeId: String) {
-                    issueUpdate(id: $id, input: { assigneeId: $assigneeId }) {
-                        success
-                    }
-                }"#,
-                Some(variables),
-            )
-            .await?;
-        Ok(())
+        self.update_issue(issue_id, serde_json::json!({ "assigneeId": assignee_id }))
+            .await
     }
 
     pub async fn create_comment(&self, issue_id: &str, body: &str) -> Result<()> {
         #[derive(Deserialize)]
         struct Resp {
             #[serde(rename = "commentCreate")]
-            _comment_create: MutationSuccess,
+            comment_create: MutationSuccess,
         }
         let variables = serde_json::json!({
             "issueId": issue_id,
             "body": body,
         });
-        let _: Resp = self
+        let resp: Resp = self
             .query(
                 r#"mutation($issueId: String!, $body: String!) {
                     commentCreate(input: { issueId: $issueId, body: $body }) {
@@ -723,6 +697,9 @@ impl LinearClient {
                 Some(variables),
             )
             .await?;
+        if !resp.comment_create.success {
+            anyhow::bail!("Linear rejected the comment");
+        }
         Ok(())
     }
 
