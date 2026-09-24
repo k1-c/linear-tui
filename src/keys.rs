@@ -5,9 +5,13 @@
 //! the status bar describe it. Dispatch, hints, and help all read that table,
 //! so adding a binding means adding a row.
 //!
+//! The command palette is the fourth reader: a row with a [`Command`] is
+//! listed there, with the keys shown next to it, so the palette cannot offer
+//! an action the keyboard lacks or advertise a key that does something else.
+//!
 //! Only the overlays that document their own keys in their frame — the error
-//! popup, the help overlay, and the pick-one popups — keep a hand-written
-//! handler.
+//! popup, the help overlay, the pick-one popups, and the palette — keep a
+//! hand-written handler.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -242,6 +246,22 @@ impl Section {
         Self::Editing,
     ];
 
+    /// Where the palette lists the section: acting on the issue at hand
+    /// first, as Linear's command menu does, and moving around last.
+    fn palette_rank(self) -> u8 {
+        match self {
+            Self::IssueActions => 0,
+            Self::CopyOpen => 1,
+            Self::SearchFilter => 2,
+            Self::ListDisplay => 3,
+            Self::GoTo => 4,
+            Self::Navigation => 5,
+            Self::Sidebar => 6,
+            Self::Other => 7,
+            Self::Mouse | Self::Scrolling | Self::Editing => 8,
+        }
+    }
+
     pub fn title(self) -> &'static str {
         match self {
             Self::Navigation => "Navigation",
@@ -279,6 +299,18 @@ pub struct Hint {
     pub on: &'static [Ctx],
 }
 
+/// A command palette entry.
+#[derive(Debug, Clone, Copy)]
+pub struct Command {
+    pub section: Section,
+    pub title: &'static str,
+    /// Other words it is found by.
+    pub keywords: &'static [&'static str],
+    /// Where the palette offers it — the binding's own contexts unless it
+    /// says otherwise, as for the second key of a `g …` chord.
+    pub on: &'static [Ctx],
+}
+
 /// A keybinding: what it answers to, where, what it does, and how it is shown.
 #[derive(Clone, Copy)]
 pub struct Binding {
@@ -290,6 +322,7 @@ pub struct Binding {
     pub action: fn(&mut App),
     pub help: Option<Help>,
     pub hint: Option<Hint>,
+    pub command: Option<Command>,
 }
 
 impl Binding {
@@ -325,6 +358,37 @@ impl Binding {
         self
     }
 
+    /// A palette entry, under the binding's help section.
+    const fn command(mut self, title: &'static str, keywords: &'static [&'static str]) -> Self {
+        let section = match self.help {
+            Some(help) => help.section,
+            None => Section::Other,
+        };
+        self.command = Some(Command {
+            section,
+            title,
+            keywords,
+            on: self.context,
+        });
+        self
+    }
+
+    /// Offer the palette entry in `on` rather than the binding's contexts.
+    const fn on(mut self, on: &'static [Ctx]) -> Self {
+        if let Some(command) = &mut self.command {
+            command.on = on;
+        }
+        self
+    }
+
+    /// File the palette entry under `section`.
+    const fn in_section(mut self, section: Section) -> Self {
+        if let Some(command) = &mut self.command {
+            command.section = section;
+        }
+        self
+    }
+
     fn applies_in(&self, ctx: Ctx) -> bool {
         self.context.contains(&ctx)
     }
@@ -341,6 +405,7 @@ const fn bind(keys: &'static [Key], context: &'static [Ctx], action: fn(&mut App
         action,
         help: None,
         hint: None,
+        command: None,
     }
 }
 
@@ -357,6 +422,11 @@ const fn documented(section: Section, keys: &'static str, text: &'static str) ->
 /// protocol together with a plain alias.
 pub static BINDINGS: &[Binding] = &[
     // --- Navigation ---
+    // Linear's command menu — Cmd/Ctrl+K. Inside a text field Ctrl+K keeps
+    // its readline meaning.
+    bind(&[ctrl('k')], NORMAL, App::open_palette)
+        .help(Section::Navigation, "C-k", "Command palette")
+        .hint_on(SCREENS, 11, "^K", "commands"),
     bind(&[plain('j'), code(KeyCode::Down)], NORMAL, down)
         .help(Section::Navigation, "j/k", "Move cursor down/up")
         .hint_on(
@@ -400,23 +470,30 @@ pub static BINDINGS: &[Binding] = &[
     // Step to the neighbouring issue without leaving the detail view.
     bind(&[plain('J')], &[IssueDetail], |app| app.step_issue(1))
         .help(Section::Navigation, "J/K", "Next/previous issue (detail)")
-        .hint(2, "J/K", "next/prev"),
-    bind(&[plain('K')], &[IssueDetail], |app| app.step_issue(-1)),
+        .hint(2, "J/K", "next/prev")
+        .command("Next issue", &["down", "step"]),
+    bind(&[plain('K')], &[IssueDetail], |app| app.step_issue(-1))
+        .command("Previous issue", &["up", "step"])
+        .in_section(Section::Navigation),
     // --- Sidebar ---
     bind(&[code(KeyCode::Tab)], SCREENS, |app| {
         app.focus_sidebar(true)
     })
     .help(Section::Sidebar, "Tab", "Focus sidebar / content")
-    .hint_on(LISTS, 80, "Tab", "sidebar"),
+    .hint_on(LISTS, 80, "Tab", "sidebar")
+    .command("Focus sidebar", &["navigation"]),
     bind(
         &[code(KeyCode::Tab), code(KeyCode::Esc)],
         &[Sidebar],
         |app| app.focus_sidebar(false),
     )
-    .hint(80, "Tab", "content"),
+    .hint(80, "Tab", "content")
+    .command("Focus content", &["list"])
+    .in_section(Section::Sidebar),
     bind(&[ctrl('b')], NORMAL, App::toggle_sidebar)
         .help(Section::Sidebar, "C-b", "Show/hide sidebar")
-        .hint_on(&[Sidebar], 85, "^B", "hide"),
+        .hint_on(&[Sidebar], 85, "^B", "hide")
+        .command("Toggle sidebar", &["show", "hide"]),
     // A tree folds with h/l, as in every file explorer.
     bind(
         &[
@@ -429,7 +506,11 @@ pub static BINDINGS: &[Binding] = &[
         App::sidebar_toggle,
     )
     .help(Section::Sidebar, "h/l", "Fold/unfold a Favorites folder")
-    .hint(77, "h/l", "fold"),
+    .hint(77, "h/l", "fold")
+    .command(
+        "Fold or unfold folder",
+        &["favorites", "collapse", "expand"],
+    ),
     // --- Go to: the second key of a `g …` chord ---
     // Linear reaches its view presets with `G` then `A`/`B`/`E` (Active,
     // Backlog, All issues) and its pages with the other letters.
@@ -437,40 +518,53 @@ pub static BINDINGS: &[Binding] = &[
         team_preset(app, Preset::Active)
     })
     .help(Section::GoTo, "g a", "Active issues")
-    .hint(0, "a", "active"),
+    .hint(0, "a", "active")
+    .command("Go to active issues", &["preset"])
+    .on(NORMAL),
     bind(&[plain('b')], &[GoTo], |app| {
         team_preset(app, Preset::Backlog)
     })
     .help(Section::GoTo, "g b", "Backlog")
-    .hint(0, "b", "backlog"),
+    .hint(0, "b", "backlog")
+    .command("Go to backlog", &["preset"])
+    .on(NORMAL),
     bind(&[plain('e')], &[GoTo], |app| team_preset(app, Preset::All))
         .help(Section::GoTo, "g e", "All issues")
-        .hint(0, "e", "all issues"),
+        .hint(0, "e", "all issues")
+        .command("Go to all issues", &["preset", "everything"])
+        .on(NORMAL),
     bind(&[plain('m')], &[GoTo], |app| app.activate(Nav::MyIssues))
         .help(Section::GoTo, "g m", "My issues")
-        .hint(0, "m", "my issues"),
+        .hint(0, "m", "my issues")
+        .command("Go to my issues", &["assigned", "mine"])
+        .on(NORMAL),
     bind(&[plain('v')], &[GoTo], |app| app.activate(Nav::Views))
         .help(Section::GoTo, "g v", "Views")
-        .hint(0, "v", "views"),
+        .hint(0, "v", "views")
+        .command("Go to views", &["saved", "custom"])
+        .on(NORMAL),
     bind(&[plain('p')], &[GoTo], |app| {
         app.go_to_team_section(TeamSection::Projects)
     })
     .help(Section::GoTo, "g p", "Projects")
-    .hint(0, "p", "projects"),
+    .hint(0, "p", "projects")
+    .command("Go to projects", &[])
+    .on(NORMAL),
     bind(&[plain('c')], &[GoTo], |app| {
         app.go_to_team_section(TeamSection::Cycles)
     })
     .help(Section::GoTo, "g c", "Cycles")
-    .hint(0, "c", "cycles"),
+    .hint(0, "c", "cycles")
+    .command("Go to cycles", &["sprint"])
+    .on(NORMAL),
     // vim: gg
     bind(&[plain('g')], &[GoTo], first).hint(0, "g", "top"),
     // Destination jumps by number, a TUI shorthand for the sidebar. Linear has
     // no equivalent — it reaches pages with `g …`, which works here too.
-    bind(&[plain('1')], INDEXES, App::go_to_team_issues).help(
-        Section::GoTo,
-        "1-5",
-        "Issues/My/Projects/Cycles/Views",
-    ),
+    bind(&[plain('1')], INDEXES, App::go_to_team_issues)
+        .help(Section::GoTo, "1-5", "Issues/My/Projects/Cycles/Views")
+        .command("Go to team issues", &["list"])
+        .on(NORMAL),
     bind(&[plain('2')], INDEXES, |app| app.activate(Nav::MyIssues)),
     bind(&[plain('3')], INDEXES, |app| {
         app.go_to_team_section(TeamSection::Projects)
@@ -488,37 +582,41 @@ pub static BINDINGS: &[Binding] = &[
             "S-Tab",
             "Next preset (Active/Backlog/All)",
         )
-        .hint(50, "S-Tab", "preset"),
+        .hint(50, "S-Tab", "preset")
+        .command("Next preset", &["active", "backlog", "all", "display"]),
     // Linear's Issues / Projects tabs on a Views page.
-    bind(&[code(KeyCode::BackTab)], &[ViewList], App::cycle_view_kind).hint(
-        50,
-        "S-Tab",
-        "issues/projects",
-    ),
+    bind(&[code(KeyCode::BackTab)], &[ViewList], App::cycle_view_kind)
+        .hint(50, "S-Tab", "issues/projects")
+        .command("Switch between issue and project views", &["tab"])
+        .in_section(Section::ListDisplay),
     bind(&[plain('D')], ISSUE_LISTS, App::cycle_group_by)
         .help(
             Section::ListDisplay,
             "D",
             "Group by status/assignee/\u{2026}",
         )
-        .hint(60, "D", "group"),
+        .hint(60, "D", "group")
+        .command("Next grouping", &["group by", "display"]),
     bind(&[plain('z')], ISSUE_LISTS, App::toggle_selected_group)
         .help(Section::ListDisplay, "z / Z", "Fold group / all groups")
-        .hint(70, "z", "fold"),
-    bind(&[plain('Z')], ISSUE_LISTS, App::toggle_all_groups),
+        .hint(70, "z", "fold")
+        .command("Fold or unfold group", &["collapse", "expand"]),
+    bind(&[plain('Z')], ISSUE_LISTS, App::toggle_all_groups)
+        .command("Fold or unfold all groups", &["collapse", "expand"])
+        .in_section(Section::ListDisplay),
     // --- Issue actions, matching Linear's single-key bindings ---
     // `c` creates an issue from anywhere, as in Linear.
     bind(&[plain('c')], SCREENS, App::start_new_issue)
         .help(Section::IssueActions, "c", "Create issue")
-        .hint_on(ISSUE_LISTS, 30, "c", "new"),
+        .hint_on(ISSUE_LISTS, 30, "c", "new")
+        .command("Create new issue", &["add", "file"]),
     bind(&[plain('s')], ISSUE_SCREENS, App::open_status_change)
         .help(Section::IssueActions, "s", "Change status")
-        .hint(20, "s/p/a", "status/priority/assignee"),
-    bind(&[plain('p')], ISSUE_SCREENS, App::open_priority_change).help(
-        Section::IssueActions,
-        "p",
-        "Change priority",
-    ),
+        .hint(20, "s/p/a", "status/priority/assignee")
+        .command("Change status\u{2026}", &["state", "workflow", "move"]),
+    bind(&[plain('p')], ISSUE_SCREENS, App::open_priority_change)
+        .help(Section::IssueActions, "p", "Change priority")
+        .command("Change priority\u{2026}", &["urgency"]),
     // Direct priority — Linear: Shift+1..4 / Shift+0.
     bind(&[plain('!')], ISSUE_SCREENS, |app| {
         app.set_priority(Priority::Urgent)
@@ -527,35 +625,41 @@ pub static BINDINGS: &[Binding] = &[
         Section::IssueActions,
         "!@#$)",
         "Urgent/High/Medium/Low/None",
-    ),
+    )
+    .command("Set priority to Urgent", &["priority"]),
     bind(&[plain('@')], ISSUE_SCREENS, |app| {
         app.set_priority(Priority::High)
-    }),
+    })
+    .command("Set priority to High", &["priority"])
+    .in_section(Section::IssueActions),
     bind(&[plain('#')], ISSUE_SCREENS, |app| {
         app.set_priority(Priority::Medium)
-    }),
+    })
+    .command("Set priority to Medium", &["priority"])
+    .in_section(Section::IssueActions),
     bind(&[plain('$')], ISSUE_SCREENS, |app| {
         app.set_priority(Priority::Low)
-    }),
+    })
+    .command("Set priority to Low", &["priority"])
+    .in_section(Section::IssueActions),
     bind(&[plain(')')], ISSUE_SCREENS, |app| {
         app.set_priority(Priority::None)
-    }),
-    bind(&[plain('a')], ISSUE_SCREENS, App::open_assignee_change).help(
-        Section::IssueActions,
-        "a",
-        "Assign to someone",
-    ),
-    bind(&[plain('i')], ISSUE_SCREENS, App::assign_to_me).help(
-        Section::IssueActions,
-        "i",
-        "Assign to me",
-    ),
+    })
+    .command("Remove priority", &["priority", "none"])
+    .in_section(Section::IssueActions),
+    bind(&[plain('a')], ISSUE_SCREENS, App::open_assignee_change)
+        .help(Section::IssueActions, "a", "Assign to someone")
+        .command("Assign to\u{2026}", &["assignee", "owner", "unassign"]),
+    bind(&[plain('i')], ISSUE_SCREENS, App::assign_to_me)
+        .help(Section::IssueActions, "i", "Assign to me")
+        .command("Assign to me", &["assignee", "self", "take"]),
     // Add comment — Linear: Ctrl+M. A legacy terminal reports Ctrl+M as
     // Enter, so plain `m` is accepted too (Linear leaves `m` for relations,
     // which this client does not support).
     bind(&[ctrl('m'), plain('m')], ISSUE_SCREENS, App::start_comment)
         .help(Section::IssueActions, "m", "Add comment (Ctrl+M)")
-        .hint_on(&[IssueDetail], 21, "m", "comment"),
+        .hint_on(&[IssueDetail], 21, "m", "comment")
+        .command("Add comment", &["reply", "message"]),
     // --- Copy & open ---
     // Copy issue ID — Linear: Ctrl+.
     bind(
@@ -564,55 +668,67 @@ pub static BINDINGS: &[Binding] = &[
         App::copy_identifier,
     )
     .help(Section::CopyOpen, "y", "Copy issue ID (Ctrl+.)")
-    .hint_on(&[IssueDetail], 23, "y", "copy ID"),
+    .hint_on(&[IssueDetail], 23, "y", "copy ID")
+    .command("Copy issue ID", &["identifier", "clipboard"]),
     // Copy issue URL — Linear: Ctrl+Shift+, (some terminals report `<`).
     bind(
         &[ctrl_shift(','), ctrl_shift('<'), plain('Y')],
         ISSUE_SCREENS,
         App::copy_url,
     )
-    .help(Section::CopyOpen, "Y", "Copy issue URL (Ctrl+Shift+,)"),
+    .help(Section::CopyOpen, "Y", "Copy issue URL (Ctrl+Shift+,)")
+    .command("Copy issue URL", &["link", "clipboard"]),
     // Copy git branch name — Linear: Ctrl+Shift+. (or `>`).
     bind(
         &[ctrl_shift('.'), ctrl_shift('>'), plain('b')],
         ISSUE_SCREENS,
         App::copy_branch_name,
     )
-    .help(Section::CopyOpen, "b", "Copy branch name (Ctrl+Shift+.)"),
+    .help(Section::CopyOpen, "b", "Copy branch name (Ctrl+Shift+.)")
+    .command("Copy git branch name", &["clipboard", "checkout"]),
     // A TUI-only action, since Linear is already in the browser.
     bind(&[plain('o')], SCREENS, App::open_in_browser)
         .help(Section::CopyOpen, "o", "Open on linear.app")
-        .hint_on(&[IssueDetail], 22, "o", "open"),
+        .hint_on(&[IssueDetail], 22, "o", "open")
+        .command("Open in browser", &["linear.app", "web"]),
     // --- Search & filter ---
     bind(&[plain('/')], ISSUE_LISTS, App::start_search)
         .help(Section::SearchFilter, "/", "Filter as you type")
-        .hint(40, "/", "filter"),
+        .hint(40, "/", "filter")
+        .command("Search in this list", &["find", "filter"]),
     bind(&[code(KeyCode::Enter)], &[Search], App::finish_search).hint(1, "Enter", "keep"),
     bind(&[code(KeyCode::Esc)], EDITING, cancel).hint_on(&[Search], 2, "Esc", "clear"),
     bind(&[ctrl('g')], &[Search], App::search_workspace)
         .help(Section::SearchFilter, "C-g", "Search all of Linear")
         .hint(3, "Ctrl+G", "search all of Linear"),
-    bind(&[plain('f')], ISSUE_LISTS, App::open_filter).help(
-        Section::SearchFilter,
-        "f/F",
-        "Filter / clear filters",
-    ),
-    bind(&[plain('F')], ISSUE_LISTS, App::clear_filters),
+    bind(&[plain('f')], ISSUE_LISTS, App::open_filter)
+        .help(Section::SearchFilter, "f/F", "Filter / clear filters")
+        .command("Filter\u{2026}", &["status", "priority"]),
+    bind(&[plain('F')], ISSUE_LISTS, App::clear_filters)
+        .command("Clear filters", &["reset"])
+        .in_section(Section::SearchFilter),
     // --- Mouse, routed by `App::click` ---
     documented(Section::Mouse, "click", "Select; click again to open"),
     documented(Section::Mouse, "click", "Sidebar, chips, group headers"),
     documented(Section::Mouse, "wheel", "Scroll"),
     // --- Other ---
-    bind(&[plain('t')], TEAM_PAGES, App::open_team_select).help(Section::Other, "t", "Switch team"),
+    bind(&[plain('t')], TEAM_PAGES, App::open_team_select)
+        .help(Section::Other, "t", "Switch team")
+        .command("Switch team\u{2026}", &["workspace"]),
     // Linear syncs live and binds plain `r` to Rename, so this client uses the
     // terminal convention instead and leaves `r` free.
     bind(&[code(KeyCode::F(5)), ctrl('r')], SCREENS, refresh)
         .help(Section::Other, "F5/C-r", "Refresh")
-        .hint_on(&[ViewList, ProjectList, CycleList], 90, "^R", "refresh"),
+        .hint_on(&[ViewList, ProjectList, CycleList], 90, "^R", "refresh")
+        .command("Refresh", &["reload", "sync"]),
     bind(&[plain('?')], NORMAL, App::open_help)
         .help(Section::Other, "?", "Toggle this help")
-        .hint(99, "?", "help"),
-    bind(&[plain('q')], TOP_LEVEL, App::quit).help(Section::Other, "q", "Quit"),
+        .hint(99, "?", "help")
+        .command("Show keyboard shortcuts", &["help", "keys"]),
+    bind(&[plain('q')], TOP_LEVEL, App::quit)
+        .help(Section::Other, "q", "Quit")
+        .command("Quit", &["exit", "close"])
+        .on(NORMAL),
     // --- Scrolling ---
     bind(&[ctrl('d')], NORMAL, half_page_down).help(
         Section::Scrolling,
@@ -700,6 +816,72 @@ pub fn context(app: &App) -> Ctx {
     }
 }
 
+/// The palette's commands for a context: by section, what acts on the issue
+/// at hand first, then in table order.
+pub fn commands(ctx: Ctx) -> Vec<&'static Binding> {
+    let mut commands: Vec<&Binding> = BINDINGS
+        .iter()
+        .filter(|b| b.command.is_some_and(|c| c.on.contains(&ctx)))
+        .collect();
+    commands.sort_by_key(|b| b.command.map(|c| c.section.palette_rank()));
+    commands
+}
+
+impl Key {
+    /// How the key is written in the palette, e.g. `s`, `Ctrl+B`, `F5`.
+    pub fn label(&self) -> String {
+        let name = match self.code {
+            KeyCode::Char(' ') => "Space".to_string(),
+            KeyCode::Char(c) => match self.mods {
+                Mods::Ctrl | Mods::CtrlNoShift | Mods::CtrlShift | Mods::CtrlOrAlt => {
+                    c.to_ascii_uppercase().to_string()
+                }
+                _ => c.to_string(),
+            },
+            KeyCode::Enter => "Enter".into(),
+            KeyCode::Esc => "Esc".into(),
+            KeyCode::Tab => "Tab".into(),
+            KeyCode::BackTab => "Shift+Tab".into(),
+            KeyCode::Backspace => "Backspace".into(),
+            KeyCode::Delete => "Del".into(),
+            KeyCode::Home => "Home".into(),
+            KeyCode::End => "End".into(),
+            KeyCode::PageUp => "PgUp".into(),
+            KeyCode::PageDown => "PgDn".into(),
+            KeyCode::Up => "\u{2191}".into(),
+            KeyCode::Down => "\u{2193}".into(),
+            KeyCode::Left => "\u{2190}".into(),
+            KeyCode::Right => "\u{2192}".into(),
+            KeyCode::F(n) => format!("F{n}"),
+            other => format!("{other:?}"),
+        };
+        match self.mods {
+            Mods::Ctrl | Mods::CtrlNoShift => format!("Ctrl+{name}"),
+            Mods::CtrlShift => format!("Ctrl+Shift+{name}"),
+            Mods::CtrlOrAlt => format!("Ctrl+{name}"),
+            Mods::Any | Mods::NoCtrl | Mods::Bare => name,
+        }
+    }
+}
+
+impl Binding {
+    /// The keys that trigger it, as the palette shows them: the plain alias
+    /// first, since it works in every terminal.
+    pub fn keys_label(&self) -> String {
+        let plain = |k: &&Key| matches!(k.mods, Mods::Any | Mods::NoCtrl | Mods::Bare);
+        // A kitty original can come in several spellings (`Ctrl+Shift+,` is
+        // also reported as `<`); one of them is enough.
+        let labels: Vec<String> = self
+            .keys
+            .iter()
+            .filter(plain)
+            .chain(self.keys.iter().find(|k| !plain(k)))
+            .map(Key::label)
+            .collect();
+        labels.join(" / ")
+    }
+}
+
 /// The status-bar hints for a context, in display order.
 pub fn hints(ctx: Ctx) -> Vec<&'static Hint> {
     let mut hints: Vec<&Hint> = BINDINGS
@@ -745,6 +927,12 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
 
     // Esc abandons a half-typed chord
     if key.code == KeyCode::Esc && app.view.pending_chord.take().is_some() {
+        return;
+    }
+
+    // The palette types into its own query.
+    if app.view.popup == Popup::Palette {
+        crate::palette::handle_key(app, key);
         return;
     }
 
@@ -1272,12 +1460,84 @@ mod table_tests {
         }
     }
 
-    /// Only the mouse rows document input dispatched elsewhere.
+    /// A keyless row either documents the mouse or is a palette-only command.
     #[test]
     fn every_keyless_binding_is_documented() {
         for binding in BINDINGS.iter().filter(|b| b.keys.is_empty()) {
+            if binding.command.is_some() {
+                continue;
+            }
             let help = binding.help.expect("a keyless binding documents something");
             assert_eq!(help.section, Section::Mouse, "{:?}", help.keys);
         }
+    }
+
+    /// Everything the help overlay lists as an action can be run from the
+    /// palette, so a new binding cannot be added without an entry. Movement,
+    /// scrolling and text editing are exempt, and so are keys that only work
+    /// inside a text field, where the palette cannot be opened.
+    #[test]
+    fn every_documented_action_is_in_the_palette() {
+        let exempt = [
+            Section::Navigation,
+            Section::Mouse,
+            Section::Scrolling,
+            Section::Editing,
+        ];
+        for binding in BINDINGS {
+            let Some(help) = binding.help else { continue };
+            if exempt.contains(&help.section) || binding.context.iter().all(|c| EDITING.contains(c))
+            {
+                continue;
+            }
+            assert!(
+                binding.command.is_some(),
+                "{} ({}) has no palette entry",
+                help.text,
+                help.keys
+            );
+        }
+    }
+
+    /// Two entries with one title in one place could not be told apart.
+    #[test]
+    fn no_two_commands_share_a_title_in_a_context() {
+        for ctx in NORMAL.iter().chain(&[GoTo]) {
+            let titles: Vec<&str> = commands(*ctx)
+                .iter()
+                .filter_map(|b| b.command.map(|c| c.title))
+                .collect();
+            for (i, title) in titles.iter().enumerate() {
+                assert!(!titles[i + 1..].contains(title), "{title} twice in {ctx:?}");
+            }
+        }
+    }
+
+    /// The palette can only be opened where nothing is being typed.
+    #[test]
+    fn commands_are_offered_only_outside_text_fields() {
+        for binding in BINDINGS {
+            if let Some(command) = binding.command {
+                assert!(
+                    command.on.iter().all(|c| NORMAL.contains(c)),
+                    "{} offered in a text field",
+                    command.title
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn keys_are_labelled_plain_alias_first() {
+        let comment = BINDINGS
+            .iter()
+            .find(|b| b.command.is_some_and(|c| c.title == "Add comment"))
+            .unwrap();
+        assert_eq!(comment.keys_label(), "m / Ctrl+M");
+        let url = BINDINGS
+            .iter()
+            .find(|b| b.command.is_some_and(|c| c.title == "Copy issue URL"))
+            .unwrap();
+        assert_eq!(url.keys_label(), "Y / Ctrl+Shift+,");
     }
 }
