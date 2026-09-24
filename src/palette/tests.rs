@@ -220,3 +220,176 @@ fn a_click_on_a_row_runs_it_and_a_click_outside_closes() {
     click(&mut app, 0, 0);
     assert_eq!(app.view.popup, Popup::None);
 }
+
+// ------------------------------------------------------ pages (pickers)
+
+use crate::api::types::{User, WorkflowState};
+use crate::grouping::GroupBy;
+use crate::message::Message;
+
+fn state(id: &str, name: &str, kind: &str) -> WorkflowState {
+    serde_json::from_str(&format!(
+        r#"{{"id":"{id}","name":"{name}","type":"{kind}","position":1}}"#
+    ))
+    .unwrap()
+}
+
+fn member(id: &str, name: &str) -> User {
+    serde_json::from_str(&format!(r#"{{"id":"{id}","name":"{name}"}}"#)).unwrap()
+}
+
+fn context() -> Message {
+    Message::TeamContext {
+        team_id: "t".into(),
+        states: vec![
+            state("s-todo", "Todo", "unstarted"),
+            state("s-prog", "In Progress", "started"),
+            state("s-done", "Done", "completed"),
+        ],
+        members: vec![member("u1", "Ada Lovelace"), member("u2", "Grace Hopper")],
+    }
+}
+
+fn app_with_team() -> App {
+    let mut app = app();
+    app.handle_message(context());
+    app.outbox.requests.clear();
+    app
+}
+
+#[test]
+fn a_picker_narrows_as_you_type_and_enter_takes_the_top_match() {
+    let mut app = app_with_team();
+    press(&mut app, KeyCode::Char('s'));
+    typed(&mut app, "Prog");
+    assert_eq!(app.popup_list_len(), 1);
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(
+        app.outbox.requests.back(),
+        Some(Request::UpdateStatus { state_id, .. }) if state_id.as_str() == "s-prog"
+    ));
+}
+
+#[test]
+fn until_something_is_typed_a_picker_keeps_its_single_key_moves() {
+    let mut app = app_with_team();
+    press(&mut app, KeyCode::Char('s'));
+    press(&mut app, KeyCode::Char('j'));
+    assert_eq!(app.view.popup_index, 1, "j moves");
+    assert!(app.view.popup_query.is_empty());
+
+    // Upper case starts a query: matching ignores case.
+    typed(&mut app, "Do");
+    assert_eq!(app.view.popup_query.value, "Do");
+    typed(&mut app, "jk");
+    assert_eq!(
+        app.view.popup_query.value, "Dojk",
+        "then j and k are letters"
+    );
+}
+
+#[test]
+fn digits_pick_only_while_nothing_is_typed() {
+    let mut app = app_with_team();
+    press(&mut app, KeyCode::Char('a'));
+    typed(&mut app, "Grace");
+    typed(&mut app, "1");
+    assert_eq!(app.view.popup_query.value, "Grace1");
+    assert!(app.outbox.requests.is_empty());
+}
+
+#[test]
+fn an_assignee_is_found_by_name() {
+    let mut app = app_with_team();
+    press(&mut app, KeyCode::Char('a'));
+    typed(&mut app, "Hop");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.focused_issue().unwrap().assignee.as_ref().unwrap().name,
+        "Grace Hopper"
+    );
+}
+
+#[test]
+fn a_picker_reached_from_the_palette_steps_back_to_it() {
+    let mut app = app_with_team();
+    ctrl(&mut app, 'k');
+    typed(&mut app, "change status");
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(app.view.popup, Popup::StatusChange(_)));
+
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.view.popup, Popup::Palette, "Esc goes back a page");
+    press(&mut app, KeyCode::Esc);
+    assert_eq!(app.view.popup, Popup::None);
+}
+
+#[test]
+fn backspace_on_an_empty_query_steps_back_only_from_the_palette() {
+    let mut app = app_with_team();
+    ctrl(&mut app, 'k');
+    typed(&mut app, "assign to");
+    press(&mut app, KeyCode::Enter);
+    assert!(matches!(app.view.popup, Popup::AssigneeChange(_)));
+    typed(&mut app, "A");
+    press(&mut app, KeyCode::Backspace);
+    assert!(
+        matches!(app.view.popup, Popup::AssigneeChange(_)),
+        "erases first"
+    );
+    press(&mut app, KeyCode::Backspace);
+    assert_eq!(app.view.popup, Popup::Palette);
+
+    let mut app = app_with_team();
+    press(&mut app, KeyCode::Char('a'));
+    press(&mut app, KeyCode::Backspace);
+    assert!(
+        matches!(app.view.popup, Popup::AssigneeChange(_)),
+        "opened by its key, it stays"
+    );
+}
+
+#[test]
+fn group_by_is_picked_directly_from_the_palette() {
+    let mut app = app_with_team();
+    ctrl(&mut app, 'k');
+    typed(&mut app, "group by");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.view.popup, Popup::GroupBy);
+    typed(&mut app, "Assi");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.view.group_by, GroupBy::Assignee);
+    assert_eq!(app.view.popup, Popup::None);
+}
+
+#[test]
+fn a_filter_page_narrows_its_states() {
+    let mut app = app_with_team();
+    press(&mut app, KeyCode::Char('f'));
+    typed(&mut app, "Done");
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(app.list().filters.status.as_deref(), Some("Done"));
+    assert!(
+        app.view.popup_query.is_empty(),
+        "the priority question starts afresh"
+    );
+}
+
+#[test]
+fn a_team_context_landing_while_typing_keeps_the_query() {
+    let mut app = app();
+    press(&mut app, KeyCode::Char('a'));
+    assert!(app.popup_loading());
+    typed(&mut app, "Grace");
+    app.handle_message(context());
+    assert_eq!(app.view.popup_query.value, "Grace");
+    assert_eq!(
+        app.view.popup_index, 0,
+        "the top match, not the current value"
+    );
+    press(&mut app, KeyCode::Enter);
+    assert_eq!(
+        app.focused_issue().unwrap().assignee.as_ref().unwrap().name,
+        "Grace Hopper"
+    );
+}

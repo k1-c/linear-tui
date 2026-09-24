@@ -162,6 +162,26 @@ fn the_palette_draws_its_matches_where_it_records_them() {
 }
 
 #[test]
+fn a_narrowed_picker_draws_its_query_and_a_click_picks_the_filtered_row() {
+    let mut app = app();
+    app.open_priority_change();
+    app.popup_type('H');
+    app.popup_type('i');
+    let lines = render(&mut app, 100, 30);
+    assert!(
+        lines.iter().any(|l| l.contains("\u{203a} Hi")),
+        "query line"
+    );
+    let area = app.frame.popup_area;
+    assert!(lines[area.y as usize].contains("High"));
+    app.click(area.x + 1, area.y);
+    assert_eq!(
+        app.store.issues[IssueSource::Team].items[1].priority,
+        crate::api::types::Priority::High
+    );
+}
+
+#[test]
 fn a_palette_with_no_match_says_so() {
     let mut app = app();
     app.open_palette();

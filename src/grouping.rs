@@ -35,6 +35,15 @@ impl GroupBy {
         }
     }
 
+    /// Every grouping, in the order the picker lists them.
+    pub const ALL: [GroupBy; 5] = [
+        Self::Status,
+        Self::Assignee,
+        Self::Priority,
+        Self::Project,
+        Self::None,
+    ];
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::Status => "Status",

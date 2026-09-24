@@ -7,7 +7,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app::App;
+use crate::app::{App, Popup};
 use crate::fuzzy;
 use crate::keys::{self, Binding};
 
@@ -156,6 +156,11 @@ fn run(app: &mut App, binding: &'static Binding) {
         app.remember_command(command.title);
     }
     (binding.action)(app);
+    // A command that asks a follow-up question — which status, which
+    // person — leads there as a page of the palette: Esc steps back.
+    if app.view.popup != Popup::None {
+        app.view.popup_from_palette = true;
+    }
 }
 
 /// A click while the palette is open: run the row under it, or close the

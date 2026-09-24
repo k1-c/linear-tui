@@ -144,6 +144,8 @@ pub enum Popup {
     None,
     /// The command palette; its query and cursor are in `ViewState::palette`.
     Palette,
+    /// Pick how issue lists are grouped.
+    GroupBy,
     TeamSelect,
     /// The filter popup asks for a status, then a priority.
     Filter(FilterKind),

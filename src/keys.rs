@@ -409,6 +409,11 @@ const fn bind(keys: &'static [Key], context: &'static [Ctx], action: fn(&mut App
     }
 }
 
+/// An action reached only from the command palette, in `context`.
+const fn palette_only(context: &'static [Ctx], action: fn(&mut App)) -> Binding {
+    bind(&[], context, action)
+}
+
 /// A help row for input dispatched outside this table.
 const fn documented(section: Section, keys: &'static str, text: &'static str) -> Binding {
     bind(&[], &[], |_| {}).help(section, keys, text)
@@ -597,6 +602,12 @@ pub static BINDINGS: &[Binding] = &[
         )
         .hint(60, "D", "group")
         .command("Next grouping", &["group by", "display"]),
+    palette_only(ISSUE_LISTS, App::open_group_by)
+        .command(
+            "Group by\u{2026}",
+            &["status", "assignee", "priority", "project", "display"],
+        )
+        .in_section(Section::ListDisplay),
     bind(&[plain('z')], ISSUE_LISTS, App::toggle_selected_group)
         .help(Section::ListDisplay, "z / Z", "Fold group / all groups")
         .hint(70, "z", "fold")
@@ -963,15 +974,34 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
 }
 
+/// Keys in a pick-one popup. Until something is typed, the popup keeps its
+/// single-key moves (`j`/`k`, `g`, `q`, digits); after that every letter is
+/// part of the query, and only arrows, `Ctrl+N`/`Ctrl+P`, Home/End, and Enter
+/// move or pick. An upper-case letter always starts a query, since matching
+/// ignores case.
 fn handle_popup_keys(app: &mut App, key: KeyEvent) {
+    let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+    let typing = !app.view.popup_query.is_empty();
     match key.code {
-        KeyCode::Esc | KeyCode::Char('q') => app.close_popup(),
-        KeyCode::Char('j') | KeyCode::Down => app.popup_next(),
-        KeyCode::Char('k') | KeyCode::Up => app.popup_prev(),
-        KeyCode::Char('g') | KeyCode::Home => app.popup_first(),
-        KeyCode::Char('G') | KeyCode::End => app.popup_last(),
+        KeyCode::Esc => app.popup_escape(),
+        KeyCode::Char('q') if !typing && !ctrl => app.popup_escape(),
+        KeyCode::Down => app.popup_next(),
+        KeyCode::Up => app.popup_prev(),
+        KeyCode::Char('n') if ctrl => app.popup_next(),
+        KeyCode::Char('p') if ctrl => app.popup_prev(),
+        KeyCode::Char('j') if !typing && !ctrl => app.popup_next(),
+        KeyCode::Char('k') if !typing && !ctrl => app.popup_prev(),
+        KeyCode::Home => app.popup_first(),
+        KeyCode::End => app.popup_last(),
+        KeyCode::Char('g') if !typing && !ctrl => app.popup_first(),
         KeyCode::Enter => app.apply_popup(),
-        KeyCode::Char(c @ '1'..='9') => app.popup_pick((c as usize) - ('1' as usize)),
+        KeyCode::Char(c @ '1'..='9') if !typing && !ctrl => {
+            app.popup_pick((c as usize) - ('1' as usize))
+        }
+        KeyCode::Backspace => app.popup_erase(),
+        KeyCode::Char('w') if ctrl => app.edit_popup_query(Input::kill_word),
+        KeyCode::Char('u') if ctrl => app.edit_popup_query(Input::kill_to_start),
+        KeyCode::Char(c) if !ctrl => app.popup_type(c),
         _ => {}
     }
 }
