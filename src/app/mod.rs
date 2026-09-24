@@ -257,6 +257,8 @@ pub struct App {
     /// Rendered height of the detail body, updated each frame so scrolling can clamp.
     pub detail_lines: u16,
     pub detail_viewport: u16,
+    /// The detail view's rendered Markdown, kept for the next frame.
+    pub detail_markdown: crate::ui::issue_detail::Memo,
 
     // Search
     /// Set while the list shows workspace-wide search results instead of the team's issues.
@@ -368,6 +370,7 @@ impl App {
             detail_scroll: 0,
             detail_lines: 0,
             detail_viewport: 0,
+            detail_markdown: Default::default(),
             global_search: None,
             comment: Input::default(),
             new_issue: None,

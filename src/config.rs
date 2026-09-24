@@ -136,7 +136,7 @@ pub enum ThemeName {
 
 /// Runtime color theme derived from ThemeName.
 #[allow(dead_code)]
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Theme {
     pub accent: Color,
     pub secondary: Color,
