@@ -199,3 +199,20 @@ fn a_tiny_terminal_says_so_and_leaves_nothing_clickable() {
     assert!(text.contains("Terminal"), "{text}");
     assert!(app.list_rows.is_empty() && app.chip_areas.is_empty());
 }
+
+/// The help overlay is drawn from the binding table, so every documented
+/// binding shows up in it.
+#[test]
+fn every_documented_binding_appears_in_the_help_overlay() {
+    let mut app = app();
+    app.open_help();
+    let lines = render(&mut app, 100, 120);
+    for binding in crate::keys::BINDINGS {
+        let Some(help) = binding.help else { continue };
+        let row = format!("  {:<9}  {}", help.keys, help.text);
+        assert!(
+            lines.iter().any(|l| l.contains(&row)),
+            "{row:?} missing from the help overlay"
+        );
+    }
+}
