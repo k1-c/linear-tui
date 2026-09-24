@@ -41,11 +41,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         f.render_widget(
             Paragraph::new(Span::styled(message, Style::default().fg(th.muted)))
                 .alignment(ratatui::layout::Alignment::Center),
-            Rect {
-                y: area.y + area.height / 3,
-                height: 1,
-                ..area
-            },
+            super::widgets::message_row(area),
         );
         return;
     }

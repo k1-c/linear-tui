@@ -116,6 +116,16 @@ pub fn estimate(points: f64) -> String {
     }
 }
 
+/// The row a third of the way down `area`, where an empty list says why it
+/// is empty. Zero-height when `area` is, so nothing is drawn outside it.
+pub fn message_row(area: Rect) -> Rect {
+    Rect {
+        y: area.y + area.height / 3,
+        height: area.height.min(1),
+        ..area
+    }
+}
+
 /// A `width` × `height` rectangle centred in `area`.
 pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
     let vertical = Layout::vertical([Constraint::Length(height)])
