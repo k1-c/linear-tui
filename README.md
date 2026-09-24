@@ -13,6 +13,8 @@
 
 Built with [ratatui](https://ratatui.rs/) and the Linear GraphQL API.
 
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/demo.gif" alt="linear-tui browsing issues grouped by status, opening an issue with Markdown and comments, then a project, a cycle, and a saved view">
+
 </div>
 
 ---
@@ -269,6 +271,20 @@ rest behave the same.
 
 There is nothing else to install: TLS goes through rustls, so no system OpenSSL
 or `pkg-config` is involved.
+
+### Recording the demo
+
+The GIF above is scripted with [VHS](https://github.com/charmbracelet/vhs), so it
+can be re-recorded after a UI change. Sign linear-tui in to a throwaway
+workspace, fill it with demo data once, then record:
+
+```sh
+python3 demo/seed.py                        # issues, projects, cycles, views
+LINEAR_DEMO_TEAM=<team name> demo/record.sh # writes assets/demo.gif
+```
+
+`record.sh` needs `vhs`, `ttyd`, and `ffmpeg`, and runs linear-tui with a
+throwaway config so your own settings stay out of the recording.
 
 ## License
 

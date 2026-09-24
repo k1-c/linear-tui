@@ -10,6 +10,9 @@ homepage = "https://github.com/k1-c/linear-tui"
 keywords = ["tui", "linear", "issue-tracker", "cli", "project-management"]
 categories = ["command-line-utilities", "development-tools"]
 readme = "README.md"
+# The README links the GIF by URL, so the crate need not carry it, and the
+# demo scripts are only for recording it.
+exclude = ["assets/demo.gif", "demo/"]
 
 [dependencies]
 # TUI
