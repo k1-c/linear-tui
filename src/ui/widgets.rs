@@ -2,6 +2,7 @@
 //! label chips, people's names, and width-aware truncation.
 
 use ratatui::{
+    layout::{Constraint, Flex, Layout, Rect},
     style::{Color, Modifier, Style},
     text::Span,
 };
@@ -65,18 +66,65 @@ pub fn label_chip(label: &Label, theme: &Theme) -> Vec<Span<'static>> {
     ]
 }
 
-/// Two-letter initials for a person, the terminal's stand-in for an avatar.
+/// Initials for a person, the terminal's stand-in for an avatar: always two
+/// cells wide, so the columns after an avatar line up whatever the name.
+///
+/// Two letters of Latin script fill the badge, but one CJK character already
+/// does, so a name written in one gets a single character.
 pub fn initials(name: &str) -> String {
     let mut parts = name
         .split(|c: char| c.is_whitespace() || c == '.' || c == '_' || c == '-')
         .filter(|p| !p.is_empty());
     let first = parts.next().and_then(|p| p.chars().next());
     let second = parts.next().and_then(|p| p.chars().next());
-    match (first, second) {
-        (Some(a), Some(b)) => format!("{}{}", a, b).to_uppercase(),
-        (Some(_), None) => name.chars().take(2).collect::<String>().to_uppercase(),
+    let letters: String = match (first, second) {
+        (Some(a), Some(b)) => [a, b].iter().collect(),
+        (Some(_), None) => name.chars().take(2).collect(),
         _ => "?".to_string(),
+    };
+    let mut out = String::new();
+    let mut width = 0;
+    for c in letters.to_uppercase().chars() {
+        let w = c.width().unwrap_or(0);
+        if width + w > 2 {
+            break;
+        }
+        out.push(c);
+        width += w;
     }
+    out.push_str(&" ".repeat(2 - width));
+    out
+}
+
+/// A person's initials on their colour, as every list and card draws them.
+pub fn avatar(name: &str) -> Span<'static> {
+    Span::styled(
+        initials(name),
+        Style::default()
+            .fg(Color::Black)
+            .bg(person_color(name))
+            .add_modifier(Modifier::BOLD),
+    )
+}
+
+/// An estimate as Linear writes it: `3`, not `3.0`, but `0.5` stays.
+pub fn estimate(points: f64) -> String {
+    if points.fract() == 0.0 {
+        format!("{points:.0}")
+    } else {
+        format!("{points}")
+    }
+}
+
+/// A `width` × `height` rectangle centred in `area`.
+pub fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let vertical = Layout::vertical([Constraint::Length(height)])
+        .flex(Flex::Center)
+        .split(area);
+    let horizontal = Layout::horizontal([Constraint::Length(width)])
+        .flex(Flex::Center)
+        .split(vertical[0]);
+    horizontal[0]
 }
 
 /// A stable colour for a person, so the same name is always the same hue —
@@ -104,13 +152,7 @@ pub fn person(user: Option<&User>, theme: &Theme) -> Vec<Span<'static>> {
         Some(user) => {
             let name = user_name(user).to_string();
             vec![
-                Span::styled(
-                    initials(&name),
-                    Style::default()
-                        .fg(Color::Black)
-                        .bg(person_color(&name))
-                        .add_modifier(Modifier::BOLD),
-                ),
+                avatar(&name),
                 Span::raw(" "),
                 Span::styled(name, Style::default().fg(theme.text)),
             ]
@@ -244,7 +286,15 @@ mod tests {
         assert_eq!(initials("Shun Kimura"), "SK");
         assert_eq!(initials("masakazu.ishida"), "MI");
         assert_eq!(initials("k1c"), "K1");
-        assert_eq!(initials(""), "?");
+        assert_eq!(initials(""), "? ");
+    }
+
+    #[test]
+    fn initials_are_always_two_cells_wide() {
+        for name in ["Shun Kimura", "木村 駿", "木村", "x", ""] {
+            assert_eq!(initials(name).width(), 2, "{name}");
+        }
+        assert_eq!(initials("木村 駿"), "木");
     }
 
     #[test]

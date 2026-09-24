@@ -1,12 +1,12 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Flex, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState},
 };
 
-use super::widgets::{initials, person_color, priority_glyph, state_glyph, user_name};
+use super::widgets::{avatar, centered_rect, priority_glyph, state_glyph, user_name};
 use crate::api::types::Priority;
 use crate::app::{App, FilterKind, Popup};
 use crate::config::Theme;
@@ -20,16 +20,6 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Popup::AssigneeChange(_) => draw_assignee_change(f, app),
         Popup::None => {}
     }
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .split(area);
-    let horizontal = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .split(vertical[0]);
-    horizontal[0]
 }
 
 fn render_popup_list(f: &mut Frame, app: &mut App, title: &str, items: Vec<ListItem>, width: u16) {
@@ -234,16 +224,7 @@ fn draw_assignee_change(f: &mut Frame, app: &mut App) {
         let name = user_name(member).to_string();
         items.push(numbered_item(
             i + 1,
-            vec![
-                Span::styled(
-                    initials(&name),
-                    Style::default()
-                        .fg(ratatui::style::Color::Black)
-                        .bg(person_color(&name))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-            ],
+            vec![avatar(&name), Span::raw(" ")],
             &name,
             current_assignee_id.as_ref() == Some(&member.id),
             &th,

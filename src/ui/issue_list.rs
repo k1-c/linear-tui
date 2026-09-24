@@ -16,8 +16,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::widgets::{
-    fit, initials, label_chip, person_color, priority_glyph, short_date, state_glyph, truncate,
-    user_name,
+    avatar, estimate, fit, label_chip, priority_glyph, short_date, state_glyph, truncate, user_name,
 };
 use crate::api::types::{Issue, hex_color};
 use crate::app::{App, Chip, IssueSource, ListRow};
@@ -292,16 +291,7 @@ pub fn issue_line(
         ));
     }
     if show_estimate {
-        let est = issue
-            .estimate
-            .map(|e| {
-                if e.fract() == 0.0 {
-                    format!("{e:.0}")
-                } else {
-                    format!("{e}")
-                }
-            })
-            .unwrap_or_default();
+        let est = issue.estimate.map(estimate).unwrap_or_default();
         right.push(Span::styled(
             format!("{est:>2} "),
             Style::default().fg(th.muted),
@@ -311,13 +301,7 @@ pub fn issue_line(
         match &issue.assignee {
             Some(user) => {
                 let name = user_name(user);
-                right.push(Span::styled(
-                    initials(name),
-                    Style::default()
-                        .fg(ratatui::style::Color::Black)
-                        .bg(person_color(name))
-                        .add_modifier(Modifier::BOLD),
-                ));
+                right.push(avatar(name));
             }
             None => right.push(Span::styled("\u{25cc} ", Style::default().fg(th.muted))),
         }

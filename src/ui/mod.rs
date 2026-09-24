@@ -13,7 +13,7 @@ pub mod widgets;
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Flex, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
@@ -465,22 +465,12 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .split(area);
-    let horizontal = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .split(vertical[0]);
-    horizontal[0]
-}
-
 fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
     let th = &app.theme;
     let lines: Vec<Line> = message.lines().map(|l| Line::from(l.to_string())).collect();
     let height = (lines.len() as u16 + 4).min(15);
     let width = 50.min(f.area().width.saturating_sub(4));
-    let area = centered_rect(width, height, f.area());
+    let area = widgets::centered_rect(width, height, f.area());
 
     f.render_widget(Clear, area);
     let popup = Paragraph::new(lines)
@@ -498,7 +488,7 @@ fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
     // Hint at bottom
     let hint_area = Rect {
         x: area.x + 1,
-        y: area.y + area.height - 1,
+        y: (area.y + area.height).saturating_sub(1),
         width: area.width.saturating_sub(2),
         height: 1,
     };
@@ -599,7 +589,7 @@ fn draw_help(f: &mut Frame, app: &mut App) {
     let total = help_text.len() as u16;
     let height = (total + 2).min(f.area().height.saturating_sub(4));
     let width = 52.min(f.area().width.saturating_sub(4));
-    let area = centered_rect(width, height, f.area());
+    let area = widgets::centered_rect(width, height, f.area());
     let scroll = app
         .help_scroll
         .min(total.saturating_sub(height.saturating_sub(2)));
