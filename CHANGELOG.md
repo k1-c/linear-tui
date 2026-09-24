@@ -2,6 +2,18 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.0] - 2026-09-24
+
+### Bug Fixes
+
+- **keys**: Open the highlighted issue on project and cycle pages
+
+### Features
+
+- **views**: Support project views and team views
+
+
+
 ## [0.4.0] - 2026-09-23
 
 ### Documentation
