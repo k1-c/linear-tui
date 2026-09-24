@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::oauth::TokenResponse;
 use crate::config::Config;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: String,
@@ -42,6 +42,7 @@ impl OAuthTokens {
     }
 }
 
+#[derive(Clone)]
 pub struct TokenStore {
     path: PathBuf,
 }

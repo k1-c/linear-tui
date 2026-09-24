@@ -58,7 +58,7 @@ async fn main() -> Result<()> {
         return Ok(());
     };
     tracing::info!(method = auth.label(), "authenticated successfully");
-    let client = LinearClient::new(auth.authorization_header());
+    let client = LinearClient::with_header(auth.authorization_header());
 
     // Run TUI
     run_tui(client, config).await
@@ -398,7 +398,7 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
         }
         Request::Search { term, team_id } => {
             let (issues, _) = client
-                .search_issues(term, team_id.as_deref(), per_page)
+                .search_issues(term, team_id.as_ref(), per_page)
                 .await?;
             Message::SearchResults {
                 term: term.clone(),
@@ -470,7 +470,7 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
             assignee_id,
         } => {
             client
-                .update_issue_assignee(issue_id, assignee_id.as_deref())
+                .update_issue_assignee(issue_id, assignee_id.as_ref())
                 .await?;
             Message::Mutated("Assignee updated")
         }

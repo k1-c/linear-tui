@@ -4,14 +4,14 @@ pub mod setup;
 pub mod token;
 
 use anyhow::Result;
-use token::TokenStore;
+use token::{OAuthTokens, TokenStore};
 
 use crate::api::client::LinearClient;
 use crate::api::types::Viewer;
 use crate::config::Config;
 
 pub enum AuthMethod {
-    OAuth { access_token: String },
+    OAuth(OAuthTokens),
     ApiKey(String),
 }
 
@@ -20,14 +20,14 @@ impl AuthMethod {
     /// OAuth tokens use "Bearer <token>", API keys are sent directly.
     pub fn authorization_header(&self) -> String {
         match self {
-            AuthMethod::OAuth { access_token } => format!("Bearer {access_token}"),
+            AuthMethod::OAuth(tokens) => format!("Bearer {}", tokens.access_token),
             AuthMethod::ApiKey(key) => key.clone(),
         }
     }
 
     pub fn label(&self) -> &'static str {
         match self {
-            AuthMethod::OAuth { .. } => "OAuth",
+            AuthMethod::OAuth(_) => "OAuth",
             AuthMethod::ApiKey(_) => "API key",
         }
     }
@@ -52,9 +52,7 @@ pub async fn resolve_auth(token_store: &TokenStore, api_key: Option<&str>) -> Re
             tokens = oauth::refresh_token(&tokens.refresh_token).await?;
             token_store.save(&tokens)?;
         }
-        return Ok(AuthMethod::OAuth {
-            access_token: tokens.access_token,
-        });
+        return Ok(AuthMethod::OAuth(tokens));
     }
 
     // Fall back to API key
@@ -68,7 +66,7 @@ pub async fn resolve_auth(token_store: &TokenStore, api_key: Option<&str>) -> Re
 /// Ask the API who the credentials belong to — the only way to tell a live
 /// credential from a revoked one.
 pub async fn identify(auth: &AuthMethod) -> Result<Viewer> {
-    LinearClient::new(auth.authorization_header())
+    Ok(LinearClient::with_header(auth.authorization_header())
         .viewer()
-        .await
+        .await?)
 }

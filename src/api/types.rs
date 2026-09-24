@@ -1,6 +1,8 @@
 use ratatui::style::Color;
 use serde::Deserialize;
 
+use super::ids::*;
+
 use crate::config::Theme;
 
 /// Priority levels from the Linear API (0=None, 1=Urgent, 2=High, 3=Medium, 4=Low).
@@ -73,14 +75,22 @@ impl Priority {
     }
 }
 
-impl From<f64> for Priority {
-    fn from(v: f64) -> Self {
-        match v as u8 {
-            1 => Self::Urgent,
-            2 => Self::High,
-            3 => Self::Medium,
-            4 => Self::Low,
-            _ => Self::None,
+impl Priority {
+    /// Read Linear's numeric priority. The schema types it as a float, so
+    /// `2` and `2.0` both arrive; anything that is not one of the five levels
+    /// is treated as no priority rather than rounded into one.
+    fn from_api(value: f64) -> Self {
+        match value {
+            1.0 => Self::Urgent,
+            2.0 => Self::High,
+            3.0 => Self::Medium,
+            4.0 => Self::Low,
+            v => {
+                if v != 0.0 {
+                    tracing::debug!(priority = v, "unrecognised priority");
+                }
+                Self::None
+            }
         }
     }
 }
@@ -91,7 +101,7 @@ impl<'de> Deserialize<'de> for Priority {
         D: serde::Deserializer<'de>,
     {
         let v = f64::deserialize(deserializer)?;
-        Ok(Self::from(v))
+        Ok(Self::from_api(v))
     }
 }
 
@@ -221,7 +231,7 @@ pub struct PageInfo {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct User {
-    pub id: String,
+    pub id: UserId,
     pub name: String,
     #[serde(default)]
     pub email: Option<String>,
@@ -232,7 +242,7 @@ pub struct User {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Team {
-    pub id: String,
+    pub id: TeamId,
     pub name: String,
     pub key: String,
     #[serde(default)]
@@ -250,7 +260,7 @@ fn default_true() -> bool {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Issue {
-    pub id: String,
+    pub id: IssueId,
     pub identifier: String,
     pub title: String,
     #[serde(default)]
@@ -298,7 +308,7 @@ pub struct Issue {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct IssueRef {
-    pub id: String,
+    pub id: IssueId,
     pub identifier: String,
     pub title: String,
     #[serde(default)]
@@ -308,14 +318,14 @@ pub struct IssueRef {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Milestone {
-    pub id: String,
+    pub id: MilestoneId,
     pub name: String,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct WorkflowState {
-    pub id: String,
+    pub id: WorkflowStateId,
     pub name: String,
     #[serde(default)]
     pub color: Option<String>,
@@ -331,7 +341,7 @@ pub struct WorkflowState {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Label {
-    pub id: String,
+    pub id: LabelId,
     pub name: String,
     #[serde(default)]
     pub color: Option<String>,
@@ -340,7 +350,7 @@ pub struct Label {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Comment {
-    pub id: String,
+    pub id: CommentId,
     pub body: String,
     #[serde(default, rename = "createdAt")]
     pub created_at: Option<String>,
@@ -349,19 +359,20 @@ pub struct Comment {
     pub user: Option<User>,
     /// Set on a reply; the detail view nests it under the comment it answers.
     #[serde(default)]
-    pub parent: Option<ParentRef>,
+    pub parent: Option<Ref<CommentId>>,
 }
 
 /// Just the id of a related record, for parent/child links.
+/// A reference to another entity by id alone, typed by what it points at.
 #[derive(Debug, Clone, Deserialize)]
-pub struct ParentRef {
-    pub id: String,
+pub struct Ref<I> {
+    pub id: I,
 }
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Project {
-    pub id: String,
+    pub id: ProjectId,
     pub name: String,
     #[serde(default)]
     pub state: Option<String>,
@@ -386,7 +397,7 @@ pub struct Project {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Cycle {
-    pub id: String,
+    pub id: CycleId,
     #[serde(default)]
     pub name: Option<String>,
     #[serde(default)]
@@ -407,7 +418,7 @@ pub struct Cycle {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct CustomView {
-    pub id: String,
+    pub id: CustomViewId,
     pub name: String,
     #[serde(default)]
     pub description: Option<String>,
@@ -436,7 +447,7 @@ pub struct CustomView {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Favorite {
-    pub id: String,
+    pub id: FavoriteId,
     #[serde(rename = "type")]
     pub kind: String,
     #[serde(default)]
@@ -449,16 +460,16 @@ pub struct Favorite {
     pub sort_order: f64,
     /// The folder this favorite sits in, when it is in one.
     #[serde(default)]
-    pub parent: Option<ParentRef>,
+    pub parent: Option<Ref<FavoriteId>>,
     #[serde(default, rename = "folderName")]
     pub folder_name: Option<String>,
     /// For a built-in page ("issues", "projects", "cycles", …).
     #[serde(default, rename = "predefinedViewType")]
     pub predefined_view_type: Option<String>,
     #[serde(default, rename = "predefinedViewTeam")]
-    pub predefined_view_team: Option<ParentRef>,
+    pub predefined_view_team: Option<Ref<TeamId>>,
     #[serde(default, rename = "customView")]
-    pub custom_view: Option<ParentRef>,
+    pub custom_view: Option<Ref<CustomViewId>>,
     #[serde(default)]
     pub issue: Option<IssueRef>,
     #[serde(default)]
@@ -494,7 +505,7 @@ impl CustomView {
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Viewer {
-    pub id: String,
+    pub id: UserId,
     pub name: String,
     #[serde(default, rename = "displayName")]
     pub display_name: Option<String>,
@@ -767,6 +778,11 @@ mod tests {
         assert_eq!(
             serde_json::from_str::<Priority>("99").unwrap(),
             Priority::None
+        );
+        assert_eq!(
+            serde_json::from_str::<Priority>("2.5").unwrap(),
+            Priority::None,
+            "a fraction is not rounded into a level"
         );
     }
 

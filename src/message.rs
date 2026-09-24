@@ -4,6 +4,7 @@
 //! and the resulting [`Message`] is delivered back over an mpsc channel. The UI
 //! thread never awaits a network call, so input and animation stay responsive.
 
+use crate::api::ids::*;
 use crate::api::types::*;
 use crate::grouping::Preset;
 
@@ -12,10 +13,10 @@ pub enum Request {
     Teams,
     Viewer,
     TeamContext {
-        team_id: String,
+        team_id: TeamId,
     },
     Issues {
-        team_id: String,
+        team_id: TeamId,
         after: Option<String>,
         /// Which slice to fetch. Linear filters by workflow category on the
         /// server, so Active means every active issue, not the active ones
@@ -23,13 +24,13 @@ pub enum Request {
         preset: Preset,
     },
     MyIssues {
-        user_id: String,
+        user_id: UserId,
         after: Option<String>,
     },
     /// Workspace-wide full-text search, scoped to the current team.
     Search {
         term: String,
-        team_id: Option<String>,
+        team_id: Option<TeamId>,
     },
     /// The saved views the user can open. Fetched once at startup, because the
     /// sidebar shows them whatever destination is on screen.
@@ -39,54 +40,54 @@ pub enum Request {
     /// One saved view's issues. Linear evaluates the view's filter, so this is
     /// a plain page request rather than a filter rebuilt on the client.
     ViewIssues {
-        view_id: String,
+        view_id: CustomViewId,
         after: Option<String>,
     },
     /// One saved project view's projects.
     ViewProjects {
-        view_id: String,
+        view_id: CustomViewId,
         after: Option<String>,
     },
     Projects {
-        team_id: String,
+        team_id: TeamId,
         after: Option<String>,
     },
     Cycles {
-        team_id: String,
+        team_id: TeamId,
         after: Option<String>,
     },
     IssueDetail {
-        issue_id: String,
+        issue_id: IssueId,
     },
     ProjectIssues {
-        project_id: String,
+        project_id: ProjectId,
         after: Option<String>,
     },
     CycleIssues {
-        cycle_id: String,
+        cycle_id: CycleId,
         after: Option<String>,
     },
     UpdateStatus {
-        issue_id: String,
-        state_id: String,
+        issue_id: IssueId,
+        state_id: WorkflowStateId,
     },
     UpdatePriority {
-        issue_id: String,
-        priority: u8,
+        issue_id: IssueId,
+        priority: Priority,
     },
     UpdateAssignee {
-        issue_id: String,
-        assignee_id: Option<String>,
+        issue_id: IssueId,
+        assignee_id: Option<UserId>,
     },
     CreateComment {
-        issue_id: String,
+        issue_id: IssueId,
         body: String,
     },
     CreateIssue {
-        team_id: String,
+        team_id: TeamId,
         title: String,
         description: Option<String>,
-        priority: u8,
+        priority: Priority,
     },
     /// Hand a URL to the desktop's default browser.
     OpenUrl(String),
@@ -129,7 +130,7 @@ impl Request {
 
     /// The issue an optimistic mutation already patched locally, whose copy
     /// must be re-read from the server if the mutation fails.
-    pub fn patched_issue(&self) -> Option<&str> {
+    pub fn patched_issue(&self) -> Option<&IssueId> {
         match self {
             Self::UpdateStatus { issue_id, .. }
             | Self::UpdatePriority { issue_id, .. }
@@ -172,14 +173,14 @@ impl Request {
 #[derive(Debug)]
 pub enum Message {
     Teams(Vec<Team>),
-    Viewer(String),
+    Viewer(UserId),
     TeamContext {
-        team_id: String,
+        team_id: TeamId,
         states: Vec<WorkflowState>,
         members: Vec<User>,
     },
     Issues {
-        team_id: String,
+        team_id: TeamId,
         /// Echoed back so a page fetched for another preset can be dropped.
         preset: Preset,
         page: Page<Issue>,
@@ -187,39 +188,39 @@ pub enum Message {
     MyIssues(Page<Issue>),
     SearchResults {
         term: String,
-        team_id: Option<String>,
+        team_id: Option<TeamId>,
         issues: Vec<Issue>,
     },
     CustomViews(Vec<CustomView>),
     Favorites(Vec<Favorite>),
     ViewIssues {
         /// Echoed back so a late page cannot be filed under the wrong view.
-        view_id: String,
+        view_id: CustomViewId,
         page: Page<Issue>,
     },
     ViewProjects {
-        view_id: String,
+        view_id: CustomViewId,
         page: Page<Project>,
     },
     Projects {
-        team_id: String,
+        team_id: TeamId,
         page: Page<Project>,
     },
     Cycles {
-        team_id: String,
+        team_id: TeamId,
         page: Page<Cycle>,
     },
     IssueDetail(Box<Issue>),
     ProjectIssues {
-        project_id: String,
+        project_id: ProjectId,
         page: Page<Issue>,
     },
     CycleIssues {
-        cycle_id: String,
+        cycle_id: CycleId,
         page: Page<Issue>,
     },
     IssueCreated {
-        team_id: String,
+        team_id: TeamId,
         issue: Box<Issue>,
     },
     /// A mutation succeeded; carries the status line to show.

@@ -38,13 +38,10 @@ pub async fn run(token_store: &TokenStore) -> Result<bool> {
 
 async fn browser_login(token_store: &TokenStore) -> Result<()> {
     oauth::login(token_store).await?;
-    let viewer = super::identify(&super::AuthMethod::OAuth {
-        access_token: token_store
-            .load()?
-            .context("Login finished but no token was stored")?
-            .access_token,
-    })
-    .await?;
+    let tokens = token_store
+        .load()?
+        .context("Login finished but no token was stored")?;
+    let viewer = super::identify(&super::AuthMethod::OAuth(tokens)).await?;
     println!("Signed in as {}.", viewer.name);
     Ok(())
 }
