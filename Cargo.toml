@@ -1,6 +1,6 @@
 [package]
 name = "linear-tui"
-version = "0.5.2"
+version = "0.5.3"
 edition = "2024"
 rust-version = "1.88"
 description = "A TUI client for Linear.app — manage issues, projects, and cycles from your terminal"
