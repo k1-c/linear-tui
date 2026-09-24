@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-09-24
+
+### Documentation
+
+- **agents**: Describe the store, use case and app layers
+
+### Features
+
+- **fuzzy**: Add an in-order, word-start-aware matcher
+- **keys**: Declare command palette entries on BINDINGS rows
+- **palette**: Open a command palette with Ctrl+K
+- **palette**: Make the pickers palette pages that narrow as you type
+- **palette**: Jump to issues, projects, cycles, views and teams
+
+### Refactoring
+
+- **app**: Gather renderer-recorded state into FrameState
+- **store**: Move what Linear told us out of App into Store
+- **usecase**: Run issue changes through one use case each
+- **app**: Split App into navigation, view and outbox state
+- **app**: Open the selected row through one intent
+
+
+
 ## [0.5.3] - 2026-09-24
 
 ### Bug Fixes
