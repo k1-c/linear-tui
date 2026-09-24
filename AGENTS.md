@@ -37,10 +37,11 @@ local work, and CI pins its own (`dtolnay/rust-toolchain@stable`).
 
 - `src/main.rs` — entry point, CLI subcommands, TUI main loop, request dispatch
 - `src/message.rs` — `Request` / `Message` / `Page`, the boundary between UI and I/O
-- `src/app.rs` — app state (Model) and every state transition, including the
-  sidebar (`Nav`, `SidebarAction`, Favorites), the active issue list
-  (`IssueSource`), and mouse
-  hit-testing (`App::click`)
+- `src/app/` — app state (Model) and every state transition. `mod.rs` holds
+  `App`, navigation, requests and `handle_message`; `lists.rs` the issue lists
+  (`IssueSource`, `IssueList`) and their filtering, grouping and prefetch;
+  `sidebar.rs` the sidebar (`SidebarAction`, Favorites); `mouse.rs` hit-testing
+  (`App::click`); `input.rs` text fields; `tests.rs` the state tests
 - `src/grouping.rs` — Active/Backlog/All presets and grouping of issue lists
 - `src/keys.rs` — keybindings (Controller)
 - `src/event.rs` — terminal event polling
