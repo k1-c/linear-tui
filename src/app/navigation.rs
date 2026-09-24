@@ -39,6 +39,21 @@ impl Default for Navigation {
 }
 
 impl App {
+    /// Open whatever the cursor is on: a project, cycle, view, or issue.
+    pub fn open_selected(&mut self) {
+        match self.nav.screen {
+            Screen::ProjectList => self.open_project_detail(),
+            Screen::CycleList => self.open_cycle_detail(),
+            Screen::ViewList => self.open_selected_view(),
+            // The cursor counts rows in display order, which grouping
+            // reorders, so the issue is looked up in that order too.
+            Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => {
+                self.open_issue_detail()
+            }
+            Screen::IssueDetail => {}
+        }
+    }
+
     /// Queue the fetch that populates the current destination.
     pub fn reload_current_tab(&mut self) {
         match self.nav.dest {

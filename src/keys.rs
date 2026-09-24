@@ -376,9 +376,13 @@ pub static BINDINGS: &[Binding] = &[
         "First/last item",
     ),
     // Space is Linear's peek; with no split pane it simply opens the row.
-    bind(&[code(KeyCode::Enter), plain(' ')], LISTS, open)
-        .help(Section::Navigation, "Enter", "Open")
-        .hint(10, "Enter", "open"),
+    bind(
+        &[code(KeyCode::Enter), plain(' ')],
+        LISTS,
+        App::open_selected,
+    )
+    .help(Section::Navigation, "Enter", "Open")
+    .hint(10, "Enter", "open"),
     bind(
         &[code(KeyCode::Enter), plain(' ')],
         &[Sidebar],
@@ -859,18 +863,6 @@ fn last(app: &mut App) {
         app.scroll_to_bottom();
     } else {
         app.select_last();
-    }
-}
-
-fn open(app: &mut App) {
-    match app.nav.screen {
-        Screen::ProjectList => app.open_project_detail(),
-        Screen::CycleList => app.open_cycle_detail(),
-        Screen::ViewList => app.open_selected_view(),
-        // The cursor counts rows in display order, which grouping reorders,
-        // so the issue is looked up in that order too.
-        Screen::IssueList | Screen::ProjectDetail | Screen::CycleDetail => app.open_issue_detail(),
-        Screen::IssueDetail => {}
     }
 }
 

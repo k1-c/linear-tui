@@ -76,7 +76,7 @@ impl App {
                     Some(ListRow::Group { key, .. }) => self.toggle_group(&key),
                     Some(ListRow::Issue { ordinal, .. }) => {
                         if ordinal == self.selected_index() {
-                            self.open_issue_detail();
+                            self.open_selected();
                         } else {
                             self.set_selected_index(ordinal);
                             self.maybe_prefetch();
@@ -98,11 +98,7 @@ impl App {
                     *current = target;
                     return;
                 }
-                match self.nav.screen {
-                    Screen::ProjectList => self.open_project_detail(),
-                    Screen::CycleList => self.open_cycle_detail(),
-                    _ => self.open_selected_view(),
-                }
+                self.open_selected();
             }
             Screen::IssueDetail => {}
         }
