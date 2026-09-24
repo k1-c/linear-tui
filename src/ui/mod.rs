@@ -13,7 +13,7 @@ pub mod widgets;
 
 use ratatui::{
     Frame,
-    layout::{Constraint, Flex, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, Paragraph, Wrap},
@@ -371,7 +371,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             " / ",
             Style::default().fg(th.warning).add_modifier(Modifier::BOLD),
         )];
-        spans.extend(input_spans(&app.search, th));
+        spans.extend(input_spans(&app.list().search, th));
         spans.push(Span::styled(
             format!(
                 "   {} matches \u{00b7} Enter keep \u{00b7} Esc clear \u{00b7} Ctrl+G search all of Linear",
@@ -465,22 +465,12 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .split(area);
-    let horizontal = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .split(vertical[0]);
-    horizontal[0]
-}
-
 fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
     let th = &app.theme;
     let lines: Vec<Line> = message.lines().map(|l| Line::from(l.to_string())).collect();
     let height = (lines.len() as u16 + 4).min(15);
     let width = 50.min(f.area().width.saturating_sub(4));
-    let area = centered_rect(width, height, f.area());
+    let area = widgets::centered_rect(width, height, f.area());
 
     f.render_widget(Clear, area);
     let popup = Paragraph::new(lines)
@@ -498,7 +488,7 @@ fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
     // Hint at bottom
     let hint_area = Rect {
         x: area.x + 1,
-        y: area.y + area.height - 1,
+        y: (area.y + area.height).saturating_sub(1),
         width: area.width.saturating_sub(2),
         height: 1,
     };
@@ -511,7 +501,7 @@ fn draw_error_popup(f: &mut Frame, message: &str, app: &App) {
     );
 }
 
-fn draw_help(f: &mut Frame, app: &App) {
+fn draw_help(f: &mut Frame, app: &mut App) {
     let th = &app.theme;
     let section = |text: &str| -> Line<'static> {
         Line::from(vec![Span::styled(
@@ -537,7 +527,7 @@ fn draw_help(f: &mut Frame, app: &App) {
         section("Sidebar"),
         key_line("Tab", "Focus sidebar / content"),
         key_line("C-b", "Show/hide sidebar"),
-        key_line("h/l", "Fold/unfold a team"),
+        key_line("h/l", "Fold/unfold a Favorites folder"),
         Line::from(""),
         section("Go to"),
         key_line("g a", "Active issues"),
@@ -581,7 +571,7 @@ fn draw_help(f: &mut Frame, app: &App) {
         Line::from(""),
         section("Other"),
         key_line("t", "Switch team"),
-        key_line("C-r", "Refresh"),
+        key_line("F5/C-r", "Refresh"),
         key_line("?", "Toggle this help"),
         key_line("q", "Quit"),
         Line::from(""),
@@ -599,10 +589,13 @@ fn draw_help(f: &mut Frame, app: &App) {
     let total = help_text.len() as u16;
     let height = (total + 2).min(f.area().height.saturating_sub(4));
     let width = 52.min(f.area().width.saturating_sub(4));
-    let area = centered_rect(width, height, f.area());
+    let area = widgets::centered_rect(width, height, f.area());
     let scroll = app
         .help_scroll
         .min(total.saturating_sub(height.saturating_sub(2)));
+    // Written back, like the detail view's measurements, so the offset never
+    // runs past what the overlay can show.
+    app.help_scroll = scroll;
 
     f.render_widget(Clear, area);
     let help = Paragraph::new(help_text).scroll((scroll, 0)).block(

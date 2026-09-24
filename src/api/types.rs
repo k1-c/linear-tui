@@ -17,6 +17,16 @@ pub enum Priority {
 }
 
 impl Priority {
+    /// Every level, in the order the priority menu lists them. Position in
+    /// this array is what [`Self::as_index`] and [`Self::from_index`] map.
+    pub const ALL: [Priority; 5] = [
+        Self::None,
+        Self::Urgent,
+        Self::High,
+        Self::Medium,
+        Self::Low,
+    ];
+
     pub fn label(&self) -> &'static str {
         match self {
             Self::None => "None",

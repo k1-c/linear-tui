@@ -19,8 +19,8 @@ use unicode_width::UnicodeWidthStr;
 
 use super::markdown::{self, wrap};
 use super::widgets::{
-    initials, label_chip, person, person_color, priority_glyph, short_date, state_color,
-    state_glyph, truncate, user_name,
+    self, avatar, label_chip, person, priority_glyph, short_date, state_color, state_glyph,
+    truncate, user_name,
 };
 use crate::api::types::{Comment, Issue, StateType, hex_color};
 use crate::app::{App, InputMode};
@@ -63,7 +63,7 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     };
     let lines = body_lines(&issue, body_area.width, !with_panel, &th);
 
-    app.detail_lines = lines.len() as u16;
+    app.detail_lines = u16::try_from(lines.len()).unwrap_or(u16::MAX);
     app.detail_viewport = body_area.height;
     app.detail_scroll = app
         .detail_scroll
@@ -327,13 +327,7 @@ fn comment_card(
         match &comment.user {
             Some(user) => {
                 let name = user_name(user).to_string();
-                header.push(Span::styled(
-                    initials(&name),
-                    Style::default()
-                        .fg(ratatui::style::Color::Black)
-                        .bg(person_color(&name))
-                        .add_modifier(Modifier::BOLD),
-                ));
+                header.push(avatar(&name));
                 header.push(Span::styled(
                     format!(" {name}"),
                     Style::default().fg(th.text).add_modifier(Modifier::BOLD),
@@ -403,13 +397,7 @@ fn heading(text: &str, th: &Theme) -> Line<'static> {
 }
 
 fn estimate_text(estimate: Option<f64>) -> Option<String> {
-    estimate.map(|e| {
-        if e.fract() == 0.0 {
-            format!("{e:.0} pts")
-        } else {
-            format!("{e} pts")
-        }
-    })
+    estimate.map(|e| format!("{} pts", widgets::estimate(e)))
 }
 
 fn cycle_name(issue: &Issue) -> Option<String> {

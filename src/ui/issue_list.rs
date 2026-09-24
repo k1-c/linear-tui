@@ -16,8 +16,7 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::widgets::{
-    fit, initials, label_chip, person_color, priority_glyph, short_date, state_glyph, truncate,
-    user_name,
+    avatar, estimate, fit, label_chip, priority_glyph, short_date, state_glyph, truncate, user_name,
 };
 use crate::api::types::{Issue, hex_color};
 use crate::app::{App, Chip, IssueSource, ListRow};
@@ -69,15 +68,15 @@ pub fn draw_toolbar(f: &mut Frame, app: &mut App, area: Rect) {
 
     let count = app.visible_issues().len();
     let mut right = vec![];
-    if app.filters.is_active() {
+    if app.list().filters.is_active() {
         right.push(Span::styled(
-            format!("\u{25bc} {}  ", app.filters.summary()),
+            format!("\u{25bc} {}  ", app.list().filters.summary()),
             Style::default().fg(th.secondary),
         ));
     }
-    if !app.search.is_empty() {
+    if !app.list().search.is_empty() {
         right.push(Span::styled(
-            format!("/{}  ", app.search.value),
+            format!("/{}  ", app.list().search.value),
             Style::default().fg(th.warning),
         ));
     }
@@ -115,7 +114,7 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) {
         app.list_rows.clear();
         let message = if app.loading() {
             format!("{} Loading issues\u{2026}", app.spinner_symbol())
-        } else if !app.search.is_empty() || app.filters.is_active() {
+        } else if !app.list().search.is_empty() || app.list().filters.is_active() {
             "No issues match the current filter".to_string()
         } else if app.preset() != Preset::All {
             format!(
@@ -292,16 +291,7 @@ pub fn issue_line(
         ));
     }
     if show_estimate {
-        let est = issue
-            .estimate
-            .map(|e| {
-                if e.fract() == 0.0 {
-                    format!("{e:.0}")
-                } else {
-                    format!("{e}")
-                }
-            })
-            .unwrap_or_default();
+        let est = issue.estimate.map(estimate).unwrap_or_default();
         right.push(Span::styled(
             format!("{est:>2} "),
             Style::default().fg(th.muted),
@@ -311,13 +301,7 @@ pub fn issue_line(
         match &issue.assignee {
             Some(user) => {
                 let name = user_name(user);
-                right.push(Span::styled(
-                    initials(name),
-                    Style::default()
-                        .fg(ratatui::style::Color::Black)
-                        .bg(person_color(name))
-                        .add_modifier(Modifier::BOLD),
-                ));
+                right.push(avatar(name));
             }
             None => right.push(Span::styled("\u{25cc} ", Style::default().fg(th.muted))),
         }

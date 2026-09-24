@@ -43,7 +43,9 @@ pub fn render(
 
     for raw in source.lines() {
         let trimmed = raw.trim_start();
-        let indent = raw.len() - trimmed.len();
+        // Measured in cells, not bytes: an ideographic space is three bytes
+        // but only two cells.
+        let indent = raw[..raw.len() - trimmed.len()].width();
 
         // Fenced code: shown verbatim on a tinted band, never inline-parsed.
         if trimmed.starts_with("```") {
@@ -531,6 +533,17 @@ mod tests {
     fn images_become_a_placeholder() {
         let lines = render("![shot](https://x/y.png)", 80, &[], &th());
         assert_eq!(plain(&lines), ["[image: shot]"]);
+    }
+
+    #[test]
+    fn a_nested_bullet_is_indented_by_display_width() {
+        // One ideographic space: three bytes, two cells.
+        let lines = render("\u{3000}- nested", 80, &[], &th());
+        assert!(
+            plain(&lines)[0].starts_with("  \u{2022} "),
+            "{:?}",
+            plain(&lines)
+        );
     }
 
     #[test]

@@ -1,12 +1,12 @@
 use ratatui::{
     Frame,
-    layout::{Constraint, Flex, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, Clear, List, ListItem, ListState},
 };
 
-use super::widgets::{initials, person_color, priority_glyph, state_glyph, user_name};
+use super::widgets::{avatar, centered_rect, priority_glyph, state_glyph, user_name};
 use crate::api::types::Priority;
 use crate::app::{App, FilterKind, Popup};
 use crate::config::Theme;
@@ -14,22 +14,12 @@ use crate::config::Theme;
 pub fn draw(f: &mut Frame, app: &mut App) {
     match app.popup {
         Popup::TeamSelect => draw_team_select(f, app),
-        Popup::Filter => draw_filter(f, app),
-        Popup::StatusChange => draw_status_change(f, app),
-        Popup::PriorityChange => draw_priority_change(f, app),
-        Popup::AssigneeChange => draw_assignee_change(f, app),
+        Popup::Filter(kind) => draw_filter(f, app, kind),
+        Popup::StatusChange(_) => draw_status_change(f, app),
+        Popup::PriorityChange(_) => draw_priority_change(f, app),
+        Popup::AssigneeChange(_) => draw_assignee_change(f, app),
         Popup::None => {}
     }
-}
-
-fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
-    let vertical = Layout::vertical([Constraint::Length(height)])
-        .flex(Flex::Center)
-        .split(area);
-    let horizontal = Layout::horizontal([Constraint::Length(width)])
-        .flex(Flex::Center)
-        .split(vertical[0]);
-    horizontal[0]
 }
 
 fn render_popup_list(f: &mut Frame, app: &mut App, title: &str, items: Vec<ListItem>, width: u16) {
@@ -120,19 +110,20 @@ fn draw_team_select(f: &mut Frame, app: &mut App) {
     render_popup_list(f, app, "Switch team", items, 44);
 }
 
-fn draw_filter(f: &mut Frame, app: &mut App) {
+fn draw_filter(f: &mut Frame, app: &mut App, kind: FilterKind) {
     let th = app.theme;
-    let (title, items) = match app.filter_kind {
+    let (title, items) = match kind {
         FilterKind::Status => {
             let mut items = vec![numbered_item(
                 0,
                 vec![],
                 "Any status",
-                app.filters.status.is_none(),
+                app.list().filters.status.is_none(),
                 &th,
             )];
             for (i, state) in app.workflow_states.iter().enumerate() {
                 let is_current = app
+                    .list()
                     .filters
                     .status
                     .as_ref()
@@ -152,7 +143,7 @@ fn draw_filter(f: &mut Frame, app: &mut App) {
                 0,
                 vec![],
                 "Any priority",
-                app.filters.priority.is_none(),
+                app.list().filters.priority.is_none(),
                 &th,
             )];
             for i in 1..=5 {
@@ -162,7 +153,7 @@ fn draw_filter(f: &mut Frame, app: &mut App) {
                     i,
                     vec![priority_glyph(p, &th), Span::raw(" ")],
                     p.label(),
-                    app.filters.priority == Some(p),
+                    app.list().filters.priority == Some(p),
                     &th,
                 ));
             }
@@ -175,7 +166,7 @@ fn draw_filter(f: &mut Frame, app: &mut App) {
 fn draw_status_change(f: &mut Frame, app: &mut App) {
     let th = app.theme;
     let current_state_id = app
-        .focused_issue()
+        .popup_issue()
         .and_then(|i| i.state.as_ref())
         .map(|s| s.id.clone());
 
@@ -198,15 +189,8 @@ fn draw_status_change(f: &mut Frame, app: &mut App) {
 
 fn draw_priority_change(f: &mut Frame, app: &mut App) {
     let th = app.theme;
-    let current_pri = app.focused_issue().map(|i| i.priority);
-    let priorities = [
-        Priority::None,
-        Priority::Urgent,
-        Priority::High,
-        Priority::Medium,
-        Priority::Low,
-    ];
-    let items: Vec<ListItem> = priorities
+    let current_pri = app.popup_issue().map(|i| i.priority);
+    let items: Vec<ListItem> = Priority::ALL
         .iter()
         .enumerate()
         .map(|(i, pri)| {
@@ -225,7 +209,7 @@ fn draw_priority_change(f: &mut Frame, app: &mut App) {
 fn draw_assignee_change(f: &mut Frame, app: &mut App) {
     let th = app.theme;
     let current_assignee_id = app
-        .focused_issue()
+        .popup_issue()
         .and_then(|i| i.assignee.as_ref())
         .map(|a| a.id.clone());
 
@@ -240,16 +224,7 @@ fn draw_assignee_change(f: &mut Frame, app: &mut App) {
         let name = user_name(member).to_string();
         items.push(numbered_item(
             i + 1,
-            vec![
-                Span::styled(
-                    initials(&name),
-                    Style::default()
-                        .fg(ratatui::style::Color::Black)
-                        .bg(person_color(&name))
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw(" "),
-            ],
+            vec![avatar(&name), Span::raw(" ")],
             &name,
             current_assignee_id.as_ref() == Some(&member.id),
             &th,

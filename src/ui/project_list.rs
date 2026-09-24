@@ -13,15 +13,17 @@ use crate::api::types::{Project, hex_color};
 use crate::app::App;
 use crate::config::Theme;
 
-pub fn project_state_color(state: Option<&str>) -> Color {
+/// A project state's colour, from the theme so it reads on light
+/// backgrounds too. `state` is Linear's string, and workspaces can add their
+/// own, so anything unknown takes the plain text colour.
+pub fn project_state_color(state: Option<&str>, th: &Theme) -> Color {
     match state {
-        Some("started") => Color::Yellow,
-        Some("planned") => Color::Blue,
-        Some("completed") => Color::Green,
-        Some("cancelled") | Some("canceled") => Color::DarkGray,
-        Some("paused") => Color::Magenta,
-        Some("backlog") => Color::DarkGray,
-        _ => Color::White,
+        Some("started") => th.warning,
+        Some("planned") => th.accent,
+        Some("completed") => th.success,
+        Some("paused") => th.secondary,
+        Some("cancelled" | "canceled" | "backlog") => th.muted,
+        _ => th.text,
     }
 }
 
@@ -105,7 +107,7 @@ fn project_row(project: &Project, width: usize, selected: bool, th: &Theme) -> L
         .color
         .as_deref()
         .and_then(hex_color)
-        .unwrap_or_else(|| project_state_color(project.state.as_deref()));
+        .unwrap_or_else(|| project_state_color(project.state.as_deref(), th));
     let progress = project.progress.unwrap_or(0.0);
     let lead = project
         .lead
@@ -146,7 +148,7 @@ fn project_row(project: &Project, width: usize, selected: bool, th: &Theme) -> L
         ),
         Span::styled(
             format!("  {state}"),
-            Style::default().fg(project_state_color(Some(state))),
+            Style::default().fg(project_state_color(Some(state), th)),
         ),
     ];
     row(left, right, width, selected, th)

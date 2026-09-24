@@ -1,0 +1,441 @@
+//! The issue lists and how the one on screen is filtered, grouped, and paged.
+
+use super::*;
+
+/// Which of the app's issue lists the current screen is showing.
+///
+/// Five lists behave identically once you know which one is on screen —
+/// selection, prefetch, grouping, opening a row — so they are addressed
+/// through this rather than duplicated five times over.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueSource {
+    Team,
+    My,
+    View,
+    Project,
+    Cycle,
+}
+
+impl IssueSource {
+    pub const ALL: [IssueSource; 5] =
+        [Self::Team, Self::My, Self::View, Self::Project, Self::Cycle];
+}
+
+/// One issue list and the state that shapes it on screen.
+#[derive(Debug, Default)]
+pub struct IssueList {
+    /// Rows in the order Linear returned them; grouping reorders them for display.
+    pub issues: Vec<Issue>,
+    /// Cursor position, as an index into [`App::visible_issues`].
+    pub selected: usize,
+    pub page_info: PageInfo,
+    /// Scroll offset, kept across frames so the viewport doesn't jump when
+    /// the rows change.
+    pub table: TableState,
+    /// The preset chip selected on this list.
+    pub preset: Preset,
+    /// Whether a first page has arrived for what the list currently belongs to.
+    pub loaded: bool,
+    /// The live search box. Each list keeps its own, as it keeps its own
+    /// filters: narrowing one list must not quietly narrow another.
+    pub search: Input,
+    pub filters: Filters,
+}
+
+impl IssueList {
+    /// Whether an issue survives this list's preset, search box, and filters.
+    /// `query` is the search text, lowercased once by the caller.
+    fn admits(&self, issue: &Issue, query: &str) -> bool {
+        self.preset.admits(issue)
+            && (query.is_empty()
+                || issue.title.to_lowercase().contains(query)
+                || issue.identifier.to_lowercase().contains(query))
+            && self.filters.status.as_ref().is_none_or(|status| {
+                issue
+                    .state
+                    .as_ref()
+                    .is_some_and(|state| &state.name == status)
+            })
+            && self.filters.priority.is_none_or(|p| issue.priority == p)
+    }
+
+    /// Forget the rows, for a list that is about to belong to something else.
+    pub fn reset(&mut self) {
+        self.issues.clear();
+        self.selected = 0;
+        self.page_info = PageInfo::default();
+        self.loaded = false;
+    }
+}
+
+/// The five issue lists, indexed by [`IssueSource`].
+#[derive(Debug)]
+pub struct IssueLists([IssueList; 5]);
+
+impl Default for IssueLists {
+    /// A team's issues open on Active, as in Linear; every other list opens on
+    /// All, because its contents were already chosen — by a saved view's
+    /// filter, by a project, by being yours — and hiding the done half of a
+    /// view someone deliberately built would be a surprise.
+    fn default() -> Self {
+        Self(IssueSource::ALL.map(|source| IssueList {
+            preset: match source {
+                IssueSource::Team => Preset::Active,
+                _ => Preset::All,
+            },
+            ..IssueList::default()
+        }))
+    }
+}
+
+impl std::ops::Index<IssueSource> for IssueLists {
+    type Output = IssueList;
+    fn index(&self, source: IssueSource) -> &IssueList {
+        &self.0[source as usize]
+    }
+}
+
+impl std::ops::IndexMut<IssueSource> for IssueLists {
+    fn index_mut(&mut self, source: IssueSource) -> &mut IssueList {
+        &mut self.0[source as usize]
+    }
+}
+
+impl IssueLists {
+    pub fn iter_mut(&mut self) -> impl Iterator<Item = &mut IssueList> {
+        self.0.iter_mut()
+    }
+}
+
+/// One rendered line of a grouped issue list.
+#[derive(Debug, Clone)]
+pub enum ListRow {
+    Group {
+        key: String,
+        label: String,
+        color: ratatui::style::Color,
+        glyph: &'static str,
+        count: usize,
+        collapsed: bool,
+    },
+    /// `ordinal` indexes into [`App::visible_issues`].
+    Issue { ordinal: usize, depth: u8 },
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct Filters {
+    pub status: Option<String>,
+    pub priority: Option<Priority>,
+}
+
+impl Filters {
+    pub fn is_active(&self) -> bool {
+        self.status.is_some() || self.priority.is_some()
+    }
+
+    pub fn clear(&mut self) {
+        self.status = None;
+        self.priority = None;
+    }
+
+    pub fn summary(&self) -> String {
+        let mut parts = Vec::new();
+        if let Some(s) = &self.status {
+            parts.push(format!("Status:{s}"));
+        }
+        if let Some(p) = self.priority {
+            parts.push(format!("Priority:{}", p.label()));
+        }
+        parts.join(" | ")
+    }
+}
+
+impl App {
+    // ------------------------------------------------- the active issue list
+
+    /// Which of the five issue lists the current screen is showing.
+    pub fn issue_source(&self) -> IssueSource {
+        match self.screen {
+            Screen::ProjectDetail => IssueSource::Project,
+            Screen::CycleDetail => IssueSource::Cycle,
+            _ => match self.nav {
+                Nav::MyIssues => IssueSource::My,
+                Nav::View(_) => IssueSource::View,
+                _ => IssueSource::Team,
+            },
+        }
+    }
+
+    /// The issue list on screen.
+    pub fn list(&self) -> &IssueList {
+        &self.lists[self.issue_source()]
+    }
+
+    pub fn list_mut(&mut self) -> &mut IssueList {
+        let source = self.issue_source();
+        &mut self.lists[source]
+    }
+
+    /// Cursor position within the active list, as an index into
+    /// [`Self::visible_issues`].
+    pub fn selected_index(&self) -> usize {
+        self.lists[self.issue_source()].selected
+    }
+
+    pub(super) fn selected_index_mut(&mut self) -> &mut usize {
+        self.selected_index_of(self.issue_source())
+    }
+
+    pub(super) fn selected_index_of(&mut self, source: IssueSource) -> &mut usize {
+        &mut self.lists[source].selected
+    }
+
+    pub fn set_selected_index(&mut self, index: usize) {
+        let len = self.visible_issues().len();
+        *self.selected_index_mut() = index.min(len.saturating_sub(1));
+    }
+
+    /// The [`TableState`] whose scroll offset belongs to the active list.
+    pub fn active_table_state(&mut self) -> &mut TableState {
+        let source = self.issue_source();
+        &mut self.lists[source].table
+    }
+
+    /// Get the issue currently focused (selected in list, or being viewed in detail).
+    pub fn focused_issue(&self) -> Option<&Issue> {
+        match self.screen {
+            Screen::IssueDetail => self.current_issue.as_ref(),
+            Screen::ViewList | Screen::ProjectList | Screen::CycleList => None,
+            _ => self.visible_issues().get(self.selected_index()).copied(),
+        }
+    }
+
+    /// The active list, filtered and stacked into its groups.
+    ///
+    /// Sections are the single source of truth for both what is on screen and
+    /// where the cursor can land, so a collapsed group cannot leave the cursor
+    /// pointing at an issue nobody can see.
+    pub fn sections(&self) -> Vec<Section<'_>> {
+        let list = self.list();
+        let query = list.search.value.to_lowercase();
+        group(
+            list.issues.iter().filter(|i| list.admits(i, &query)),
+            self.group_by,
+            &self.collapsed_groups,
+            &self.theme,
+        )
+    }
+
+    /// Every issue the cursor can currently reach, in the order it is drawn.
+    pub fn visible_issues(&self) -> Vec<&Issue> {
+        self.sections()
+            .into_iter()
+            .filter(|s| !s.collapsed)
+            .flat_map(|s| s.issues.into_iter().map(|(issue, _)| issue))
+            .collect()
+    }
+
+    /// The display rows of the active list: group headers interleaved with the
+    /// issues under them, addressed by their position in [`Self::visible_issues`].
+    pub fn list_layout(&self) -> Vec<ListRow> {
+        let mut rows = Vec::new();
+        let mut ordinal = 0;
+        for section in self.sections() {
+            if self.group_by != GroupBy::None {
+                rows.push(ListRow::Group {
+                    key: section.key.clone(),
+                    label: section.label.clone(),
+                    color: section.color,
+                    glyph: section.glyph,
+                    count: section.issues.len(),
+                    collapsed: section.collapsed,
+                });
+            }
+            if section.collapsed {
+                continue;
+            }
+            for (_, depth) in &section.issues {
+                rows.push(ListRow::Issue {
+                    ordinal,
+                    depth: *depth,
+                });
+                ordinal += 1;
+            }
+        }
+        rows
+    }
+
+    /// The group the cursor currently sits in, if the list is grouped.
+    fn selected_group_key(&self) -> Option<String> {
+        let target = self.selected_index();
+        let mut ordinal = 0;
+        for section in self.sections() {
+            if section.collapsed {
+                continue;
+            }
+            if target < ordinal + section.issues.len() {
+                return Some(section.key);
+            }
+            ordinal += section.issues.len();
+        }
+        None
+    }
+
+    /// Fold or unfold the group the cursor is in.
+    pub fn toggle_selected_group(&mut self) {
+        let Some(key) = self.selected_group_key() else {
+            return;
+        };
+        self.toggle_group(&key);
+    }
+
+    pub fn toggle_group(&mut self, key: &str) {
+        if !self.collapsed_groups.remove(key) {
+            self.collapsed_groups.insert(key.to_string());
+        }
+        // Folding a group can put the cursor past the end of what is left.
+        let len = self.visible_issues().len();
+        *self.selected_index_mut() = self.selected_index().min(len.saturating_sub(1));
+    }
+
+    /// Fold every group, or unfold them all if none is folded.
+    pub fn toggle_all_groups(&mut self) {
+        let keys: Vec<String> = self.sections().into_iter().map(|s| s.key).collect();
+        let any_open = keys.iter().any(|k| !self.collapsed_groups.contains(k));
+        if any_open {
+            self.collapsed_groups.extend(keys);
+        } else {
+            for key in keys {
+                self.collapsed_groups.remove(&key);
+            }
+        }
+        let len = self.visible_issues().len();
+        *self.selected_index_mut() = self.selected_index().min(len.saturating_sub(1));
+    }
+
+    pub fn cycle_group_by(&mut self) {
+        self.group_by = self.group_by.next();
+        self.collapsed_groups.clear();
+        *self.selected_index_mut() = 0;
+        self.set_status(format!("Grouped by {}", self.group_by.label()));
+    }
+
+    /// The preset chip selected on the list currently on screen.
+    pub fn preset(&self) -> Preset {
+        self.lists[self.issue_source()].preset
+    }
+
+    pub fn set_preset(&mut self, preset: Preset) {
+        if self.preset() == preset {
+            return;
+        }
+        let source = self.issue_source();
+        self.lists[source].preset = preset;
+        *self.selected_index_mut() = 0;
+        // A team's list is sliced on the server; the other lists already hold
+        // everything they can show and only filter locally. Workspace search
+        // results are not refetched either — that would throw them away.
+        if source == IssueSource::Team
+            && self.global_search.is_none()
+            && let Some(team_id) = self.team_id()
+        {
+            self.request(Request::Issues {
+                team_id,
+                after: None,
+                preset,
+            });
+        }
+    }
+
+    /// Step to the next preset chip, as clicking along the row would.
+    pub fn cycle_preset(&mut self) {
+        let presets = Preset::all();
+        let next = presets
+            .iter()
+            .position(|p| *p == self.preset())
+            .map(|i| (i + 1) % presets.len())
+            .unwrap_or(0);
+        self.set_preset(presets[next]);
+    }
+
+    /// Ask for the next page once the cursor nears the end of the active list.
+    pub(super) fn maybe_prefetch(&mut self) {
+        let source = self.issue_source();
+        // The cursor moves through what is visible, so that is what it can
+        // reach the end of — a search or a folded group can leave most of
+        // the loaded list off screen.
+        if self.selected_index() + PREFETCH_MARGIN < self.visible_issues().len() {
+            return;
+        }
+        let info = &self.lists[source].page_info;
+        if !info.has_next_page {
+            return;
+        }
+        let Some(cursor) = info.end_cursor.clone() else {
+            return;
+        };
+        let after = Some(cursor.clone());
+        let request = match source {
+            IssueSource::Team => self.team_id().map(|team_id| Request::Issues {
+                team_id,
+                after,
+                preset: self.lists[IssueSource::Team].preset,
+            }),
+            IssueSource::My => self
+                .viewer_id
+                .clone()
+                .map(|user_id| Request::MyIssues { user_id, after }),
+            IssueSource::View => self
+                .loaded_view_id
+                .clone()
+                .map(|view_id| Request::ViewIssues { view_id, after }),
+            IssueSource::Project => self
+                .current_project
+                .as_ref()
+                .map(|p| Request::ProjectIssues {
+                    project_id: p.id.clone(),
+                    after,
+                }),
+            IssueSource::Cycle => self.current_cycle.as_ref().map(|c| Request::CycleIssues {
+                cycle_id: c.id.clone(),
+                after,
+            }),
+        };
+        if let Some(request) = request
+            && self.prefetched.insert(cursor)
+        {
+            self.request(request);
+        }
+    }
+
+    pub(super) fn maybe_prefetch_projects(&mut self) {
+        let in_view = self.in_project_view();
+        let info = if in_view {
+            &self.view_projects_page_info
+        } else {
+            &self.projects_page_info
+        };
+        if self.project_cursor() + PREFETCH_MARGIN < self.project_rows().len()
+            || !info.has_next_page
+        {
+            return;
+        }
+        let Some(cursor) = info.end_cursor.clone() else {
+            return;
+        };
+        let after = Some(cursor.clone());
+        let request = if in_view {
+            self.loaded_view_projects_id
+                .clone()
+                .map(|view_id| Request::ViewProjects { view_id, after })
+        } else {
+            self.team_id()
+                .map(|team_id| Request::Projects { team_id, after })
+        };
+        if let Some(request) = request
+            && self.prefetched.insert(cursor)
+        {
+            self.request(request);
+        }
+    }
+}

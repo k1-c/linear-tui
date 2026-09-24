@@ -31,14 +31,14 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
         .color
         .as_deref()
         .and_then(hex_color)
-        .unwrap_or_else(|| project_state_color(project.state.as_deref()));
+        .unwrap_or_else(|| project_state_color(project.state.as_deref(), &th));
     let width = chunks[0].width as usize;
     let progress = project.progress.unwrap_or(0.0);
 
     let mut meta = vec![
         Span::styled(
             format!(" {} ", project.state.as_deref().unwrap_or("-")),
-            Style::default().fg(project_state_color(project.state.as_deref())),
+            Style::default().fg(project_state_color(project.state.as_deref(), &th)),
         ),
         Span::styled("\u{00b7} ", Style::default().fg(th.muted)),
     ];

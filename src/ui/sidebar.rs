@@ -122,7 +122,9 @@ pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
                     .unwrap_or_default();
 
                 let lead = format!(" {indent}{chevron}");
-                let fixed = lead.width() + 2 + trailing.width();
+                // The icon and the space after it; some icons take two cells.
+                let icon_width = item.icon.width() + 1;
+                let fixed = lead.width() + icon_width + trailing.width();
                 let label = truncate(&item.label, width.saturating_sub(fixed));
                 let pad = width.saturating_sub(fixed + label.width());
 
