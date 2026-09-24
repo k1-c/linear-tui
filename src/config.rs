@@ -11,7 +11,36 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    /// What was wrong with the file as loaded — unknown keys, values out of
+    /// range — for the app to surface. Never written back.
+    #[serde(skip)]
+    pub warnings: Vec<String>,
 }
+
+/// The keys each table of `config.toml` understands. A key outside these is
+/// almost always a typo, which serde would otherwise ignore without a word.
+const KNOWN_KEYS: &[(&str, &[&str])] = &[
+    ("", &["auth", "ui"]),
+    (
+        "auth",
+        &["api_key", "oauth_client_id", "oauth_client_secret"],
+    ),
+    (
+        "ui",
+        &[
+            "default_team",
+            "items_per_page",
+            "theme",
+            "sidebar",
+            "sidebar_width",
+            "group_by",
+        ],
+    ),
+];
+
+/// Linear's largest page. A bigger `first` is refused by the API.
+pub const MAX_ITEMS_PER_PAGE: u32 = 250;
+pub const SIDEBAR_WIDTH: std::ops::RangeInclusive<u16> = 18..=48;
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct AuthConfig {
@@ -49,6 +78,28 @@ impl Default for UiConfig {
             group_by: GroupByName::default(),
         }
     }
+}
+
+fn unknown_keys(table: &toml::Table) -> Vec<String> {
+    let mut unknown = Vec::new();
+    for (section, known) in KNOWN_KEYS {
+        let keys = if section.is_empty() {
+            Some(table)
+        } else {
+            table.get(*section).and_then(toml::Value::as_table)
+        };
+        for key in keys.into_iter().flat_map(|t| t.keys()) {
+            if !known.contains(&key.as_str()) {
+                let path = if section.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{section}.{key}")
+                };
+                unknown.push(format!("unknown key `{path}` is ignored"));
+            }
+        }
+    }
+    unknown
 }
 
 fn default_items_per_page() -> u32 {
@@ -202,9 +253,43 @@ impl Config {
         if path.exists() {
             let contents = fs::read_to_string(&path)
                 .with_context(|| format!("Failed to read config: {}", path.display()))?;
-            toml::from_str(&contents).with_context(|| "Failed to parse config")
+            Self::parse(&contents)
         } else {
             Ok(Self::default())
+        }
+    }
+
+    /// Parse `config.toml`, then check what serde lets through: unknown keys,
+    /// and values the app would otherwise only trip over later.
+    pub fn parse(contents: &str) -> Result<Self> {
+        let mut config: Self = toml::from_str(contents).context("Failed to parse config")?;
+        let table: toml::Table = toml::from_str(contents).context("Failed to parse config")?;
+        config.warnings = unknown_keys(&table);
+        config.validate();
+        for warning in &config.warnings {
+            tracing::warn!(%warning, "config.toml");
+        }
+        Ok(config)
+    }
+
+    fn validate(&mut self) {
+        let per_page = self.ui.items_per_page;
+        if !(1..=MAX_ITEMS_PER_PAGE).contains(&per_page) {
+            self.ui.items_per_page = per_page.clamp(1, MAX_ITEMS_PER_PAGE);
+            self.warnings.push(format!(
+                "ui.items_per_page = {per_page} is outside 1–{MAX_ITEMS_PER_PAGE}; using {}",
+                self.ui.items_per_page
+            ));
+        }
+        let width = self.ui.sidebar_width;
+        if !SIDEBAR_WIDTH.contains(&width) {
+            self.ui.sidebar_width = width.clamp(*SIDEBAR_WIDTH.start(), *SIDEBAR_WIDTH.end());
+            self.warnings.push(format!(
+                "ui.sidebar_width = {width} is outside {}–{}; using {}",
+                SIDEBAR_WIDTH.start(),
+                SIDEBAR_WIDTH.end(),
+                self.ui.sidebar_width
+            ));
         }
     }
 
@@ -223,5 +308,65 @@ impl Config {
 
     fn config_path() -> Result<PathBuf> {
         Ok(Self::config_dir()?.join("config.toml"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_typo_is_reported_rather_than_silently_ignored() {
+        let config =
+            Config::parse("theem = 1\n[ui]\ntheem = \"light\"\n[auth]\napi_key = \"k\"\n").unwrap();
+        assert_eq!(
+            config.warnings,
+            [
+                "unknown key `theem` is ignored",
+                "unknown key `ui.theem` is ignored"
+            ]
+        );
+        assert_eq!(config.auth.api_key.as_deref(), Some("k"));
+    }
+
+    #[test]
+    fn out_of_range_values_are_clamped_with_a_warning() {
+        let config = Config::parse("[ui]\nitems_per_page = 1000\nsidebar_width = 3\n").unwrap();
+        assert_eq!(config.ui.items_per_page, MAX_ITEMS_PER_PAGE);
+        assert_eq!(config.ui.sidebar_width, *SIDEBAR_WIDTH.start());
+        assert_eq!(config.warnings.len(), 2);
+    }
+
+    #[test]
+    fn a_valid_file_has_no_warnings() {
+        let config = Config::parse("[ui]\ntheme = \"light\"\nitems_per_page = 100\n").unwrap();
+        assert!(config.warnings.is_empty(), "{:?}", config.warnings);
+    }
+
+    /// Every key the structs define is in `KNOWN_KEYS`, so a new setting cannot
+    /// be flagged as a typo.
+    #[test]
+    fn known_keys_cover_every_field() {
+        let mut config = Config::default();
+        config.auth.api_key = Some("k".into());
+        config.auth.oauth_client_id = Some("id".into());
+        config.auth.oauth_client_secret = Some("secret".into());
+        config.ui.default_team = Some("ENG".into());
+        let written = toml::to_string(&config).unwrap();
+        assert!(Config::parse(&written).unwrap().warnings.is_empty());
+        let table: toml::Table = toml::from_str(&written).unwrap();
+        for (section, known) in KNOWN_KEYS {
+            let keys: Vec<&str> = if section.is_empty() {
+                table.keys().map(String::as_str).collect()
+            } else {
+                table[*section]
+                    .as_table()
+                    .unwrap()
+                    .keys()
+                    .map(String::as_str)
+                    .collect()
+            };
+            assert_eq!(keys.len(), known.len(), "[{section}] {keys:?}");
+        }
     }
 }

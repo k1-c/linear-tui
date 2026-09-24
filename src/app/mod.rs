@@ -346,7 +346,7 @@ impl App {
             selected_view_project_index: 0,
             loaded_view_projects_id: None,
             sidebar_visible: config.ui.sidebar,
-            sidebar_width: config.ui.sidebar_width.clamp(18, 48),
+            sidebar_width: config.ui.sidebar_width,
             sidebar_focus: false,
             sidebar_index: 0,
             sidebar_offset: 0,
@@ -395,6 +395,11 @@ impl App {
             items_per_page: config.ui.items_per_page,
             default_team: config.ui.default_team.clone(),
         };
+        // The config loaded, but not as written. The popup goes on any key,
+        // and unlike the status line it outlasts the first page arriving.
+        if !config.warnings.is_empty() {
+            app.set_error(format!("config.toml:\n{}", config.warnings.join("\n")));
+        }
         app.request(Request::Teams);
         app.request(Request::Viewer);
         app.request(Request::CustomViews);

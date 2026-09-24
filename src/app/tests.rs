@@ -1220,3 +1220,11 @@ fn each_list_keeps_its_own_search_and_filters() {
     app.screen = Screen::IssueList;
     assert_eq!(app.visible_issues().len(), 1, "the team list is untouched");
 }
+
+#[test]
+fn config_warnings_are_shown_at_startup() {
+    let config = Config::parse("[ui]\ntheem = 1\n").unwrap();
+    let app = App::new(&config);
+    assert!(app.error_popup.as_deref().unwrap().contains("ui.theem"));
+    assert!(App::new(&Config::default()).error_popup.is_none());
+}
