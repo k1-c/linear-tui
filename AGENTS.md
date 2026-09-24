@@ -40,7 +40,11 @@ the pins current, so never add one by tag or branch.
 ## Project Structure
 
 - `src/main.rs` — entry point, terminal setup, TUI main loop
-- `src/cli.rs` — the `linear-tui auth …` subcommands
+- `src/cli/` — the subcommands: `auth.rs` (`linear-tui auth …`), and the
+  headless commands for agents (`docs/cli.md`) — `context.rs` renders the view
+  snapshot, `issue.rs` shows, creates, comments on, and moves issues through
+  `headless.rs`, which runs each `Request` through `dispatch::execute_request`;
+  `args.rs` parses their arguments
 - `src/dispatch.rs` — `execute_request`: runs one `Request` against the API
 - `src/message.rs` — `Request` / `Message` / `Page`, the boundary between UI and I/O
 - `src/store/` — `Store`: everything Linear has told us (teams, team

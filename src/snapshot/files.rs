@@ -170,6 +170,20 @@ impl Shelf {
         closed.or(candidates.first()).cloned()
     }
 
+    /// What `context` reports: the running instance that moved last, or the
+    /// newest snapshot of all when none is running. The flag says whether
+    /// its instance is still running.
+    pub fn for_context(&self) -> Option<(ViewSnapshot, bool)> {
+        let all = self.read_all();
+        let live = all
+            .iter()
+            .find(|(_, s)| s.closed_at.is_none() && is_running(s.pid));
+        match live {
+            Some((_, s)) => Some((s.clone(), true)),
+            None => all.into_iter().next().map(|(_, s)| (s, false)),
+        }
+    }
+
     /// Delete all but the newest few snapshots of instances that are gone.
     pub fn prune(&self) {
         let gone = self

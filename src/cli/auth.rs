@@ -1,4 +1,4 @@
-//! The `linear-tui <command>` subcommands, which run without the TUI.
+//! `linear-tui auth …`: signing in, and seeing which credentials are used.
 
 use anyhow::Result;
 
@@ -6,38 +6,9 @@ use crate::auth;
 use crate::auth::token::TokenStore;
 use crate::config::Config;
 
-pub const USAGE: &str = "\
-linear-tui — a terminal UI for Linear
+use super::USAGE;
 
-Usage:
-  linear-tui                     Open the TUI (sets up credentials on first run)
-  linear-tui auth login          Sign in through the browser
-  linear-tui auth status         Show which credentials are in use
-  linear-tui auth token <key>    Sign in with a personal API key
-  linear-tui auth logout [--all] Forget the stored token (--all: the API key too)
-  linear-tui auth set-oauth <client-id> [client-secret]
-                                 Authorize against your own Linear application
-";
-
-pub async fn handle_subcommand(args: &[String]) -> Result<()> {
-    match args[0].as_str() {
-        "auth" => handle_auth(&args[1..]).await,
-        "help" | "--help" | "-h" => {
-            print!("{USAGE}");
-            Ok(())
-        }
-        "--version" | "-V" => {
-            println!("linear-tui {}", env!("CARGO_PKG_VERSION"));
-            Ok(())
-        }
-        other => {
-            eprint!("{USAGE}");
-            anyhow::bail!("unknown command: {other}")
-        }
-    }
-}
-
-async fn handle_auth(args: &[String]) -> Result<()> {
+pub async fn run(args: &[String]) -> Result<()> {
     let token_store = TokenStore::new()?;
 
     match args.first().map(String::as_str) {

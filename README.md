@@ -126,6 +126,22 @@ linear-tui auth set-oauth <client-id> [client-secret]
 
 `LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` override the config file.
 
+## For coding agents
+
+An agent working in the same repository can read what you are looking at and
+act on Linear with your credentials — no Linear MCP server, no second sign-in:
+
+```sh
+linear-tui context                       # the page, open issue, and list on screen, cursor marked
+linear-tui issue show ENG-42             # description, fields, and comments as Markdown
+linear-tui issue comment ENG-42 -        # post a comment read from stdin
+linear-tui issue status ENG-42 "In Review"
+linear-tui issue create --team ENG --title "Retry payment webhooks"
+```
+
+Every command takes `--json`. The output formats are specified in
+[docs/cli.md](docs/cli.md).
+
 ## Keybindings
 
 Shortcuts follow [Linear's own keyboard shortcuts](https://linear.app/docs) wherever
