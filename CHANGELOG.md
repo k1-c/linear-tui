@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.5.1] - 2026-09-24
+
+### Documentation
+
+- **readme**: Show a demo recording
+
+### Miscellaneous
+
+- **demo**: Add scripts to seed a workspace and record the demo
+
+### Build
+
+- Keep the demo GIF and scripts out of the crate
+
+
+
 ## [0.5.0] - 2026-09-24
 
 ### Bug Fixes
