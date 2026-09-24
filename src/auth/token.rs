@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use super::oauth::TokenResponse;
 use crate::config::Config;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {
     pub access_token: String,
     pub refresh_token: String,
@@ -42,6 +42,7 @@ impl OAuthTokens {
     }
 }
 
+#[derive(Clone)]
 pub struct TokenStore {
     path: PathBuf,
 }
@@ -50,6 +51,12 @@ impl TokenStore {
     pub fn new() -> Result<Self> {
         let path = Config::config_dir()?.join("tokens.json");
         Ok(Self { path })
+    }
+
+    /// A store at an explicit path, for tests.
+    #[cfg(test)]
+    pub fn at(path: PathBuf) -> Self {
+        Self { path }
     }
 
     pub fn load(&self) -> Result<Option<OAuthTokens>> {

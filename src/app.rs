@@ -3,6 +3,7 @@ use std::collections::{HashSet, VecDeque};
 use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
 
+use crate::api::ids::*;
 use crate::api::types::*;
 use crate::config::{Config, Theme};
 use crate::grouping::{GroupBy, Preset, Section, group};
@@ -431,7 +432,7 @@ pub struct App {
     /// The issue a status, priority, or assignee popup was opened on. Held
     /// by id, because the cursor can move under an open popup when a page
     /// lands, and Enter must change the issue the user picked.
-    popup_issue: Option<String>,
+    popup_issue: Option<IssueId>,
 
     // Teams
     pub teams: Vec<Team>,
@@ -456,14 +457,14 @@ pub struct App {
     pub view_issues_page_info: PageInfo,
     pub selected_view_issue_index: usize,
     /// Which view `view_issues` belongs to, so switching views refetches.
-    pub loaded_view_id: Option<String>,
+    pub loaded_view_id: Option<CustomViewId>,
     /// Which tab the Views pages show.
     pub view_kind: ViewKind,
     // Saved project views
     pub view_projects: Vec<Project>,
     pub view_projects_page_info: PageInfo,
     pub selected_view_project_index: usize,
-    pub loaded_view_projects_id: Option<String>,
+    pub loaded_view_projects_id: Option<CustomViewId>,
 
     // Sidebar
     pub sidebar_visible: bool,
@@ -478,7 +479,7 @@ pub struct App {
     /// Favorites, in the order Linear's sidebar shows them.
     pub favorites: Vec<Favorite>,
     /// Favorites folders the user has folded, by favorite id.
-    pub collapsed_folders: HashSet<String>,
+    pub collapsed_folders: HashSet<FavoriteId>,
 
     // List shaping
     pub group_by: GroupBy,
@@ -535,7 +536,7 @@ pub struct App {
     pub pending_clipboard: Option<String>,
 
     // Viewer (current user)
-    pub viewer_id: Option<String>,
+    pub viewer_id: Option<UserId>,
 
     // My Issues
     pub my_issues: Vec<Issue>,
@@ -719,7 +720,7 @@ impl App {
         self.inflight > 0
     }
 
-    pub fn team_id(&self) -> Option<String> {
+    pub fn team_id(&self) -> Option<TeamId> {
         self.current_team().map(|t| t.id.clone())
     }
 
@@ -1004,14 +1005,14 @@ impl App {
             }
             Message::IssueDetail(issue) => self.refresh_issue(*issue),
             Message::ProjectIssues { project_id, page } => {
-                if self.current_project.as_ref().map(|p| p.id.as_str()) != Some(&project_id) {
+                if self.current_project.as_ref().map(|p| &p.id) != Some(&project_id) {
                     return;
                 }
                 self.accept_issue_page(IssueSource::Project, page);
                 self.project_issues_loaded = true;
             }
             Message::CycleIssues { cycle_id, page } => {
-                if self.current_cycle.as_ref().map(|c| c.id.as_str()) != Some(&cycle_id) {
+                if self.current_cycle.as_ref().map(|c| &c.id) != Some(&cycle_id) {
                     return;
                 }
                 self.accept_issue_page(IssueSource::Cycle, page);
@@ -1047,7 +1048,7 @@ impl App {
                 // really looks like now rather than guess what to undo.
                 if let Some(issue_id) = request.patched_issue() {
                     self.request(Request::IssueDetail {
-                        issue_id: issue_id.to_string(),
+                        issue_id: issue_id.clone(),
                     });
                 }
                 self.set_error(format!("{}: {error}", request.failure()));
@@ -1055,23 +1056,23 @@ impl App {
         }
     }
 
-    fn is_current_team(&self, team_id: &str) -> bool {
-        self.current_team().is_some_and(|t| t.id == team_id)
+    fn is_current_team(&self, team_id: &TeamId) -> bool {
+        self.current_team().is_some_and(|t| &t.id == team_id)
     }
 
     /// Whether a page of saved view `view_id` belongs on screen.
     ///
     /// A first page is taken only for the view that is open; a next page only
     /// when the list it would extend is that view's.
-    fn accepts_view_page(&self, view_id: &str, append: bool, kind: ViewKind) -> bool {
+    fn accepts_view_page(&self, view_id: &CustomViewId, append: bool, kind: ViewKind) -> bool {
         if append {
             let loaded = match kind {
                 ViewKind::Issues => &self.loaded_view_id,
                 ViewKind::Projects => &self.loaded_view_projects_id,
             };
-            return loaded.as_deref() == Some(view_id);
+            return loaded.as_ref() == Some(view_id);
         }
-        matches!(self.nav, Nav::View(i) if self.custom_views.get(i).is_some_and(|v| v.id == view_id))
+        matches!(self.nav, Nav::View(i) if self.custom_views.get(i).is_some_and(|v| &v.id == view_id))
     }
 
     /// Fold a page into one of the issue lists, keeping the cursor on the
@@ -1097,7 +1098,7 @@ impl App {
         };
         Self::merge_issues(list, page, info);
         if on_screen {
-            self.restore_issue_selection(keep.as_deref());
+            self.restore_issue_selection(keep.as_ref());
         } else if !append {
             *self.selected_index_of(source) = 0;
         }
@@ -1165,7 +1166,7 @@ impl App {
         self.teams.get(self.selected_team_index)
     }
 
-    fn selected_issue_id(&self) -> Option<String> {
+    fn selected_issue_id(&self) -> Option<IssueId> {
         self.visible_issues()
             .get(self.selected_index())
             .map(|i| i.id.clone())
@@ -1176,9 +1177,9 @@ impl App {
     /// A refetch reorders the list — `updatedAt` moves the moment anyone
     /// touches an issue — so restoring by row index would quietly select a
     /// different issue than the one the user was looking at.
-    fn restore_issue_selection(&mut self, id: Option<&str>) {
+    fn restore_issue_selection(&mut self, id: Option<&IssueId>) {
         let index = id
-            .and_then(|id| self.visible_issues().iter().position(|i| i.id == id))
+            .and_then(|id| self.visible_issues().iter().position(|i| &i.id == id))
             .unwrap_or(0);
         *self.selected_index_mut() = index;
     }
@@ -1569,9 +1570,9 @@ impl App {
 
     /// The team whose views a Views page shows, or `None` for the workspace
     /// page.
-    fn views_scope(&self) -> Option<&str> {
+    fn views_scope(&self) -> Option<&TeamId> {
         match self.nav {
-            Nav::Team(index, TeamSection::Views) => self.teams.get(index).map(|t| t.id.as_str()),
+            Nav::Team(index, TeamSection::Views) => self.teams.get(index).map(|t| &t.id),
             _ => None,
         }
     }
@@ -1586,7 +1587,7 @@ impl App {
         self.custom_views
             .iter()
             .enumerate()
-            .filter(|(_, v)| v.team.as_ref().map(|t| t.id.as_str()) == scope)
+            .filter(|(_, v)| v.team.as_ref().map(|t| &t.id) == scope)
             .filter(|(_, v)| ViewKind::of(v) == self.view_kind)
             .map(|(i, _)| i)
             .collect()
@@ -1738,10 +1739,7 @@ impl App {
             i.priority = priority;
             i.priority_label = Some(priority.label().to_string());
         });
-        self.request(Request::UpdatePriority {
-            issue_id,
-            priority: priority.as_u8(),
-        });
+        self.request(Request::UpdatePriority { issue_id, priority });
     }
 
     pub fn start_comment(&mut self) {
@@ -1773,7 +1771,7 @@ impl App {
     // -------------------------------------------------------------- mutations
 
     /// Apply `f` to every copy of the issue we hold, so the UI updates without a refetch.
-    fn patch_issue(&mut self, issue_id: &str, f: impl Fn(&mut Issue)) {
+    fn patch_issue(&mut self, issue_id: &IssueId, f: impl Fn(&mut Issue)) {
         let lists = [
             &mut self.issues,
             &mut self.my_issues,
@@ -1782,12 +1780,12 @@ impl App {
             &mut self.cycle_issues,
         ];
         for list in lists {
-            for issue in list.iter_mut().filter(|i| i.id == issue_id) {
+            for issue in list.iter_mut().filter(|i| &i.id == issue_id) {
                 f(issue);
             }
         }
         if let Some(current) = &mut self.current_issue
-            && current.id == issue_id
+            && &current.id == issue_id
         {
             f(current);
         }
@@ -1812,10 +1810,7 @@ impl App {
                 i.priority = priority;
                 i.priority_label = Some(priority.label().to_string());
             });
-            self.request(Request::UpdatePriority {
-                issue_id,
-                priority: priority.as_u8(),
-            });
+            self.request(Request::UpdatePriority { issue_id, priority });
         }
         self.popup = Popup::None;
     }
@@ -2146,7 +2141,7 @@ impl App {
         };
         let title = form.title.value.clone();
         let description = Some(form.description.value.clone()).filter(|d| !d.is_empty());
-        let priority = form.priority.as_u8();
+        let priority = form.priority;
         self.request(Request::CreateIssue {
             team_id,
             title,
@@ -2392,7 +2387,7 @@ impl App {
                     ViewKind::Issues => &self.loaded_view_id,
                     ViewKind::Projects => &self.loaded_view_projects_id,
                 };
-                loaded.as_deref() == Some(view.id.as_str())
+                loaded.as_ref() == Some(&view.id)
             }),
             Nav::Team(_, TeamSection::Issues) => !self.issues.is_empty(),
             Nav::Team(_, TeamSection::Projects) => self.projects_loaded,
@@ -2999,7 +2994,10 @@ mod tests {
         assert_eq!(app.requests.len(), 1);
         assert!(matches!(
             app.requests.front(),
-            Some(Request::UpdatePriority { priority: 4, .. })
+            Some(Request::UpdatePriority {
+                priority: Priority::Low,
+                ..
+            })
         ));
     }
 
@@ -3188,7 +3186,10 @@ mod tests {
         assert!(app.new_issue.is_none());
         assert!(matches!(
             app.requests.front(),
-            Some(Request::CreateIssue { priority: 1, .. })
+            Some(Request::CreateIssue {
+                priority: Priority::Urgent,
+                ..
+            })
         ));
     }
 
@@ -3269,7 +3270,10 @@ mod tests {
         assert_eq!(app.popup, Popup::None);
         assert!(matches!(
             app.requests.front(),
-            Some(Request::UpdatePriority { priority: 1, .. })
+            Some(Request::UpdatePriority {
+                priority: Priority::Urgent,
+                ..
+            })
         ));
     }
 

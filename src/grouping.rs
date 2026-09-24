@@ -10,6 +10,7 @@ use std::collections::HashSet;
 
 use ratatui::style::Color;
 
+use crate::api::ids::IssueId;
 use crate::api::types::{Issue, Priority, StateType, hex_color};
 use crate::config::{GroupByName, Theme};
 
@@ -275,7 +276,7 @@ where
 /// its own update time happens to land it, which is the difference between a
 /// list you can read as a tree and one you have to cross-reference.
 fn nest_sub_issues(issues: &mut Vec<(&Issue, u8)>) {
-    let ids: Vec<String> = issues.iter().map(|(i, _)| i.id.clone()).collect();
+    let ids: Vec<IssueId> = issues.iter().map(|(i, _)| i.id.clone()).collect();
     let mut ordered: Vec<(&Issue, u8)> = Vec::with_capacity(issues.len());
     let mut placed = vec![false; issues.len()];
 

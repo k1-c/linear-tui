@@ -188,7 +188,7 @@ fn draw_status_change(f: &mut Frame, app: &mut App) {
                 i,
                 vec![state_glyph(Some(state), &th), Span::raw(" ")],
                 &state.name,
-                current_state_id.as_deref() == Some(state.id.as_str()),
+                current_state_id.as_ref() == Some(&state.id),
                 &th,
             )
         })
@@ -251,7 +251,7 @@ fn draw_assignee_change(f: &mut Frame, app: &mut App) {
                 Span::raw(" "),
             ],
             &name,
-            current_assignee_id.as_deref() == Some(member.id.as_str()),
+            current_assignee_id.as_ref() == Some(&member.id),
             &th,
         ));
     }
