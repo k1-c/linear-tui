@@ -311,6 +311,10 @@ pub struct Issue {
     /// Branch name Linear suggests for this issue.
     #[serde(default, rename = "branchName")]
     pub branch_name: Option<String>,
+    /// The team the issue belongs to. Lists like My Issues span teams, and a
+    /// status or assignee can only come from the issue's own team.
+    #[serde(default)]
+    pub team: Option<Ref<TeamId>>,
 }
 
 /// A shallow reference to another issue — enough to name it and colour its
@@ -729,6 +733,20 @@ mod tests {
                 .unwrap()
                 .contains("日本語")
         );
+    }
+
+    /// My Issues spans teams, so each row says which team it belongs to. A
+    /// payload without `team` (an older cache, a test helper) still loads.
+    #[test]
+    fn deserialize_issue_team() {
+        #[derive(Deserialize)]
+        struct Resp {
+            issues: Connection<Issue>,
+        }
+        let resp: Resp = serde_json::from_str(&fixture("my_issues.json")).unwrap();
+        let team = resp.issues.nodes[0].team.as_ref().unwrap();
+        assert_eq!(team.id, "team-001");
+        assert!(resp.issues.nodes[1].team.is_none());
     }
 
     #[test]

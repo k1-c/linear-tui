@@ -25,7 +25,10 @@
         "createdAt": "2026-01-01T00:00:00.000Z",
         "updatedAt": "2026-02-01T00:00:00.000Z",
         "url": "https://linear.app/acme/issue/ENG-200",
-        "branchName": "test-user/eng-200-task-with-canceled-state"
+        "branchName": "test-user/eng-200-task-with-canceled-state",
+        "team": {
+          "id": "team-001"
+        }
       },
       {
         "id": "issue-004",
