@@ -6,6 +6,7 @@ use crate::config::{Config, Theme};
 use crate::grouping::{GroupBy, Preset, Section, group};
 use crate::message::{Message, Page, Request};
 pub use crate::store::{IssueSource, PerSource, Store, TeamContext};
+use crate::usecase::{self, Refusal};
 
 mod frame;
 mod input;
@@ -319,6 +320,20 @@ impl App {
     }
 
     // ---------------------------------------------------------------- requests
+
+    /// Send what a use case asked for, or say why it declined. True when it ran.
+    fn run(&mut self, outcome: Result<Request, Refusal>) -> bool {
+        match outcome {
+            Ok(request) => {
+                self.request(request);
+                true
+            }
+            Err(refusal) => {
+                self.set_status(refusal.to_string());
+                false
+            }
+        }
+    }
 
     pub fn request(&mut self, req: Request) {
         // Collapse duplicates so a held-down key can't pile up identical fetches.
@@ -1029,32 +1044,19 @@ impl App {
 
     /// Linear's `I` — assign the focused issue to the current user.
     pub fn assign_to_me(&mut self) {
-        let Some(viewer_id) = self.store.viewer_id.clone() else {
-            self.set_status("Current user is not loaded yet");
+        let Some(issue_id) = self.focused_issue_id() else {
             return;
         };
-        let Some(issue_id) = self.focused_issue().map(|i| i.id.clone()) else {
-            return;
-        };
-        let me = self.store.viewer().cloned();
-        self.store
-            .patch_issue(&issue_id, |i| i.assignee = me.clone());
-        self.request(Request::UpdateAssignee {
-            issue_id,
-            assignee_id: Some(viewer_id),
-        });
+        let outcome = usecase::issue::assign_to_me(&mut self.store, &issue_id);
+        self.run(outcome);
     }
 
     /// Linear's `Shift+1`…`Shift+4` / `Shift+0` — set a priority without the menu.
     pub fn set_priority(&mut self, priority: Priority) {
-        let Some(issue_id) = self.focused_issue().map(|i| i.id.clone()) else {
-            return;
-        };
-        self.store.patch_issue(&issue_id, |i| {
-            i.priority = priority;
-            i.priority_label = Some(priority.label().to_string());
-        });
-        self.request(Request::UpdatePriority { issue_id, priority });
+        if let Some(issue_id) = self.focused_issue_id() {
+            let request = usecase::issue::set_priority(&mut self.store, &issue_id, priority);
+            self.request(request);
+        }
     }
 
     pub fn start_comment(&mut self) {
@@ -1065,19 +1067,11 @@ impl App {
     }
 
     pub fn submit_comment(&mut self) {
-        if let Some(issue) = self.focused_issue()
-            && !self.comment.is_empty()
-        {
-            let issue_id = issue.id.clone();
-            let body = self.comment.value.clone();
-            // Drop the cached comments so the detail view refetches them once
-            // the mutation lands.
-            if let Some(current) = &mut self.store.current_issue
-                && current.id == issue_id
-            {
-                current.comments = None;
+        if let Some(issue_id) = self.focused_issue_id() {
+            let body = std::mem::take(&mut self.comment.value);
+            if let Some(request) = usecase::issue::comment(&mut self.store, &issue_id, body) {
+                self.request(request);
             }
-            self.request(Request::CreateComment { issue_id, body });
         }
         self.input_mode = InputMode::Normal;
         self.comment.clear();
@@ -1091,21 +1085,16 @@ impl App {
             return;
         };
         if let Popup::StatusChange(issue_id) = self.take_popup() {
-            let state_id = state.id.clone();
-            self.store
-                .patch_issue(&issue_id, |i| i.state = Some(state.clone()));
-            self.request(Request::UpdateStatus { issue_id, state_id });
+            let request = usecase::issue::set_status(&mut self.store, &issue_id, state);
+            self.request(request);
         }
     }
 
     pub fn apply_priority_selection(&mut self) {
         if let Popup::PriorityChange(issue_id) = self.take_popup() {
             let priority = Priority::from_index(self.popup_index);
-            self.store.patch_issue(&issue_id, |i| {
-                i.priority = priority;
-                i.priority_label = Some(priority.label().to_string());
-            });
-            self.request(Request::UpdatePriority { issue_id, priority });
+            let request = usecase::issue::set_priority(&mut self.store, &issue_id, priority);
+            self.request(request);
         }
     }
 
@@ -1120,13 +1109,8 @@ impl App {
             Some(member)
         };
         if let Popup::AssigneeChange(issue_id) = self.take_popup() {
-            let assignee_id = assignee.as_ref().map(|u| u.id.clone());
-            self.store
-                .patch_issue(&issue_id, |i| i.assignee = assignee.clone());
-            self.request(Request::UpdateAssignee {
-                issue_id,
-                assignee_id,
-            });
+            let request = usecase::issue::set_assignee(&mut self.store, &issue_id, assignee);
+            self.request(request);
         }
     }
 
@@ -1476,27 +1460,18 @@ impl App {
     }
 
     pub fn submit_new_issue(&mut self) {
-        let Some(form) = &self.new_issue else {
+        let (Some(form), Some(team_id)) = (&self.new_issue, self.team_id()) else {
             return;
         };
-        if form.title.is_empty() {
-            self.set_status("A title is required");
-            return;
+        let draft = usecase::issue::Draft {
+            title: form.title.value.clone(),
+            description: form.description.value.clone(),
+            priority: form.priority,
+        };
+        if self.run(usecase::issue::create(team_id, draft)) {
+            self.set_status("Creating issue…");
+            self.cancel_new_issue();
         }
-        let Some(team_id) = self.team_id() else {
-            return;
-        };
-        let title = form.title.value.clone();
-        let description = Some(form.description.value.clone()).filter(|d| !d.is_empty());
-        let priority = form.priority;
-        self.request(Request::CreateIssue {
-            team_id,
-            title,
-            description,
-            priority,
-        });
-        self.set_status("Creating issue…");
-        self.cancel_new_issue();
     }
 
     // ------------------------------------------------------------------- mouse

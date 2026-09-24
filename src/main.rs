@@ -12,6 +12,7 @@ mod message;
 mod private_file;
 mod store;
 mod ui;
+mod usecase;
 
 use std::io::{self, Write};
 use std::sync::Arc;

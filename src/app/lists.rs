@@ -205,6 +205,11 @@ impl App {
         &mut self.frame.offsets.issues[source]
     }
 
+    /// The id of [`Self::focused_issue`], for handing to a use case.
+    pub fn focused_issue_id(&self) -> Option<IssueId> {
+        self.focused_issue().map(|i| i.id.clone())
+    }
+
     /// Get the issue currently focused (selected in list, or being viewed in detail).
     pub fn focused_issue(&self) -> Option<&Issue> {
         match self.screen {
