@@ -436,8 +436,13 @@ fn copying_an_identifier_queues_the_clipboard_write() {
 fn assign_to_me_sets_the_viewer_as_assignee() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.viewer_id = Some("u1".into());
-    app.team_members =
-        vec![serde_json::from_str(r#"{"id":"u1","name":"Me","displayName":"me"}"#).unwrap()];
+    app.team_contexts.insert(
+        "t".into(),
+        TeamContext {
+            states: Vec::new(),
+            members: vec![member("u1", "Me")],
+        },
+    );
 
     app.assign_to_me();
 
@@ -1029,28 +1034,186 @@ fn a_page_for_a_team_already_left_is_dropped() {
 }
 
 #[test]
-fn team_context_for_a_team_already_left_is_dropped() {
-    let mut app = app_with(vec![]);
-    app.handle_message(Message::TeamContext {
-        team_id: "other".into(),
-        states: vec![stated("1", "s-x", "Doing", "started").state.unwrap()],
-        members: Vec::new(),
-    });
-    assert!(app.workflow_states.is_empty());
-}
-
-#[test]
-fn switching_team_forgets_the_old_teams_cursors_and_states() {
+fn switching_team_forgets_the_old_teams_cursors() {
     let mut app = app_with(vec![issue("1", "ENG-1", "a")]);
     app.teams.push(team("t2", "Ops"));
     app.lists[IssueSource::Team].page_info = PageInfo {
         has_next_page: true,
         end_cursor: Some("c1".into()),
     };
-    app.workflow_states = vec![stated("1", "s-x", "Doing", "started").state.unwrap()];
     app.activate(Nav::Team(1, TeamSection::Issues));
     assert!(!app.lists[IssueSource::Team].page_info.has_next_page);
-    assert!(app.workflow_states.is_empty());
+    assert!(app.requests.contains(&Request::TeamContext {
+        team_id: "t2".into()
+    }));
+}
+
+// ------------------------------------------------------- per-team context
+
+fn member(id: &str, name: &str) -> User {
+    serde_json::from_str(&format!(
+        r#"{{"id":"{id}","name":"{name}","displayName":"{name}"}}"#
+    ))
+    .unwrap()
+}
+
+/// An issue of team `team_id`, in state `state_id`.
+fn of_team(id: &str, team_id: &str, state_id: &str) -> Issue {
+    let mut issue = stated(id, state_id, "State", "started");
+    issue.team = Some(serde_json::from_str(&format!(r#"{{"id":"{team_id}"}}"#)).unwrap());
+    issue
+}
+
+fn state(id: &str, name: &str) -> WorkflowState {
+    stated("0", id, name, "started").state.unwrap()
+}
+
+fn context_message(team_id: &str, states: &[(&str, &str)], members: Vec<User>) -> Message {
+    Message::TeamContext {
+        team_id: team_id.into(),
+        states: states.iter().map(|(id, name)| state(id, name)).collect(),
+        members,
+    }
+}
+
+/// Team A ("t") is selected; My Issues holds an issue of team B.
+fn my_issues_with_team_b_issue() -> App {
+    let mut app = app_with(vec![]);
+    app.teams.push(team("b", "Ops"));
+    app.handle_message(context_message(
+        "t",
+        &[("a-todo", "Todo"), ("a-done", "Done")],
+        vec![member("ua", "Ann")],
+    ));
+    app.nav = Nav::MyIssues;
+    app.lists[IssueSource::My].issues = vec![of_team("1", "b", "b-doing")];
+    app.requests.clear();
+    app
+}
+
+#[test]
+fn status_popup_on_another_teams_issue_lists_that_teams_states() {
+    let mut app = my_issues_with_team_b_issue();
+
+    app.open_status_change();
+
+    // Team B is not loaded yet: fetch it, and offer nothing to pick meanwhile.
+    assert_eq!(app.popup, Popup::StatusChange("1".into()));
+    assert!(app.requests.contains(&Request::TeamContext {
+        team_id: "b".into()
+    }));
+    assert!(app.popup_loading());
+    assert_eq!(app.popup_list_len(), 0);
+    app.apply_popup();
+    assert_eq!(app.popup, Popup::StatusChange("1".into()));
+
+    app.handle_message(context_message(
+        "b",
+        &[("b-todo", "Backlog"), ("b-doing", "Doing")],
+        vec![member("ub", "Bob")],
+    ));
+
+    assert!(!app.popup_loading());
+    let names: Vec<&str> = app.popup_states().iter().map(|s| s.name.as_str()).collect();
+    assert_eq!(names, ["Backlog", "Doing"]);
+    // Starts on the issue's current state.
+    assert_eq!(app.popup_index, 1);
+
+    app.popup_index = 0;
+    app.apply_popup();
+    assert!(app.requests.contains(&Request::UpdateStatus {
+        issue_id: "1".into(),
+        state_id: "b-todo".into(),
+    }));
+    // Team A is still the selected team.
+    assert_eq!(app.team_id(), Some("t".into()));
+}
+
+#[test]
+fn a_loaded_team_is_not_fetched_again() {
+    let mut app = my_issues_with_team_b_issue();
+    app.handle_message(context_message("b", &[("b-doing", "Doing")], Vec::new()));
+    app.requests.clear();
+
+    app.open_status_change();
+
+    assert!(app.requests.is_empty());
+    assert_eq!(app.popup_list_len(), 1);
+}
+
+#[test]
+fn a_team_in_flight_is_asked_for_once() {
+    let mut app = my_issues_with_team_b_issue();
+    app.open_status_change();
+    app.close_popup();
+    app.requests.clear();
+
+    app.open_status_change();
+
+    assert!(app.requests.is_empty());
+}
+
+#[test]
+fn a_failed_team_context_is_asked_for_again() {
+    let mut app = my_issues_with_team_b_issue();
+    app.open_status_change();
+    let request = app.requests.pop_front().unwrap();
+    app.handle_message(Message::Failed {
+        request: Box::new(request),
+        error: "boom".into(),
+    });
+    app.error_popup = None;
+    app.close_popup();
+
+    app.open_status_change();
+
+    assert!(app.requests.contains(&Request::TeamContext {
+        team_id: "b".into()
+    }));
+}
+
+#[test]
+fn assignee_popup_on_another_teams_issue_lists_that_teams_members() {
+    let mut app = my_issues_with_team_b_issue();
+
+    app.open_assignee_change();
+    // Unassign needs no team, so it stays pickable while members load.
+    assert_eq!(app.popup_list_len(), 1);
+    app.popup_index = 1;
+    app.apply_popup();
+    assert_eq!(app.popup, Popup::AssigneeChange("1".into()));
+
+    app.handle_message(context_message("b", &[], vec![member("ub", "Bob")]));
+
+    let names: Vec<&str> = app
+        .popup_members()
+        .iter()
+        .map(|u| u.name.as_str())
+        .collect();
+    assert_eq!(names, ["Bob"]);
+}
+
+#[test]
+fn status_filter_offers_the_states_of_the_teams_in_the_list() {
+    let mut app = my_issues_with_team_b_issue();
+    app.lists[IssueSource::My]
+        .issues
+        .push(of_team("2", "t", "a-todo"));
+    app.handle_message(context_message(
+        "b",
+        &[("b-todo", "Todo"), ("b-doing", "Doing")],
+        Vec::new(),
+    ));
+
+    app.open_filter();
+
+    let names: Vec<&str> = app
+        .filter_states()
+        .iter()
+        .map(|s| s.name.as_str())
+        .collect();
+    // Team B's first, as its issue comes first; "Todo" once for both teams.
+    assert_eq!(names, ["Todo", "Doing", "Done"]);
 }
 
 #[test]

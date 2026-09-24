@@ -30,6 +30,7 @@ const ISSUE_FIELDS: &str = r#"
     dueDate
     url
     branchName
+    team { id }
     state { id name color type position }
     assignee { id name displayName }
     creator { id name displayName }

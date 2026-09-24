@@ -121,7 +121,7 @@ fn draw_filter(f: &mut Frame, app: &mut App, kind: FilterKind) {
                 app.list().filters.status.is_none(),
                 &th,
             )];
-            for (i, state) in app.workflow_states.iter().enumerate() {
+            for (i, state) in app.filter_states().into_iter().enumerate() {
                 let is_current = app
                     .list()
                     .filters
@@ -135,6 +135,9 @@ fn draw_filter(f: &mut Frame, app: &mut App, kind: FilterKind) {
                     is_current,
                     &th,
                 ));
+            }
+            if app.popup_loading() {
+                items.push(loading_item(app, "Loading statuses"));
             }
             ("Filter \u{2014} status", items)
         }
@@ -170,8 +173,8 @@ fn draw_status_change(f: &mut Frame, app: &mut App) {
         .and_then(|i| i.state.as_ref())
         .map(|s| s.id.clone());
 
-    let items: Vec<ListItem> = app
-        .workflow_states
+    let mut items: Vec<ListItem> = app
+        .popup_states()
         .iter()
         .enumerate()
         .map(|(i, state)| {
@@ -184,6 +187,9 @@ fn draw_status_change(f: &mut Frame, app: &mut App) {
             )
         })
         .collect();
+    if app.popup_loading() {
+        items.push(loading_item(app, "Loading statuses"));
+    }
     render_popup_list(f, app, "Change status", items, 38);
 }
 
@@ -220,7 +226,7 @@ fn draw_assignee_change(f: &mut Frame, app: &mut App) {
         current_assignee_id.is_none(),
         &th,
     )];
-    for (i, member) in app.team_members.iter().enumerate() {
+    for (i, member) in app.popup_members().iter().enumerate() {
         let name = user_name(member).to_string();
         items.push(numbered_item(
             i + 1,
@@ -230,5 +236,17 @@ fn draw_assignee_change(f: &mut Frame, app: &mut App) {
             &th,
         ));
     }
+    if app.popup_loading() {
+        items.push(loading_item(app, "Loading members"));
+    }
     render_popup_list(f, app, "Assign to", items, 44);
+}
+
+/// A trailing row shown while the issue's team is still being fetched. It
+/// sits past `App::popup_list_len`, so it can be neither picked nor clicked.
+fn loading_item(app: &App, text: &str) -> ListItem<'static> {
+    ListItem::new(Line::from(Span::styled(
+        format!("  {} {text}\u{2026}", app.spinner_symbol()),
+        Style::default().fg(app.theme.muted),
+    )))
 }
