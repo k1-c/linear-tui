@@ -6,7 +6,7 @@
 //! transformation, kept apart from [`crate::app`] so it can be exercised on
 //! plain slices.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use ratatui::style::Color;
 
@@ -131,11 +131,121 @@ pub struct Section<'a> {
 /// Sort key that puts a section where Linear would put it.
 struct Rank(u8, i64, String);
 
-fn assignee_name(issue: &Issue) -> Option<String> {
-    issue
-        .assignee
-        .as_ref()
-        .map(|u| u.display_name.clone().unwrap_or_else(|| u.name.clone()))
+fn assignee_name(user: &crate::api::types::User) -> String {
+    user.display_name
+        .clone()
+        .unwrap_or_else(|| user.name.clone())
+}
+
+/// The key of the section `issue` falls into. Keys are what folding
+/// remembers, so they name the group by id rather than by its label: two
+/// people who share a name are two groups, and a rename keeps the fold.
+fn section_key(issue: &Issue, by: GroupBy) -> String {
+    match by {
+        GroupBy::None => String::new(),
+        GroupBy::Status => match &issue.state {
+            Some(state) => format!("status:{}", state.id),
+            None => "status:none".to_string(),
+        },
+        GroupBy::Priority => format!("priority:{}", issue.priority.as_u8()),
+        GroupBy::Assignee => match &issue.assignee {
+            Some(user) => format!("assignee:{}", user.id),
+            None => "assignee:none".to_string(),
+        },
+        GroupBy::Project => match &issue.project {
+            Some(project) => format!("project:{}", project.id),
+            None => "project:none".to_string(),
+        },
+    }
+}
+
+/// How the section `issue` opens is drawn, and where it sorts. Only built
+/// once per section, for its first issue.
+fn section_head(issue: &Issue, by: GroupBy, theme: &Theme) -> (Rank, String, Color, &'static str) {
+    match by {
+        GroupBy::None => (Rank(0, 0, String::new()), String::new(), theme.muted, ""),
+        GroupBy::Status => match &issue.state {
+            Some(state) => {
+                let category = state.state_type.unwrap_or(StateType::Unknown);
+                (
+                    // Within a category Linear lists the state furthest
+                    // along the workflow first — In Review above In
+                    // Progress — so position sorts descending. It is a
+                    // float; scaling keeps the order in an integer key.
+                    Rank(
+                        category.rank(),
+                        -(state.position.unwrap_or(0.0) * 1000.0) as i64,
+                        state.name.clone(),
+                    ),
+                    state.name.clone(),
+                    state
+                        .color
+                        .as_deref()
+                        .and_then(hex_color)
+                        .unwrap_or_else(|| category.color()),
+                    category.glyph(),
+                )
+            }
+            None => (
+                Rank(u8::MAX, 0, String::new()),
+                "No status".to_string(),
+                theme.muted,
+                StateType::Unknown.glyph(),
+            ),
+        },
+        GroupBy::Priority => {
+            let p = issue.priority;
+            // Urgent first, None last — the priority enum's own order.
+            let rank = match p {
+                Priority::Urgent => 0,
+                Priority::High => 1,
+                Priority::Medium => 2,
+                Priority::Low => 3,
+                Priority::None => 4,
+            };
+            (
+                Rank(rank, 0, String::new()),
+                p.label().to_string(),
+                p.color(theme),
+                p.glyph(),
+            )
+        }
+        GroupBy::Assignee => match &issue.assignee {
+            Some(user) => {
+                let name = assignee_name(user);
+                (
+                    Rank(0, 0, name.to_lowercase()),
+                    name,
+                    theme.accent,
+                    "\u{25c6}",
+                )
+            }
+            None => (
+                Rank(1, 0, String::new()),
+                "Unassigned".to_string(),
+                theme.muted,
+                "\u{25c7}",
+            ),
+        },
+        GroupBy::Project => match &issue.project {
+            Some(project) => (
+                Rank(0, 0, project.name.to_lowercase()),
+                project.name.clone(),
+                project
+                    .color
+                    .as_deref()
+                    .and_then(hex_color)
+                    .unwrap_or(theme.secondary),
+                "\u{25a3}",
+            ),
+            None => (
+                Rank(1, 0, String::new()),
+                "No project".to_string(),
+                theme.muted,
+                "\u{25a1}",
+            ),
+        },
+    }
 }
 
 /// Split `issues` into sections along `by`, marking those in `collapsed` folded.
@@ -149,117 +259,27 @@ where
     I: IntoIterator<Item = &'a Issue>,
 {
     let mut sections: Vec<(Rank, Section<'a>)> = Vec::new();
+    let mut index: HashMap<String, usize> = HashMap::new();
 
     for issue in issues {
-        let (rank, key, label, color, glyph) = match by {
-            GroupBy::None => (
-                Rank(0, 0, String::new()),
-                String::new(),
-                String::new(),
-                theme.muted,
-                "",
-            ),
-            GroupBy::Status => match &issue.state {
-                Some(state) => {
-                    let category = state.state_type.unwrap_or(StateType::Unknown);
-                    (
-                        // Within a category Linear lists the state furthest
-                        // along the workflow first — In Review above In
-                        // Progress — so position sorts descending. It is a
-                        // float; scaling keeps the order in an integer key.
-                        Rank(
-                            category.rank(),
-                            -(state.position.unwrap_or(0.0) * 1000.0) as i64,
-                            state.name.clone(),
-                        ),
-                        format!("status:{}", state.id),
-                        state.name.clone(),
-                        state
-                            .color
-                            .as_deref()
-                            .and_then(hex_color)
-                            .unwrap_or_else(|| category.color()),
-                        category.glyph(),
-                    )
-                }
-                None => (
-                    Rank(u8::MAX, 0, String::new()),
-                    "status:none".to_string(),
-                    "No status".to_string(),
-                    theme.muted,
-                    StateType::Unknown.glyph(),
-                ),
-            },
-            GroupBy::Priority => {
-                let p = issue.priority;
-                // Urgent first, None last — the priority enum's own order.
-                let rank = match p {
-                    Priority::Urgent => 0,
-                    Priority::High => 1,
-                    Priority::Medium => 2,
-                    Priority::Low => 3,
-                    Priority::None => 4,
-                };
-                (
-                    Rank(rank, 0, String::new()),
-                    format!("priority:{}", p.as_u8()),
-                    p.label().to_string(),
-                    p.color(theme),
-                    p.glyph(),
-                )
-            }
-            GroupBy::Assignee => match assignee_name(issue) {
-                Some(name) => (
-                    Rank(0, 0, name.to_lowercase()),
-                    format!("assignee:{name}"),
-                    name,
-                    theme.accent,
-                    "\u{25c6}",
-                ),
-                None => (
-                    Rank(1, 0, String::new()),
-                    "assignee:none".to_string(),
-                    "Unassigned".to_string(),
-                    theme.muted,
-                    "\u{25c7}",
-                ),
-            },
-            GroupBy::Project => match &issue.project {
-                Some(project) => (
-                    Rank(0, 0, project.name.to_lowercase()),
-                    format!("project:{}", project.id),
-                    project.name.clone(),
-                    project
-                        .color
-                        .as_deref()
-                        .and_then(hex_color)
-                        .unwrap_or(theme.secondary),
-                    "\u{25a3}",
-                ),
-                None => (
-                    Rank(1, 0, String::new()),
-                    "project:none".to_string(),
-                    "No project".to_string(),
-                    theme.muted,
-                    "\u{25a1}",
-                ),
-            },
-        };
-
-        match sections.iter_mut().find(|(_, s)| s.key == key) {
-            Some((_, section)) => section.issues.push((issue, 0)),
-            None => sections.push((
-                rank,
-                Section {
-                    collapsed: collapsed.contains(&key),
-                    key,
-                    label,
-                    color,
-                    glyph,
-                    issues: vec![(issue, 0)],
-                },
-            )),
+        let key = section_key(issue, by);
+        if let Some(&i) = index.get(&key) {
+            sections[i].1.issues.push((issue, 0));
+            continue;
         }
+        let (rank, label, color, glyph) = section_head(issue, by, theme);
+        index.insert(key.clone(), sections.len());
+        sections.push((
+            rank,
+            Section {
+                collapsed: collapsed.contains(&key),
+                key,
+                label,
+                color,
+                glyph,
+                issues: vec![(issue, 0)],
+            },
+        ));
     }
 
     sections.sort_by(|(a, _), (b, _)| a.0.cmp(&b.0).then(a.1.cmp(&b.1)).then(a.2.cmp(&b.2)));
@@ -276,34 +296,31 @@ where
 /// its own update time happens to land it, which is the difference between a
 /// list you can read as a tree and one you have to cross-reference.
 fn nest_sub_issues(issues: &mut Vec<(&Issue, u8)>) {
-    let ids: Vec<IssueId> = issues.iter().map(|(i, _)| i.id.clone()).collect();
+    let ids: HashSet<&IssueId> = issues.iter().map(|(i, _)| &i.id).collect();
+    // Children in their original order, by the parent they sit under.
+    let mut children: HashMap<&IssueId, Vec<usize>> = HashMap::new();
+    for (idx, (issue, _)) in issues.iter().enumerate() {
+        if let Some(parent) = &issue.parent
+            && ids.contains(&parent.id)
+        {
+            children.entry(&parent.id).or_default().push(idx);
+        }
+    }
+
     let mut ordered: Vec<(&Issue, u8)> = Vec::with_capacity(issues.len());
     let mut placed = vec![false; issues.len()];
-
     for idx in 0..issues.len() {
-        if placed[idx] {
-            continue;
-        }
+        let issue = issues[idx].0;
         // A child whose parent is also in this section waits for the parent.
-        let parent_here = issues[idx]
-            .0
-            .parent
-            .as_ref()
-            .is_some_and(|p| ids.contains(&p.id));
-        if parent_here {
+        if placed[idx] || issue.parent.as_ref().is_some_and(|p| ids.contains(&p.id)) {
             continue;
         }
         placed[idx] = true;
-        ordered.push((issues[idx].0, 0));
-
-        let parent_id = issues[idx].0.id.clone();
-        for (child_idx, (child, _)) in issues.iter().enumerate() {
-            if placed[child_idx] {
-                continue;
-            }
-            if child.parent.as_ref().is_some_and(|p| p.id == parent_id) {
-                placed[child_idx] = true;
-                ordered.push((*child, 1));
+        ordered.push((issue, 0));
+        for &child in children.get(&issue.id).into_iter().flatten() {
+            if !placed[child] {
+                placed[child] = true;
+                ordered.push((issues[child].0, 1));
             }
         }
     }
@@ -475,5 +492,69 @@ mod tests {
     #[test]
     fn an_issue_without_a_state_stays_visible_under_active() {
         assert!(Preset::Active.admits(&issue(&base("1", "X-1"))));
+    }
+
+    fn assigned(id: &str, user_id: &str, name: &str) -> Issue {
+        issue(&format!(
+            r#"{{"id":"{id}","identifier":"X-{id}","title":"t","priority":0,"state":null,
+                "assignee":{{"id":"{user_id}","name":"{name}"}},
+                "description":null,"comments":null,"project":null,"cycle":null}}"#
+        ))
+    }
+
+    fn child(id: &str, parent: &str) -> Issue {
+        issue(&format!(
+            r#"{{"id":"{id}","identifier":"X-{id}","title":"t","priority":0,"state":null,
+                "assignee":null,"description":null,"comments":null,"project":null,"cycle":null,
+                "parent":{{"id":"{parent}","identifier":"X-{parent}","title":"p"}}}}"#
+        ))
+    }
+
+    /// Regression: assignee groups were keyed by display name, so two people
+    /// who share one were merged into a single group.
+    #[test]
+    fn namesakes_get_a_group_each() {
+        let issues = [
+            assigned("1", "u1", "Alex"),
+            assigned("2", "u2", "Alex"),
+            assigned("3", "u1", "Alex"),
+        ];
+        let sections = group(issues.iter(), GroupBy::Assignee, &HashSet::new(), &theme());
+        assert_eq!(sections.len(), 2);
+        assert_eq!(sections.iter().map(|s| s.issues.len()).sum::<usize>(), 3);
+        assert!(sections.iter().all(|s| s.label == "Alex"));
+    }
+
+    #[test]
+    fn a_folded_assignee_group_is_remembered_by_user() {
+        let issues = [assigned("1", "u1", "Alex")];
+        let collapsed = HashSet::from(["assignee:u1".to_string()]);
+        let sections = group(issues.iter(), GroupBy::Assignee, &collapsed, &theme());
+        assert!(sections[0].collapsed);
+    }
+
+    #[test]
+    fn a_grandchild_is_kept_and_indented() {
+        let issues = [child("3", "2"), issue(&base("1", "X-1")), child("2", "1")];
+        let sections = group(issues.iter(), GroupBy::None, &HashSet::new(), &theme());
+        let rows: Vec<(&str, u8)> = sections[0]
+            .issues
+            .iter()
+            .map(|(i, depth)| (i.id.as_str(), *depth))
+            .collect();
+        assert_eq!(rows, [("1", 0), ("2", 1), ("3", 1)]);
+    }
+
+    #[test]
+    fn issues_group_by_project_with_the_projectless_last() {
+        let in_project = issue(
+            r#"{"id":"1","identifier":"X-1","title":"t","priority":0,"state":null,"assignee":null,
+                "description":null,"comments":null,"cycle":null,
+                "project":{"id":"p1","name":"Launch","lead":null}}"#,
+        );
+        let issues = [issue(&base("2", "X-2")), in_project];
+        let sections = group(issues.iter(), GroupBy::Project, &HashSet::new(), &theme());
+        let labels: Vec<&str> = sections.iter().map(|s| s.label.as_str()).collect();
+        assert_eq!(labels, ["Launch", "No project"]);
     }
 }
