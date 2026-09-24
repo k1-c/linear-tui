@@ -61,10 +61,12 @@ the pins current, so never add one by tag or branch.
   `tests.rs` the state tests
 - `src/grouping.rs` — Active/Backlog/All presets and grouping of issue lists
 - `src/keys.rs` — keybindings (Controller): the `BINDINGS` table
+- `src/palette.rs` — the `Ctrl+K` command palette (Controller): lists the
+  `BINDINGS` rows with a `Command` and runs them; `src/fuzzy.rs` its matcher
 - `src/event.rs` — terminal event polling
 - `src/ui/` — rendering (View): `sidebar`, `issue_list`, `issue_detail`,
   `view_list`, `project_list`, `project_detail`, `cycle_list`, `cycle_detail`,
-  `popup`, `new_issue`, plus `markdown` (wrapping Markdown renderer) and
+  `popup`, `palette`, `new_issue`, plus `markdown` (wrapping Markdown renderer) and
   `widgets` (glyphs, chips, width-aware truncation)
 - `src/api/` — Linear GraphQL client and types (see `docs/api-type-guide.md`)
 - `tests/fixtures/` — API response fixtures for deserialization tests
@@ -90,7 +92,7 @@ arm in `dispatch::run_request` — never an `.await` inside the main loop, `ui/`
 The layers only depend downwards:
 
 ```
-keys.rs · App::click · (palette, cli)   input: decide what the user asked for
+keys.rs · palette.rs · App::click · (cli)   input: what the user asked for
 app/                                    intents resolve which issue / value
 usecase/                                the operation, with explicit arguments
 store/                                  the data, kept consistent
@@ -134,10 +136,12 @@ Shortcuts mirror [Linear's own](https://linear.app/docs). Before adding or
 changing one, check what Linear binds that key to.
 
 A binding is one row of `BINDINGS` in `src/keys.rs`: its keys, the contexts it
-applies in, its action, its help-overlay row, and its status-bar hint.
-Dispatch, the status bar, and the help overlay all read that table, so a new
-binding or hint goes there, not into `ui/`. Tests reject two bindings claiming
-one key in the same context.
+applies in, its action, its help-overlay row, its status-bar hint, and its
+command-palette entry (`.command(title, keywords)`). Dispatch, the status bar,
+the help overlay, and the palette all read that table, so a new binding, hint,
+or palette entry goes there, not into `ui/`. Tests reject two bindings claiming
+one key in the same context, and an action in the help overlay without a
+palette entry.
 
 - Where a terminal cannot deliver Linear's key (`Ctrl`+punctuation, `Ctrl+M`),
   support the original under the kitty keyboard protocol — enabled automatically

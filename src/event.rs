@@ -3,8 +3,9 @@ use std::time::Duration;
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyEventKind, MouseButton, MouseEventKind};
 
-use crate::app::App;
+use crate::app::{App, Popup};
 use crate::keys::handle_key;
+use crate::palette;
 
 /// How long to block waiting for input before returning to redraw.
 const POLL_INTERVAL: Duration = Duration::from_millis(50);
@@ -25,7 +26,15 @@ pub fn poll_and_handle(app: &mut App) -> Result<bool> {
                 dirty = true;
             }
             Event::Mouse(mouse) => {
+                // The palette's rows come from the binding table, which the
+                // app does not know about, so its clicks are routed here.
+                let palette = app.view.popup == Popup::Palette;
                 match mouse.kind {
+                    MouseEventKind::ScrollDown if palette => palette::wheel(app, 1),
+                    MouseEventKind::ScrollUp if palette => palette::wheel(app, -1),
+                    MouseEventKind::Down(MouseButton::Left) if palette => {
+                        palette::click(app, mouse.column, mouse.row)
+                    }
                     MouseEventKind::ScrollDown => app.wheel(mouse.column, mouse.row, 1),
                     MouseEventKind::ScrollUp => app.wheel(mouse.column, mouse.row, -1),
                     MouseEventKind::Down(MouseButton::Left) => app.click(mouse.column, mouse.row),

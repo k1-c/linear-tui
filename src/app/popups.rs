@@ -177,7 +177,9 @@ impl App {
             Popup::StatusChange(_) => self.apply_status_selection(),
             Popup::PriorityChange(_) => self.apply_priority_selection(),
             Popup::AssigneeChange(_) => self.apply_assignee_selection(),
-            Popup::None => {}
+            // The palette's entries come from the binding table; the
+            // `palette` module runs them.
+            Popup::Palette | Popup::None => {}
         }
     }
 
@@ -305,7 +307,7 @@ impl App {
             Popup::PriorityChange(_) => Priority::ALL.len(),
             // +1 for Unassign
             Popup::AssigneeChange(_) => self.popup_members().len() + 1,
-            Popup::None => 0,
+            Popup::Palette | Popup::None => 0,
         }
     }
 }
