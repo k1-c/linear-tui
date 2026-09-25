@@ -17,6 +17,7 @@ PLUGIN_ID="${HERDR_PLUGIN_ID:-k1-c.linear-tui}"
 # See docs/herdr.md for the keys.
 PLACEMENT=overlay
 DIRECTION=right
+SIZE=
 NOTIFY_AGENTS=0
 LINEAR_TUI_BIN="${LINEAR_TUI_BIN:-}"
 if [ -n "${HERDR_PLUGIN_CONFIG_DIR:-}" ] && [ -f "$HERDR_PLUGIN_CONFIG_DIR/config.env" ]; then
