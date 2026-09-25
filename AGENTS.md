@@ -270,5 +270,6 @@ manual bump collides with its PR. The bump is derived from commit types: `fix` �
 patch, `feat` → minor, and `!` / `BREAKING CHANGE` → minor while the crate is
 still `0.x`.
 
-A crates.io publish cannot be undone, only yanked. Run the app against a real
-Linear workspace before merging a release PR.
+A crates.io publish cannot be undone, only yanked. The end-to-end tests run on
+the release PR against the real Linear test workspaces; merge it only once
+they pass.

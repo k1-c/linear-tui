@@ -6,10 +6,17 @@ name: E2E
 # one concurrency group for every trigger, and runs queue rather than cancel
 # (a cancelled run can leave a workspace half-seeded, which the next run
 # repairs, but two at once corrupt each other).
+#
+# They run daily, on demand, on the release PR, and on a pull request only
+# when it carries the `e2e` label: a run takes minutes, queues behind every
+# other, and resets the workspaces a local `mise run e2e` may be using. A
+# change to what linear-tui shows or does is checked locally before it is
+# merged (docs/development.md, "Running them locally").
 
 on:
   pull_request:
     branches: [main]
+    types: [opened, synchronize, reopened, labeled]
   schedule:
     - cron: "23 3 * * *"
   workflow_dispatch:
@@ -28,6 +35,13 @@ env:
 jobs:
   e2e:
     name: End-to-end (real Linear)
+    # A pull request runs when it is labelled `e2e` (and on each push while it
+    # is), or when it is release-plz's release PR.
+    if: >-
+      github.event_name != 'pull_request'
+      || startsWith(github.head_ref, 'release-plz-')
+      || (github.event.action == 'labeled' && github.event.label.name == 'e2e')
+      || (github.event.action != 'labeled' && contains(github.event.pull_request.labels.*.name, 'e2e'))
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
