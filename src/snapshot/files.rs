@@ -20,6 +20,7 @@ use anyhow::{Context, Result};
 use directories::ProjectDirs;
 
 use super::{VERSION, ViewSnapshot, timestamp_now};
+use crate::api::ids::OrganizationId;
 
 /// Overrides the state directory, for tests and for tools that want to read
 /// the snapshots without knowing the platform's conventions.
@@ -156,12 +157,24 @@ impl Shelf {
     /// What a launch reopens: the snapshot closed most recently, or — when
     /// none was closed cleanly — the one that moved last. `own_pid`'s file is
     /// a stale one from a process that happened to have this PID before.
-    pub fn for_restore(&self, own_pid: u32) -> Option<ViewSnapshot> {
+    ///
+    /// A view names pages by Linear ID, which only mean something in the
+    /// workspace they came from, so a view of another `organization` is
+    /// passed over. When either side does not know its workspace, it is taken.
+    pub fn for_restore(
+        &self,
+        own_pid: u32,
+        organization: Option<&OrganizationId>,
+    ) -> Option<ViewSnapshot> {
         let candidates: Vec<ViewSnapshot> = self
             .read_all()
             .into_iter()
             .map(|(_, s)| s)
             .filter(|s| s.pid != own_pid || s.closed_at.is_some())
+            .filter(|s| match (&s.organization, organization) {
+                (Some(theirs), Some(ours)) => theirs.id == *ours,
+                _ => true,
+            })
             .collect();
         let closed = candidates
             .iter()

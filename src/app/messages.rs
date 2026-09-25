@@ -47,8 +47,9 @@ impl App {
                     });
                 }
             }
-            Message::Viewer(id) => {
+            Message::Viewer { id, organization } => {
                 self.store.viewer_id = Some(id);
+                self.store.organization = organization;
                 if self.nav.dest == Nav::MyIssues {
                     self.reload_current_tab();
                 }

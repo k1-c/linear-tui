@@ -442,6 +442,7 @@ mod tests {
             updated_at: "2026-09-25T00:00:00Z".into(),
             closed_at: None,
             herdr_pane: None,
+            organization: None,
             team: Some(team_ref("t1", "ENG")),
             destination,
             screen,

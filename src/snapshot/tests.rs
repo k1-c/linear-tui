@@ -22,6 +22,7 @@ fn snapshot(pid: u32, updated_at: &str, closed_at: Option<&str>) -> ViewSnapshot
         updated_at: updated_at.into(),
         closed_at: closed_at.map(Into::into),
         herdr_pane: None,
+        organization: None,
         team: None,
         destination: Destination::MyIssues,
         screen: Screen::IssueList,
@@ -93,7 +94,31 @@ fn a_launch_restores_the_snapshot_closed_last() {
         &shelf,
         &snapshot(3, "2026-09-25T07:00:00Z", Some("2026-09-25T07:30:00Z")),
     );
-    assert_eq!(shelf.for_restore(99).unwrap().pid, 2);
+    assert_eq!(shelf.for_restore(99, None).unwrap().pid, 2);
+}
+
+#[test]
+fn a_view_of_another_linear_workspace_is_not_restored() {
+    let shelf = Shelf::new(&scratch("organization"), Path::new("/repo"));
+    let of = |pid, closed_at, org: &str| ViewSnapshot {
+        organization: Some(OrganizationRef {
+            id: org.into(),
+            name: org.into(),
+            url_key: org.into(),
+        }),
+        ..snapshot(pid, "2026-09-25T08:00:00Z", Some(closed_at))
+    };
+    put(&shelf, &of(1, "2026-09-25T08:00:00Z", "acme"));
+    put(&shelf, &of(2, "2026-09-25T09:00:00Z", "globex"));
+    let acme = OrganizationId::from("acme");
+    assert_eq!(shelf.for_restore(99, Some(&acme)).unwrap().pid, 1);
+    assert!(
+        shelf
+            .for_restore(99, Some(&OrganizationId::from("initech")))
+            .is_none()
+    );
+    // Credentials that do not know their workspace take the newest view.
+    assert_eq!(shelf.for_restore(99, None).unwrap().pid, 2);
 }
 
 #[test]
@@ -101,9 +126,9 @@ fn without_a_clean_close_the_snapshot_that_moved_last_is_restored() {
     let shelf = Shelf::new(&scratch("crash"), Path::new("/repo"));
     put(&shelf, &snapshot(1, "2026-09-25T08:00:00Z", None));
     put(&shelf, &snapshot(2, "2026-09-25T09:00:00Z", None));
-    assert_eq!(shelf.for_restore(99).unwrap().pid, 2);
+    assert_eq!(shelf.for_restore(99, None).unwrap().pid, 2);
     // A stale file under this process's own PID is not this process's view.
-    assert_eq!(shelf.for_restore(2).unwrap().pid, 1);
+    assert_eq!(shelf.for_restore(2, None).unwrap().pid, 1);
 }
 
 #[test]
@@ -117,7 +142,7 @@ fn unreadable_and_newer_snapshots_are_skipped() {
         &shelf,
         &snapshot(3, "2026-09-25T08:00:00Z", Some("2026-09-25T08:00:00Z")),
     );
-    assert_eq!(shelf.for_restore(99).unwrap().pid, 3);
+    assert_eq!(shelf.for_restore(99, None).unwrap().pid, 3);
 }
 
 #[test]
@@ -130,7 +155,7 @@ fn each_workspace_has_its_own_shelf() {
         &a,
         &snapshot(1, "2026-09-25T08:00:00Z", Some("2026-09-25T08:00:00Z")),
     );
-    assert!(b.for_restore(99).is_none());
+    assert!(b.for_restore(99, None).is_none());
 }
 
 #[test]
@@ -177,7 +202,7 @@ fn the_recorder_waits_for_the_view_to_rest_and_skips_what_it_wrote() {
     assert!(fs::metadata(shelf.path_for(5)).unwrap().modified().unwrap() >= written);
 
     recorder.close(snapshot(5, "2026-09-25T08:00:03Z", None));
-    assert!(shelf.for_restore(99).unwrap().closed_at.is_some());
+    assert!(shelf.for_restore(99, None).unwrap().closed_at.is_some());
 }
 
 fn git(dir: &Path, args: &[&str]) {

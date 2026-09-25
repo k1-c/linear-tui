@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::api::ids::{CustomViewId, IssueId, TeamId, UserId};
 use crate::api::types::{
-    CustomView, Cycle, Favorite, Issue, PageInfo, Project, Team, User, WorkflowState,
+    CustomView, Cycle, Favorite, Issue, Organization, PageInfo, Project, Team, User, WorkflowState,
 };
 use crate::message::Page;
 
@@ -141,6 +141,8 @@ pub struct Store {
     /// and cycles can hold issues of teams other than the selected one.
     pub team_contexts: HashMap<TeamId, TeamContext>,
     pub viewer_id: Option<UserId>,
+    /// The workspace the credentials act in, as the viewer query named it.
+    pub organization: Option<Organization>,
     /// Saved views, personal ones first.
     pub custom_views: Vec<CustomView>,
     pub views_loaded: bool,

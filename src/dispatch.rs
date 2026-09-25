@@ -26,7 +26,13 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
     let append = req.cursor().is_some();
     Ok(match req {
         Request::Teams => Message::Teams(client.teams().await?),
-        Request::Viewer => Message::Viewer(client.viewer().await?.id),
+        Request::Viewer => {
+            let viewer = client.viewer().await?;
+            Message::Viewer {
+                id: viewer.id,
+                organization: viewer.organization,
+            }
+        }
         Request::TeamContext { team_id } => {
             // Independent queries — fetch them concurrently.
             let (states, members) = tokio::join!(
