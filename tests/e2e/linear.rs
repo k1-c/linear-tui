@@ -207,7 +207,10 @@ fn team(linear: &Linear, account: &Account) -> Result<(Value, Option<String>), S
         .as_array()
         .cloned()
         .unwrap_or_default();
-    let wanted = std::env::var(format!("LINEAR_E2E_TEAM_{}", account.name)).ok();
+    // CI passes a secret that was never set as an empty variable: no choice.
+    let wanted = std::env::var(format!("LINEAR_E2E_TEAM_{}", account.name))
+        .ok()
+        .filter(|key| !key.is_empty());
     let team = teams
         .iter()
         .find(|t| wanted.as_deref().is_none_or(|k| t["key"] == k))
