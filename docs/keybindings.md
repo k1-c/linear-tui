@@ -21,8 +21,9 @@ so an issue that is not in a list on screen can turn up too. Start the query
 with `>` to see commands only.
 
 A command that needs a value, such as *Change status…*, *Assign to…*,
-*Group by…*, *Switch team…*, or *Filter…*, turns the palette into a list of
-choices; `Esc` (or `Backspace` on an empty query) steps back to the commands.
+*Group by…*, *Switch team…*, *Switch workspace…*, or *Filter…*, turns the
+palette into a list of choices; `Esc` (or `Backspace` on an empty query) steps
+back to the commands.
 
 The same pickers open directly with `s`, `p`, `a`, `t` and `f`, and narrow as you
 type there too. Until you type, they keep their single keys: `j` / `k` to move,
@@ -108,6 +109,7 @@ Inside herdr, an issue row also shows the state of the agent working on it:
 | Key | Action |
 | --- | --- |
 | `t` | Switch team (or Enter / click on the team row in the sidebar) |
+| `Ctrl+K` → *Switch workspace…* | Switch to another signed-in Linear workspace ([authentication.md](authentication.md#several-workspaces)) |
 | `Ctrl+r`, `F5` | Refresh the current view |
 | `?` | Show all shortcuts |
 | `q` | Quit (on a nested page: go back) |

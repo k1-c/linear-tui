@@ -10,6 +10,7 @@ use anyhow::Result;
 use token::{Account, OAuthTokens, TokenStore};
 
 use crate::api::client::{Credentials, LinearClient, StaticCredentials};
+use crate::api::ids::OrganizationId;
 use crate::api::types::{Organization, Viewer};
 use crate::config::Config;
 
@@ -112,6 +113,26 @@ pub async fn resolve_auth(token_store: &TokenStore, api_key: Option<&str>) -> Re
     }
 
     anyhow::bail!("Not authenticated. Run `linear-tui auth login` to sign in.")
+}
+
+/// Make `target` the current workspace and resolve its credentials. When
+/// they cannot be resolved, the current workspace is left as it was.
+pub async fn switch_to(
+    token_store: &TokenStore,
+    api_key: Option<&str>,
+    target: &OrganizationId,
+) -> Result<AuthMethod> {
+    let previous = token_store.update(|accounts| {
+        if accounts.find(target.as_str()).is_none() {
+            return Err(anyhow::anyhow!("that workspace is no longer signed in"));
+        }
+        Ok(accounts.current.replace(target.clone()))
+    })??;
+    let resolved = resolve_auth(token_store, api_key).await;
+    if resolved.is_err() {
+        token_store.update(|accounts| accounts.current = previous)?;
+    }
+    resolved
 }
 
 /// Keep a freshly issued token as the account for its workspace, and make

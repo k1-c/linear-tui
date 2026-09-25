@@ -154,11 +154,22 @@ pub enum Popup {
     /// Pick how issue lists are grouped.
     GroupBy,
     TeamSelect,
+    /// Pick another signed-in Linear workspace.
+    WorkspaceSelect,
     /// The filter popup asks for a status, then a priority.
     Filter(FilterKind),
     StatusChange(IssueId),
     PriorityChange(IssueId),
     AssigneeChange(IssueId),
+}
+
+/// One signed-in workspace, as the workspace switcher lists it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WorkspaceEntry {
+    pub id: OrganizationId,
+    pub name: String,
+    pub url_key: String,
+    pub current: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -186,6 +197,11 @@ pub struct App {
     pub agents: Vec<crate::herdr::AgentLink>,
     /// A snapshot being reopened, while it still has steps to take.
     restore: Option<restore::Restore>,
+    /// The signed-in Linear workspaces, as the main loop read them.
+    pub workspaces: Vec<WorkspaceEntry>,
+    /// The workspace the user picked. The main loop ends this session and
+    /// opens a new one there, since nothing loaded here belongs to it.
+    pub switch_to: Option<OrganizationId>,
 
     // Settings
     pub theme: Theme,
@@ -205,6 +221,8 @@ impl App {
             herdr: crate::herdr::available(),
             agents: Vec::new(),
             restore: None,
+            workspaces: Vec::new(),
+            switch_to: None,
             theme: Theme::from_name(config.ui.theme),
             items_per_page: config.ui.items_per_page,
             default_team: config.ui.default_team.clone(),

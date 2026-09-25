@@ -37,9 +37,14 @@ linear-tui auth switch globex    # use another one, by URL key or name
 linear-tui auth logout globex    # forget one
 ```
 
+Inside the TUI, *Switch workspace…* in the command palette (`Ctrl+K`) does the
+same as `auth switch`. The screen is rebuilt for the other workspace, and
+switching back returns to the page you left there.
+
 The workspace in use is shared by everything: the TUI opens it, and the
-headless commands for agents ([cli.md](cli.md)) act in it. A remembered view is
-only reopened in the workspace it was recorded in.
+headless commands for agents ([cli.md](cli.md)) act in it, so switching in the
+TUI switches them too. A remembered view is only reopened in the workspace it
+was recorded in.
 
 No client secret is involved: Linear's PKCE flow makes one optional, so
 linear-tui ships as a public OAuth client.
