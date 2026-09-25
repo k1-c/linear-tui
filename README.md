@@ -36,6 +36,7 @@ Built with [ratatui](https://ratatui.rs/) and the Linear GraphQL API.
 - **One-command sign-in** — `linear-tui auth login` opens the browser; no application to register, no client secret, or use a personal API key instead
 - **Theme support** — Default (dark), Light, and Ocean color schemes
 - **Pagination** — Cursor-based infinite scrolling across every list
+- **Picks up where you left off** — each repository (and its worktrees) reopens on the page, list settings, and issue you last had open there
 
 ## Installation
 
@@ -265,7 +266,26 @@ theme = "default"            # "default" | "light" | "ocean"
 sidebar = true               # Show the sidebar (it hides itself below 100 columns)
 sidebar_width = 26           # Sidebar width in columns (18-48)
 group_by = "status"          # "status" | "assignee" | "priority" | "project" | "none"
+
+# Always open on a team in one directory, instead of where you left off there.
+[workspaces."~/dev/storefront"]
+team = "WEB"
 ```
+
+### Where you left off
+
+linear-tui remembers what it is showing — the page, the list's preset, filters
+and grouping, and the issue under the cursor — separately for each repository,
+and reopens it on the next launch there. Worktrees of one repository share it;
+outside git, the directory itself is the key. Pages are remembered by their
+Linear ID, so reordering teams or views does not reopen the wrong one, and a
+page that has since been deleted opens its parent instead. Pressing a key
+before the page is back cancels the rest of the restore.
+
+A `[workspaces."<path>"]` entry in `config.toml` wins over the remembered view.
+The record is a small JSON file per running instance under
+`~/.local/state/linear-tui/workspaces/`; its format is in
+[docs/view-snapshot.md](docs/view-snapshot.md).
 
 ### Themes
 

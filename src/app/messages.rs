@@ -12,16 +12,31 @@ enum Field {
 
 impl App {
     pub fn handle_message(&mut self, msg: Message) {
+        self.fold_message(msg);
+        // Each answer may be what a restore was waiting for.
+        self.advance_restore();
+    }
+
+    fn fold_message(&mut self, msg: Message) {
         match msg {
             Message::Teams(teams) => {
-                if let Some(default_team) = &self.default_team
-                    && let Some(idx) = teams
+                let preferred = self.restored_team(&teams).or_else(|| {
+                    let default_team = self.default_team.as_ref()?;
+                    teams
                         .iter()
                         .position(|t| t.name == *default_team || t.key == *default_team)
-                {
+                });
+                if let Some(idx) = preferred {
                     self.nav.team = idx;
                 }
                 self.store.teams = teams;
+                // A restore opens its own first page.
+                if self.restoring_destination() {
+                    if let Some(team_id) = self.team_id() {
+                        self.ensure_team_context(team_id);
+                    }
+                    return;
+                }
                 self.nav.dest = Nav::Team(self.nav.team, TeamSection::Issues);
                 if let Some(team_id) = self.team_id() {
                     self.ensure_team_context(team_id.clone());
@@ -155,7 +170,10 @@ impl App {
                 self.accept_issue_page(IssueSource::View, page);
                 self.clear_status();
             }
-            Message::IssueDetail(issue) => self.store.refresh_issue(*issue),
+            Message::IssueDetail(issue) => {
+                self.restored_issue_loaded(&issue.id);
+                self.store.refresh_issue(*issue);
+            }
             Message::ProjectIssues { project_id, page } => {
                 if self.nav.current_project.as_ref().map(|p| &p.id) != Some(&project_id) {
                     return;
@@ -191,6 +209,12 @@ impl App {
                 self.queue_detail_fetches();
             }
             Message::Failed { request, error } => {
+                if let Request::IssueDetail { issue_id } = request.as_ref()
+                    && self.restored_issue_failed(issue_id)
+                {
+                    return;
+                }
+                self.restore_lost(&request);
                 // A failed page must be retryable.
                 if let Some(cursor) = request.cursor() {
                     self.outbox.prefetched.remove(cursor);
@@ -248,7 +272,10 @@ impl App {
     fn accept_issue_page(&mut self, source: IssueSource, page: Page<Issue>) {
         let on_screen = source == self.issue_source();
         let keep = if on_screen {
-            self.selected_issue_id()
+            let restored = (!page.append)
+                .then(|| self.take_restored_selection(source))
+                .flatten();
+            restored.or_else(|| self.selected_issue_id())
         } else {
             None
         };

@@ -14,10 +14,7 @@ use crate::app::App;
 use crate::config::Theme;
 
 pub fn cycle_name(cycle: &Cycle) -> String {
-    cycle
-        .name
-        .clone()
-        .unwrap_or_else(|| format!("Cycle {}", cycle.number.unwrap_or(0.0)))
+    cycle.label()
 }
 
 /// Whether `now` (an ISO timestamp) falls inside the cycle.

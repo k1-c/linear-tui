@@ -17,7 +17,9 @@ mod navigation;
 mod outbox;
 mod palette;
 mod popups;
+mod restore;
 mod sidebar;
+mod snapshot;
 #[cfg(test)]
 mod tests;
 mod view;
@@ -172,6 +174,8 @@ pub struct App {
     /// Requests and effects waiting for the main loop.
     pub outbox: Outbox,
     pub should_quit: bool,
+    /// A snapshot being reopened, while it still has steps to take.
+    restore: Option<restore::Restore>,
 
     // Settings
     pub theme: Theme,
@@ -188,6 +192,7 @@ impl App {
             frame: FrameState::default(),
             outbox: Outbox::default(),
             should_quit: false,
+            restore: None,
             theme: Theme::from_name(config.ui.theme),
             items_per_page: config.ui.items_per_page,
             default_team: config.ui.default_team.clone(),

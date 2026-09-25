@@ -146,6 +146,7 @@ pub struct Store {
     pub views_loaded: bool,
     /// Favorites, in the order Linear's sidebar shows them.
     pub favorites: Vec<Favorite>,
+    pub favorites_loaded: bool,
     pub issues: PerSource<Rows<Issue>>,
     /// Which view `issues[View]` belongs to, so switching views refetches.
     pub loaded_view_id: Option<CustomViewId>,
@@ -217,6 +218,7 @@ impl Store {
     pub fn set_favorites(&mut self, mut favorites: Vec<Favorite>) {
         favorites.sort_by(|a, b| a.sort_order.total_cmp(&b.sort_order));
         self.favorites = favorites;
+        self.favorites_loaded = true;
     }
 
     /// The team `issue` belongs to; `fallback` for an issue that does not say.
