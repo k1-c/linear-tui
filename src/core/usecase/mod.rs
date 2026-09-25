@@ -14,6 +14,7 @@
 //! | [`notes`] | notes for an agent | write, compose, send, discard |
 //! | [`agent`] | a coding agent beside linear-tui | which one works on an issue, jump to it |
 //! | [`instance`] | a running linear-tui and the view it records | which to reopen, which an agent reads |
+//! | [`workspace`] | a signed-in Linear workspace | offer, switch, come back to |
 //!
 //! A use case takes the [`Store`](crate::core::store::Store) and explicit
 //! arguments — which issue, which value — applies the optimistic change, and
@@ -40,6 +41,7 @@ pub mod project;
 pub mod team;
 pub mod user;
 pub mod view;
+pub mod workspace;
 
 /// What a use case asks of the world outside linear-tui, by the aggregate it
 /// is about. The use cases' output port: `dispatch` carries each out.
@@ -180,6 +182,9 @@ pub enum Refusal {
     /// There are no notes to send.
     #[error("No notes yet")]
     NoNotes,
+    /// Switching workspace needs another one signed in.
+    #[error("Only one workspace is signed in \u{2014} `linear-tui auth login` adds another")]
+    OnlyOneWorkspace,
 }
 
 #[cfg(test)]

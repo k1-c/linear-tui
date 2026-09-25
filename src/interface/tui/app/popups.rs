@@ -17,17 +17,12 @@ impl App {
         self.show_popup(Popup::TeamSelect, self.nav.team);
     }
 
-    /// Offer the other signed-in workspaces. With only one there is nothing
-    /// to pick, so say how to add another instead.
+    /// Offer the other signed-in workspaces (`usecase::workspace`).
     pub fn open_workspace_select(&mut self) {
-        if self.workspaces.len() < 2 {
-            self.set_status(
-                "Only one workspace is signed in \u{2014} `linear-tui auth login` adds another",
-            );
-            return;
+        match usecase::workspace::open_switcher(&self.workspaces) {
+            Ok(current) => self.show_popup(Popup::WorkspaceSelect, current),
+            Err(refusal) => self.set_status(refusal.to_string()),
         }
-        let current = self.workspaces.iter().position(|w| w.current).unwrap_or(0);
-        self.show_popup(Popup::WorkspaceSelect, current);
     }
 
     /// Switch to the picked workspace; the main loop does the switching.
@@ -35,9 +30,12 @@ impl App {
         let Some(entry) = self.popup_choice().and_then(|i| self.workspaces.get(i)) else {
             return;
         };
-        let (id, current, name) = (entry.id.clone(), entry.current, entry.name.clone());
+        let (target, name) = (
+            usecase::workspace::pick(entry),
+            entry.organization.name.clone(),
+        );
         self.close_popup();
-        if !current {
+        if let Some(id) = target {
             self.set_status(format!("Switching to {name}\u{2026}"));
             self.switch_to = Some(id);
         }
@@ -368,7 +366,7 @@ impl App {
             Popup::WorkspaceSelect => self
                 .workspaces
                 .iter()
-                .map(|w| format!("{} {}", w.name, w.url_key))
+                .map(|w| format!("{} {}", w.organization.name, w.organization.url_key))
                 .collect(),
             Popup::Filter(FilterKind::Status) => std::iter::once("Any status".to_string())
                 .chain(self.filter_states().iter().map(|s| s.name.clone()))

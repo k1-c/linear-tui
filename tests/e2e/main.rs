@@ -24,6 +24,9 @@
 //! - `issue::change_refused` — needs Linear to refuse a change linear-tui allows
 //! - `team::context_failed` — needs Linear to fail a request
 //! - `project::next_page`, `cycle::next_page` — need more than 100 projects or cycles
+//! - `workspace::signed_in`, `workspace::open_switcher`, `workspace::pick`,
+//!   `workspace::leave`, `workspace::view_on_return` — the switcher offers
+//!   OAuth sign-ins, which need a browser; an API key is one workspace
 
 mod agents;
 mod browse;
