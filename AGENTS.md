@@ -63,7 +63,8 @@ the pins current, so never add one by tag or branch.
   resolve the target and call a use case), `cursor.rs`, `lists.rs` (filtering,
   grouping, prefetch), `sidebar.rs`, `mouse.rs` (`App::click`), `input.rs`,
   `snapshot.rs` (capture the view) and `restore.rs` (reopen it on launch,
-  or open the issue `linear-tui open` names), `notes.rs` (notes for the agent);
+  or open the issue `linear-tui open` names), `notes.rs` (notes for the agent),
+  `agents.rs` (herdr agents on issues, `g w`);
   `tests.rs` the state tests
 - `src/snapshot/` — the view snapshot (`docs/view-snapshot.md`): its types, the
   per-workspace files under the state dir (`Shelf`), and the debounced writer
@@ -83,7 +84,9 @@ the pins current, so never add one by tag or branch.
 - `src/config.rs` — config file + theme (`~/.config/linear-tui/config.toml`)
 - `src/herdr.rs` — the hand-off to the herdr plugin: writes a request to the
   outbox and invokes the plugin's `deliver` action (`Request::Herdr`). The only
-  place that runs `HERDR_BIN_PATH`; `App::herdr` says whether it is set
+  place that runs `HERDR_BIN_PATH`; `App::herdr` says whether it is set. Also
+  reads the plugin's `agents.json` (`AgentWatch`, polled by the main loop). A
+  binding marked `.herdr_only()` neither answers nor is listed outside herdr
 - `herdr-plugin/` — the herdr plugin (`docs/herdr.md`): a manifest and shell
   scripts; every herdr call lives here, never in the Rust code
 - `demo/` — the README GIF: `seed.py` fills a throwaway workspace, `demo.tape`

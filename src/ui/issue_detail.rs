@@ -19,12 +19,13 @@ use unicode_width::UnicodeWidthStr;
 
 use super::markdown::{self, wrap};
 use super::widgets::{
-    self, avatar, label_chip, person, priority_glyph, short_date, state_color, state_glyph,
-    truncate, user_name,
+    self, agent_glyph, avatar, label_chip, person, priority_glyph, short_date, state_color,
+    state_glyph, truncate, user_name,
 };
 use crate::api::types::{Comment, Issue, StateType, hex_color};
 use crate::app::{App, InputMode};
 use crate::config::Theme;
+use crate::herdr::AgentLink;
 
 /// Width of the properties panel when there is room for one.
 const PANEL_WIDTH: u16 = 34;
@@ -107,7 +108,7 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
     }
 
     if with_panel {
-        draw_panel(f, issue, cols[1], &th);
+        draw_panel(f, issue, app.agent_for(&issue.identifier), cols[1], &th);
     }
 
     if comment_mode {
@@ -722,7 +723,7 @@ fn panel_lines(issue: &Issue, width: u16, th: &Theme) -> Vec<Line<'static>> {
     out
 }
 
-fn draw_panel(f: &mut Frame, issue: &Issue, area: Rect, th: &Theme) {
+fn draw_panel(f: &mut Frame, issue: &Issue, agent: Option<&AgentLink>, area: Rect, th: &Theme) {
     // A rule separates the panel from the document, as in Linear.
     for y in area.y..area.y + area.height {
         f.buffer_mut()[(area.x, y)]
@@ -734,7 +735,36 @@ fn draw_panel(f: &mut Frame, issue: &Issue, area: Rect, th: &Theme) {
         width: area.width.saturating_sub(3),
         ..area
     };
-    f.render_widget(Paragraph::new(panel_lines(issue, inner.width, th)), inner);
+    let mut lines = panel_lines(issue, inner.width, th);
+    if let Some(agent) = agent {
+        lines.extend(agent_lines(agent, inner.width, th));
+    }
+    f.render_widget(Paragraph::new(lines), inner);
+}
+
+/// The herdr agent working on the issue, and where it is.
+fn agent_lines(agent: &AgentLink, width: u16, th: &Theme) -> Vec<Line<'static>> {
+    let w = width as usize;
+    let place = agent.workspace_label.as_deref().unwrap_or(&agent.pane);
+    vec![
+        Line::from(""),
+        heading("Agent", th),
+        Line::from(vec![
+            Span::raw(" "),
+            agent_glyph(agent.status, th),
+            Span::styled(
+                format!(" {} {}", agent.agent, agent.status.label()),
+                Style::default().fg(th.text),
+            ),
+        ]),
+        Line::from(Span::styled(
+            format!(
+                " {}",
+                truncate(&format!("{place} \u{00b7} g w to go"), w.saturating_sub(2))
+            ),
+            Style::default().fg(th.muted),
+        )),
+    ]
 }
 
 /// The panel's essentials as a few dense lines, for terminals too narrow to

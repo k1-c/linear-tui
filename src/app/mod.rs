@@ -7,6 +7,7 @@ pub use crate::store::{IssueSource, PerSource, Store, TeamContext};
 use crate::usecase::{self, Refusal};
 
 mod actions;
+mod agents;
 mod cursor;
 mod frame;
 mod input;
@@ -181,6 +182,8 @@ pub struct App {
     /// Whether linear-tui runs inside herdr, which enables the actions that
     /// hand work to its plugin.
     pub herdr: bool,
+    /// herdr's agents and the issues they work on, from the plugin.
+    pub agents: Vec<crate::herdr::AgentLink>,
     /// A snapshot being reopened, while it still has steps to take.
     restore: Option<restore::Restore>,
 
@@ -200,6 +203,7 @@ impl App {
             outbox: Outbox::default(),
             should_quit: false,
             herdr: crate::herdr::available(),
+            agents: Vec::new(),
             restore: None,
             theme: Theme::from_name(config.ui.theme),
             items_per_page: config.ui.items_per_page,

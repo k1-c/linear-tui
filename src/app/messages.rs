@@ -216,7 +216,7 @@ impl App {
                 }
                 self.restore_lost(&request);
                 if let Request::Herdr(handoff) = request.as_ref() {
-                    self.notes_not_delivered(handoff, &error);
+                    self.handoff_failed(handoff, &error);
                     return;
                 }
                 // A failed page must be retryable.

@@ -199,6 +199,8 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
 
     // `App::new` seeds the initial Teams/Viewer requests.
     let mut app = App::new(&config);
+    // Only the herdr plugin writes the agents file.
+    let mut agents = app.herdr.then(herdr::AgentWatch::new).flatten();
     if let Some(snapshot) = restored {
         tracing::info!(updated_at = %snapshot.updated_at, "restoring the last view");
         app.restore(snapshot);
@@ -265,6 +267,14 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
             }
         }
         dirty |= moved;
+
+        // What the herdr plugin says its agents are working on.
+        if let Some(watch) = &mut agents
+            && let Some(list) = watch.poll(now)
+        {
+            app.set_agents(list);
+            dirty = true;
+        }
 
         if app.loading() && last_tick.elapsed() >= TICK {
             app.tick_spinner();

@@ -11,6 +11,20 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 use crate::api::types::{Label, Priority, StateType, User, WorkflowState, hex_color};
 use crate::config::Theme;
 
+/// The mark for a herdr agent's state, in the colour it deserves: amber when
+/// it waits for you, the accent while it works.
+pub fn agent_glyph(status: crate::herdr::AgentStatus, theme: &Theme) -> Span<'static> {
+    use crate::herdr::AgentStatus;
+    let (glyph, color) = match status {
+        AgentStatus::Blocked => ("\u{25b2}", theme.warning),
+        AgentStatus::Working => ("\u{25cf}", theme.accent),
+        AgentStatus::Done => ("\u{2713}", theme.success),
+        AgentStatus::Idle => ("\u{25cb}", theme.success),
+        AgentStatus::Unknown => ("\u{00b7}", theme.muted),
+    };
+    Span::styled(glyph, Style::default().fg(color))
+}
+
 /// The name Linear shows for a person: their display name, else full name.
 pub fn user_name(user: &User) -> &str {
     user.display_name.as_deref().unwrap_or(&user.name)

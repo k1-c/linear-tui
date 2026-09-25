@@ -1,6 +1,6 @@
 id = "k1-c.linear-tui"
 name = "linear-tui"
-version = "0.2.0"
+version = "0.3.0"
 # Tested against 0.9.1: plugin panes with --env, and the pane.agent_status_changed event hook.
 min_herdr_version = "0.9.1"
 description = "Linear in a pane: open linear-tui over any workspace and let agents read what you are looking at."
@@ -47,7 +47,45 @@ action = "open-link"
 [[startup]]
 command = ["bash", "restore.sh"]
 
-# Opt-in (NOTIFY_AGENTS=1): tell a freshly started agent about `linear-tui context`.
+# linear-tui's list of agents and the issues they work on.
+[[startup]]
+command = ["bash", "agents.sh"]
+
+[[events]]
+on = "pane.agent_detected"
+command = ["bash", "agents.sh"]
+
+[[events]]
+on = "pane.closed"
+command = ["bash", "agents.sh"]
+
+[[events]]
+on = "pane.exited"
+command = ["bash", "agents.sh"]
+
+# Closing a tab or a workspace closes its panes without a pane.closed each.
+[[events]]
+on = "tab.closed"
+command = ["bash", "agents.sh"]
+
+[[events]]
+on = "workspace.closed"
+command = ["bash", "agents.sh"]
+
+[[events]]
+on = "worktree.created"
+command = ["bash", "agents.sh"]
+
+[[events]]
+on = "worktree.opened"
+command = ["bash", "agents.sh"]
+
+[[events]]
+on = "worktree.removed"
+command = ["bash", "agents.sh"]
+
+# Refreshes the agent list; opt-in (NOTIFY_AGENTS=1), also tells a freshly
+# started agent about `linear-tui context`.
 [[events]]
 on = "pane.agent_status_changed"
 command = ["bash", "event.sh"]

@@ -1,13 +1,16 @@
 #!/usr/bin/env bash
 # Event hook for agent state changes.
 #
-# With NOTIFY_AGENTS=1, an agent that has just started and is waiting for its
+# Every change refreshes linear-tui's list of agents (agents.sh). With
+# NOTIFY_AGENTS=1, an agent that has just started and is waiting for its
 # first message is told once how to read what the user is looking at in
 # linear-tui. Off by default: the notice takes the agent's first turn, and
 # some agents (Claude Code) name the session after it. See docs/herdr.md.
 set -uo pipefail
 # shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
+
+bash "$(dirname "$0")/agents.sh"
 
 [ "$NOTIFY_AGENTS" = 1 ] || exit 0
 event="${HERDR_PLUGIN_EVENT_JSON:-}"
