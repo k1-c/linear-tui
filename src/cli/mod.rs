@@ -23,10 +23,14 @@ linear-tui — a terminal UI for Linear
 Usage:
   linear-tui                     Open the TUI (sets up credentials on first run)
   linear-tui open <ID>           Open the TUI on an issue (ENG-123 or its URL)
-  linear-tui auth login          Sign in through the browser
+  linear-tui auth login          Sign in to a workspace through the browser
+  linear-tui auth list           List the signed-in workspaces
+  linear-tui auth switch <workspace>
+                                 Use another signed-in workspace (by URL key or name)
   linear-tui auth status         Show which credentials are in use
   linear-tui auth token <key>    Sign in with a personal API key
-  linear-tui auth logout [--all] Forget the stored token (--all: the API key too)
+  linear-tui auth logout [<workspace>] [--all]
+                                 Forget a workspace's token (--all: every token and the API key)
   linear-tui auth set-oauth <client-id> [client-secret]
                                  Authorize against your own Linear application
 

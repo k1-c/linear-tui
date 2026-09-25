@@ -29,6 +29,15 @@ impl App {
             updated_at: snap::timestamp_now(),
             closed_at: None,
             herdr_pane: origin.herdr_pane.clone(),
+            organization: self
+                .store
+                .organization
+                .as_ref()
+                .map(|org| snap::OrganizationRef {
+                    id: org.id.clone(),
+                    name: org.name.clone(),
+                    url_key: org.url_key.clone(),
+                }),
             team: self.current_team().map(team_ref),
             destination: self.snapshot_destination(),
             screen: screen.into(),

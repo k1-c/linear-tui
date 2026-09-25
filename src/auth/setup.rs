@@ -1,4 +1,4 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use std::io::{self, Write};
 
 use super::oauth;
@@ -38,11 +38,8 @@ pub async fn run(token_store: &TokenStore) -> Result<bool> {
 }
 
 async fn browser_login(token_store: &TokenStore) -> Result<()> {
-    oauth::login(token_store).await?;
-    let tokens = token_store
-        .load()?
-        .context("Login finished but no token was stored")?;
-    let viewer = super::identify(&super::AuthMethod::OAuth(tokens)).await?;
+    let tokens = oauth::login().await?;
+    let viewer = super::add_account(token_store, tokens).await?;
     println!("{}", super::signed_in(&viewer));
     Ok(())
 }

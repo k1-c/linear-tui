@@ -73,6 +73,7 @@ async fn main() -> Result<()> {
         return Ok(());
     };
     tracing::info!(method = auth.label(), "authenticated successfully");
+    let organization = auth.organization().map(|org| org.id.clone());
     let client = LinearClient::new(auth.into_credentials(token_store));
 
     // An entry for this directory in config.toml wins over the view
@@ -92,7 +93,9 @@ async fn main() -> Result<()> {
         }
         // Asked for an issue, the remembered view is not reopened.
         None if open.is_some() => None,
-        None => shelf.as_ref().and_then(|s| s.for_restore(origin.pid)),
+        None => shelf
+            .as_ref()
+            .and_then(|s| s.for_restore(origin.pid, organization.as_ref())),
     };
     let recorder = shelf.map(|shelf| {
         shelf.prune();

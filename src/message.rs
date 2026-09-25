@@ -182,7 +182,10 @@ impl Request {
 #[derive(Debug)]
 pub enum Message {
     Teams(Vec<Team>),
-    Viewer(UserId),
+    Viewer {
+        id: UserId,
+        organization: Option<Organization>,
+    },
     TeamContext {
         team_id: TeamId,
         states: Vec<WorkflowState>,

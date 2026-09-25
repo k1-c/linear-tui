@@ -9,6 +9,7 @@ use serde_json::json;
 
 use super::args::Args;
 use super::issue::is_identifier;
+use crate::auth::token::{Account, TokenStore};
 use crate::snapshot::{self as snap, Destination, Shelf, ViewSnapshot};
 
 pub fn run(args: &[String]) -> Result<()> {
@@ -37,10 +38,42 @@ pub fn run(args: &[String]) -> Result<()> {
         });
         serde_json::to_string_pretty(&value)?
     } else {
-        render(found.as_ref(), worktree_issue.as_deref(), now)
+        let mut out = render(found.as_ref(), worktree_issue.as_deref(), now);
+        if let Some(warning) = found
+            .as_ref()
+            .and_then(|(s, _)| other_workspace(s, current_account().as_ref()))
+        {
+            out.push_str(&format!("\n{warning}\n"));
+        }
+        out
     };
     println!("{}", out.trim_end());
     Ok(())
+}
+
+/// The account `linear-tui issue …` acts in. Read without the network, and
+/// `None` when it cannot be told — an API key, or nothing stored.
+fn current_account() -> Option<Account> {
+    TokenStore::new()
+        .ok()?
+        .load()
+        .ok()?
+        .current_account()
+        .cloned()
+}
+
+/// A warning when the view on screen is of another Linear workspace than the
+/// one the issue commands act in: its IDs would not be found there.
+fn other_workspace(s: &ViewSnapshot, current: Option<&Account>) -> Option<String> {
+    let shown = s.organization.as_ref()?;
+    let acting = current?.organization.as_ref()?;
+    (shown.id != acting.id).then(|| {
+        format!(
+            "**This view is of {} ({}), but `linear-tui issue …` acts in {} ({}).** \
+             `linear-tui auth switch {}` first to act on what is shown.",
+            shown.name, shown.url_key, acting.name, acting.url_key, shown.url_key
+        )
+    })
 }
 
 /// The issue a linked worktree is for, read from its branch name — Linear
@@ -160,6 +193,12 @@ pub fn render(
         path.push(issue.identifier.clone());
     }
     out.push_str(&format!("- Showing: {}\n", path.join(" › ")));
+    if let Some(org) = &s.organization {
+        out.push_str(&format!(
+            "- Linear workspace: {} ({})\n",
+            org.name, org.url_key
+        ));
+    }
     if let Some(term) = &s.search {
         out.push_str(&format!("- Search results for: {term}\n"));
     }
@@ -256,6 +295,31 @@ mod tests {
     }
 
     #[test]
+    fn a_view_of_another_workspace_than_the_issue_commands_is_flagged() {
+        let snapshot = fixture();
+        let account = |id: &str| Account {
+            organization: Some(crate::api::types::Organization {
+                id: id.into(),
+                name: "Other".into(),
+                url_key: "other".into(),
+            }),
+            user: None,
+            tokens: crate::auth::token::OAuthTokens {
+                access_token: String::new(),
+                refresh_token: String::new(),
+                expires_at: 0,
+            },
+        };
+        let warning = other_workspace(&snapshot, Some(&account("elsewhere"))).unwrap();
+        assert!(
+            warning.contains("`linear-tui auth switch shop`"),
+            "{warning}"
+        );
+        assert!(other_workspace(&snapshot, Some(&account("b41d…org"))).is_none());
+        assert!(other_workspace(&snapshot, None).is_none());
+    }
+
+    #[test]
     fn a_branch_names_its_issue() {
         assert_eq!(
             identifier_in_branch("me/eng-42-checkout-fails").as_deref(),
@@ -281,6 +345,7 @@ mod tests {
             "{text}"
         );
         assert!(text.contains("2 minutes ago"), "{text}");
+        assert!(text.contains("- Linear workspace: Shop (shop)\n"), "{text}");
         assert!(text.contains("linear-tui is open (pid 48213)"), "{text}");
         assert!(
             text.contains("## The list it was opened from (2)"),

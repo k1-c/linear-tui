@@ -19,7 +19,9 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-use crate::api::ids::{CustomViewId, CycleId, FavoriteId, IssueId, ProjectId, TeamId};
+use crate::api::ids::{
+    CustomViewId, CycleId, FavoriteId, IssueId, OrganizationId, ProjectId, TeamId,
+};
 
 mod files;
 #[cfg(test)]
@@ -55,6 +57,10 @@ pub struct ViewSnapshot {
     /// The herdr pane the instance ran in, when it ran inside herdr.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub herdr_pane: Option<String>,
+    /// The Linear workspace the instance showed. Absent in snapshots written
+    /// before linear-tui could switch between workspaces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub organization: Option<OrganizationRef>,
 
     /// The selected team.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -129,6 +135,14 @@ impl Origin {
                 .filter(|p| !p.is_empty()),
         }
     }
+}
+
+/// A Linear workspace. Not the `workspace` above, which is a repository.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OrganizationRef {
+    pub id: OrganizationId,
+    pub name: String,
+    pub url_key: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

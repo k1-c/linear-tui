@@ -51,6 +51,7 @@ four files of instances that are gone are kept; older ones are deleted.
   "pid": 48213,
   "updated_at": "2026-09-25T06:01:02Z",
   "herdr_pane": "w2:p3",
+  "organization": { "id": "b41d…", "name": "Shop", "url_key": "shop" },
   "team": { "id": "3f1c…", "key": "ENG", "name": "Engineering" },
   "destination": {
     "kind": "team",
@@ -98,6 +99,7 @@ the sidebar, so a reordered sidebar still names the same page.
 | `updated_at` | timestamp | When the view last changed. |
 | `closed_at` | timestamp? | When the instance quit normally. |
 | `herdr_pane` | string? | The herdr pane it runs in (`HERDR_PANE_ID`). |
+| `organization` | organization? | The Linear workspace it shows. Not to be confused with `workspace`, the repository. |
 | `team` | team? | The selected team. |
 | `destination` | destination | The sidebar destination, see below. |
 | `screen` | screen | What the content pane shows. |
@@ -113,6 +115,10 @@ the sidebar, so a reordered sidebar still names the same page.
 
 Timestamps are RFC 3339 in UTC, to the second: `2026-09-25T06:01:02Z`. A `?`
 marks a field that may be absent.
+
+**organization**: `{ "id", "name", "url_key" }`, where `url_key` is the slug in
+`linear.app/<url_key>/…`. A launch reopens only a view of the workspace it is
+signed in to.
 
 **team**: `{ "id", "key", "name" }`. **ref**: `{ "id", "name" }`.
 **issue**: `{ "id", "identifier", "title" }`, where `identifier` is `ENG-42`.

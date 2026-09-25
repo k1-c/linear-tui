@@ -6,22 +6,27 @@ use super::oauth;
 use super::token::{OAuthTokens, TokenStore};
 use crate::api::client::{BoxFuture, Credentials};
 use crate::api::error::ApiError;
+use crate::api::ids::OrganizationId;
 
 /// An OAuth token pair that renews itself.
 ///
 /// The access token is renewed ahead of its expiry, and again whenever Linear
 /// refuses it — revoked early, or a clock that disagrees with Linear's. Each
-/// renewal is written back to the token store, so the next launch starts from
-/// the newest pair.
+/// renewal is written back to this workspace's account in the token store,
+/// so the next launch starts from the newest pair.
 pub struct OAuthSession {
     store: TokenStore,
+    /// The account the pair belongs to. The current workspace may change
+    /// while this session runs; the pair must still land in its own account.
+    account: Option<OrganizationId>,
     tokens: Mutex<OAuthTokens>,
 }
 
 impl OAuthSession {
-    pub fn new(store: TokenStore, tokens: OAuthTokens) -> Self {
+    pub fn new(store: TokenStore, account: Option<OrganizationId>, tokens: OAuthTokens) -> Self {
         Self {
             store,
+            account,
             tokens: Mutex::new(tokens),
         }
     }
@@ -32,7 +37,11 @@ impl OAuthSession {
             .map_err(|e| ApiError::Refresh(format!("{e:#}")))?;
         // The new pair works for this session whether or not it reaches the
         // disk; failing to save only costs a refresh at the next launch.
-        if let Err(e) = self.store.save(&fresh) {
+        let saved = fresh.clone();
+        if let Err(e) = self
+            .store
+            .update(|accounts| accounts.set_tokens(self.account.as_ref(), saved))
+        {
             tracing::warn!(error = %e, "could not store the refreshed token");
         }
         tracing::info!("OAuth token refreshed");
@@ -86,6 +95,7 @@ mod tests {
         )));
         OAuthSession::new(
             store,
+            None,
             OAuthTokens {
                 access_token: access.into(),
                 refresh_token: refresh.into(),

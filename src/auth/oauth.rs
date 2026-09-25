@@ -6,7 +6,7 @@ use rand::Rng;
 use sha2::{Digest, Sha256};
 
 use super::server::{CALLBACK_PORTS, start_callback_server};
-use super::token::{OAuthTokens, TokenStore};
+use super::token::OAuthTokens;
 
 const AUTHORIZE_URL: &str = "https://linear.app/oauth/authorize";
 const TOKEN_URL: &str = "https://api.linear.app/oauth/token";
@@ -96,8 +96,10 @@ fn authorize_url(client_id: &str, redirect_uri: &str, state: &str, code_challeng
     )
 }
 
-/// Run the full OAuth2 + PKCE login flow.
-pub async fn login(token_store: &TokenStore) -> Result<()> {
+/// Run the full OAuth2 + PKCE login flow, returning the token Linear issued.
+/// Which workspace it belongs to is only known by asking the API with it
+/// ([`super::add_account`]).
+pub async fn login() -> Result<OAuthTokens> {
     let client_id = client_id()?;
     let code_verifier = generate_code_verifier();
     let code_challenge = generate_code_challenge(&code_verifier);
@@ -136,10 +138,8 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
 
     tracing::debug!("exchanging authorization code for tokens");
     let tokens = exchange_code(&code, &code_verifier, &redirect_uri).await?;
-    token_store.save(&tokens)?;
-
     tracing::info!("OAuth login successful");
-    Ok(())
+    Ok(tokens)
 }
 
 async fn exchange_code(code: &str, code_verifier: &str, redirect_uri: &str) -> Result<OAuthTokens> {
