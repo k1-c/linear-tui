@@ -15,6 +15,11 @@ This opens Linear in your browser, and the authorization screen appears as
 allow "Linear" in an application's name, which is why it is not called
 linear-tui there.)
 
+The authorization screen is shown every time, even after you have approved the
+application once. It names the workspace the token will be issued for; if you
+belong to several, switch to the one you mean there before you approve. Once
+you are back, linear-tui prints who you signed in as and in which workspace.
+
 Approving it hands a token back to a local callback on port 53681, 53682, or
 53683, whichever is free. The token is stored in
 `~/.config/linear-tui/tokens.json`, readable only by you, and refreshed

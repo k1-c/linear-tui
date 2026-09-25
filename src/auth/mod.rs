@@ -75,6 +75,18 @@ pub async fn resolve_auth(token_store: &TokenStore, api_key: Option<&str>) -> Re
     anyhow::bail!("Not authenticated. Run `linear-tui auth login` to sign in.")
 }
 
+/// "Signed in as Ada in Acme (acme)." — which person and which workspace the
+/// credentials act as.
+pub fn signed_in(viewer: &Viewer) -> String {
+    match &viewer.organization {
+        Some(org) => format!(
+            "Signed in as {} in {} ({}).",
+            viewer.name, org.name, org.url_key
+        ),
+        None => format!("Signed in as {}.", viewer.name),
+    }
+}
+
 /// Ask the API who the credentials belong to — the only way to tell a live
 /// credential from a revoked one.
 pub async fn identify(auth: &AuthMethod) -> Result<Viewer> {

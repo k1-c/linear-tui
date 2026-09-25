@@ -15,7 +15,7 @@ pub async fn run(args: &[String]) -> Result<()> {
         Some("login") => {
             auth::oauth::login(&token_store).await?;
             let method = auth::resolve_auth(&token_store, None).await?;
-            println!("Signed in as {}.", auth::identify(&method).await?.name);
+            println!("{}", auth::signed_in(&auth::identify(&method).await?));
             Ok(())
         }
 
@@ -27,8 +27,8 @@ pub async fn run(args: &[String]) -> Result<()> {
             };
             // Verified before it is written, so a typo fails here and not at
             // the next launch.
-            let name = auth::setup::save_api_key(key).await?;
-            println!("API key saved. Signed in as {name}.");
+            let viewer = auth::setup::save_api_key(key).await?;
+            println!("API key saved. {}", auth::signed_in(&viewer));
             Ok(())
         }
 
@@ -106,7 +106,7 @@ async fn auth_status(token_store: &TokenStore) -> Result<()> {
     println!();
     match auth::resolve_auth(token_store, config.auth.api_key.as_deref()).await {
         Ok(method) => match auth::identify(&method).await {
-            Ok(viewer) => println!("Signed in as {} via {}.", viewer.name, method.label()),
+            Ok(viewer) => println!("{} Via {}.", auth::signed_in(&viewer), method.label()),
             Err(e) => println!("Stored credentials were rejected by the API: {e}"),
         },
         Err(e) => println!("{e}"),

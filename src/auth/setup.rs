@@ -3,6 +3,7 @@ use std::io::{self, Write};
 
 use super::oauth;
 use super::token::TokenStore;
+use crate::api::types::Viewer;
 use crate::config::Config;
 
 const API_KEY_SETTINGS_URL: &str = "https://linear.app/settings/account/security";
@@ -42,7 +43,7 @@ async fn browser_login(token_store: &TokenStore) -> Result<()> {
         .load()?
         .context("Login finished but no token was stored")?;
     let viewer = super::identify(&super::AuthMethod::OAuth(tokens)).await?;
-    println!("Signed in as {}.", viewer.name);
+    println!("{}", super::signed_in(&viewer));
     Ok(())
 }
 
@@ -66,8 +67,8 @@ async fn api_key_login() -> Result<bool> {
         }
 
         match save_api_key(&key).await {
-            Ok(name) => {
-                println!("Signed in as {name}.");
+            Ok(viewer) => {
+                println!("{}", super::signed_in(&viewer));
                 return Ok(true);
             }
             Err(e) => println!("That key did not work: {e}"),
@@ -76,15 +77,15 @@ async fn api_key_login() -> Result<bool> {
 }
 
 /// Verify an API key against the API, then write it to the config file.
-/// Returns the name it belongs to.
-pub async fn save_api_key(key: &str) -> Result<String> {
+/// Returns who it belongs to.
+pub async fn save_api_key(key: &str) -> Result<Viewer> {
     let viewer = super::identify(&super::AuthMethod::ApiKey(key.to_string())).await?;
 
     let mut config = Config::load()?;
     config.auth.api_key = Some(key.to_string());
     config.save()?;
 
-    Ok(viewer.name)
+    Ok(viewer)
 }
 
 fn prompt(label: &str) -> Result<String> {
