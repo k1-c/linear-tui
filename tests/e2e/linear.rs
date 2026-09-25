@@ -220,6 +220,54 @@ fn team(linear: &Linear, account: &Account) -> Result<(Value, Option<String>), S
     Ok((team, other))
 }
 
+/// The second team workspace A's scenarios switch to, made when missing.
+const SECOND_TEAM: (&str, &str) = ("E2E Second", "E2ES");
+
+/// A second team for workspace A: another team it has, or one made now.
+fn second_team(linear: &Linear, other: Option<String>) -> Result<String, String> {
+    if let Some(other) = other {
+        return Ok(other);
+    }
+    let (name, key) = SECOND_TEAM;
+    linear.create(
+        "teamCreate",
+        "TeamCreateInput",
+        "team",
+        json!({ "name": name, "key": key }),
+    )?;
+    Ok(name.to_string())
+}
+
+/// A cycle of `team` to put issues in. Cycles are turned on for the team
+/// when they are off; Linear then makes the cycles itself (it takes no
+/// `cycleCreate`), a moment later.
+fn cycle(linear: &Linear, team: &Value) -> Result<String, String> {
+    if let Some(id) = team["cycles"]["nodes"][0]["id"].as_str() {
+        return Ok(id.to_string());
+    }
+    if team["cyclesEnabled"] != json!(true) {
+        linear.gql(
+            "mutation($id: String!, $input: TeamUpdateInput!) { teamUpdate(id: $id, input: $input) { success } }",
+            json!({ "id": team["id"],
+                    "input": { "cyclesEnabled": true, "cycleDuration": 2, "upcomingCycleCount": 2 } }),
+        )?;
+    }
+    for _ in 0..15 {
+        let data = linear.gql(
+            "query($id: String!) { team(id: $id) { cycles(first: 10) { nodes { id } } } }",
+            json!({ "id": team["id"] }),
+        )?;
+        if let Some(id) = data["team"]["cycles"]["nodes"][0]["id"].as_str() {
+            return Ok(id.to_string());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(2));
+    }
+    Err(format!(
+        "team {} has cycles on but no cycle yet; try again in a minute",
+        team["key"]
+    ))
+}
+
 /// The id of each of the team's states, by name.
 fn states(linear: &Linear, team_id: &str) -> Result<HashMap<String, String>, String> {
     let data = linear.gql(
@@ -268,6 +316,7 @@ pub fn seed_a(linear: &Linear, account: &Account) -> Result<Seeded, String> {
     check_workspace(linear, account)?;
     reset(linear)?;
     let (team, other_team) = team(linear, account)?;
+    let other_team = Some(second_team(linear, other_team)?);
     let team_id = team["id"].as_str().unwrap_or_default().to_string();
     let viewer = linear.gql("query { viewer { id name } }", json!({}))?["viewer"].clone();
     let viewer_id = viewer["id"].as_str().unwrap_or_default().to_string();
@@ -288,13 +337,7 @@ pub fn seed_a(linear: &Linear, account: &Account) -> Result<Seeded, String> {
         "project",
         json!({ "name": PROJECT, "teamIds": [team_id], "description": "Hourly forecasts, rebuilt on the new API" }),
     )?;
-    let cycle = team["cycles"]["nodes"][0]["id"]
-        .as_str()
-        .map(String::from)
-        .ok_or(
-            "the team has no cycle: turn cycles on for it in Linear (Team settings › Cycles)"
-                .to_string(),
-        )?;
+    let cycle = cycle(linear, &team)?;
 
     let mut issues = HashMap::new();
     let mut create = |title: &str, input: Value| -> Result<String, String> {

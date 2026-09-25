@@ -184,7 +184,7 @@ fn switching_team_shows_that_teams_issues() {
     let other = seeded
         .other_team
         .as_deref()
-        .expect("workspace A needs a second team (see docs/development.md)");
+        .expect("the seed gives workspace A a second team");
     let picker = tui.press("t");
     assert!(
         picker

@@ -164,11 +164,12 @@ one named for it.
 
 1. Create two Linear workspaces for the tests alone (the free plan will do),
    A and B.
-2. In **A**, keep Linear's default workflow states (Triage, Backlog, Todo,
-   In Progress, In Review, Done, Canceled), make a **second team** (the
-   scenarios switch to it), and turn **cycles** on for the first team (Team
-   settings › Cycles), so it has a cycle to put issues in. B needs nothing
-   beyond its first team.
+2. Leave them as Linear makes them: the scenarios expect its default
+   workflow states (Triage, Backlog, Todo, In Progress, In Review, Done,
+   Canceled). The seed does the rest in A: it makes a second team
+   (`E2E Second`, for the scenarios that switch team) when there is only
+   one, and turns cycles on for the team it tests in. So the key must be
+   an admin's — the workspace's creator's is.
 3. In each, create a personal API key (Settings › Security & access ›
    Personal API keys).
 4. Add these repository secrets (Settings › Secrets and variables ›
