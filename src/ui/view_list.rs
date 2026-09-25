@@ -12,8 +12,8 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::widgets::{truncate, user_name};
-use crate::api::types::hex_color;
 use crate::app::{App, Chip, Nav, TeamSection, ViewKind};
+use crate::look::hex_color;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let th = app.theme;

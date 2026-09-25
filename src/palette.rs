@@ -13,8 +13,8 @@ use std::time::Instant;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::api::types::{Cycle, Issue, Project};
 use crate::app::{App, Nav, Popup, SidebarAction, TeamSection};
+use crate::entity::{Cycle, Issue, Project};
 use crate::fuzzy;
 use crate::keys::{self, Binding};
 
@@ -83,7 +83,7 @@ fn command_entry(binding: &'static Binding, positions: Vec<usize>) -> Option<Ent
 fn commands(app: &App, query: &str) -> Vec<Entry<'static>> {
     // The palette does not change the input mode, screen, or sidebar focus,
     // so this is the context it was opened from.
-    let mut commands = keys::commands(keys::context(app));
+    let mut commands = keys::commands(keys::context(app), app.herdr);
 
     if query.is_empty() {
         let recent = &app.view.palette.recent;

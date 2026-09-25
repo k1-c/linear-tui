@@ -19,7 +19,7 @@ pub fn draw(f: &mut Frame, app: &App) {
     f.render_widget(Clear, area);
 
     let about = match &app.view.note_about {
-        Some((identifier, title)) => format!(" Note on {identifier} {title} "),
+        Some(subject) => format!(" Note on {} {} ", subject.identifier, subject.title),
         None => " Note on this view ".to_string(),
     };
     let block = Block::default()

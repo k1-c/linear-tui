@@ -9,9 +9,10 @@ use ratatui::{
 };
 
 use super::widgets::{fit, progress_bar, row, short_date, truncate, user_name};
-use crate::api::types::{Project, hex_color};
 use crate::app::App;
 use crate::config::Theme;
+use crate::entity::Project;
+use crate::look::hex_color;
 
 /// A project state's colour, from the theme so it reads on light
 /// backgrounds too. `state` is Linear's string, and workspaces can add their

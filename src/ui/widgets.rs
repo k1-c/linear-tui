@@ -8,13 +8,14 @@ use ratatui::{
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
-use crate::api::types::{Label, Priority, StateType, User, WorkflowState, hex_color};
 use crate::config::Theme;
+use crate::entity::{Label, Priority, StateType, User, WorkflowState};
+use crate::look::{PriorityLook, StateLook, hex_color};
 
 /// The mark for a herdr agent's state, in the colour it deserves: amber when
 /// it waits for you, the accent while it works.
-pub fn agent_glyph(status: crate::herdr::AgentStatus, theme: &Theme) -> Span<'static> {
-    use crate::herdr::AgentStatus;
+pub fn agent_glyph(status: crate::entity::AgentStatus, theme: &Theme) -> Span<'static> {
+    use crate::entity::AgentStatus;
     let (glyph, color) = match status {
         AgentStatus::Blocked => ("\u{25b2}", theme.warning),
         AgentStatus::Working => ("\u{25cf}", theme.accent),

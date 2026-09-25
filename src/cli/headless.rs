@@ -9,7 +9,8 @@ use crate::auth;
 use crate::auth::token::TokenStore;
 use crate::config::Config;
 use crate::dispatch;
-use crate::message::{Message, Request};
+use crate::message::Message;
+use crate::usecase::Request;
 
 /// A client signed in the way `linear-tui auth` set up. Never prompts: a
 /// subcommand is often run by an agent with nobody at the keyboard.
@@ -43,9 +44,11 @@ impl Session {
     }
 
     /// Run one request; a failure becomes an error that says what failed.
-    pub async fn run(&self, request: Request) -> Result<Message> {
-        match dispatch::execute_request(&self.client, request, self.per_page).await {
-            Message::Failed { request, error } => bail!("{}: {error}", request.failure()),
+    pub async fn run(&self, request: impl Into<Request>) -> Result<Message> {
+        match dispatch::execute_request(&self.client, request.into(), self.per_page).await {
+            Message::Failed { request, error } => {
+                bail!("{}: {error}", crate::message::failure(&request))
+            }
             message => Ok(message),
         }
     }

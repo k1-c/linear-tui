@@ -4,12 +4,14 @@ mod auth;
 mod cli;
 mod config;
 mod dispatch;
+mod entity;
 mod event;
 mod fuzzy;
 mod grouping;
 mod herdr;
 mod keys;
 mod logging;
+mod look;
 mod message;
 mod palette;
 mod private_file;
@@ -43,6 +45,7 @@ use api::client::LinearClient;
 use app::App;
 use auth::token::TokenStore;
 use config::Config;
+use entity::InstanceId;
 use message::Message;
 
 /// Spinner advance interval.
@@ -92,7 +95,14 @@ async fn main() -> Result<()> {
         }
         // Asked for an issue, the remembered view is not reopened.
         None if open.is_some() => None,
-        None => shelf.as_ref().and_then(|s| s.for_restore(origin.pid)),
+        None => shelf.as_ref().and_then(|s| {
+            let me = InstanceId {
+                workspace: origin.workspace.clone(),
+                pid: origin.pid,
+            };
+            let instances = s.instances();
+            usecase::instance::to_reopen(&instances, &me).map(|i| i.view.clone())
+        }),
     };
     let recorder = shelf.map(|shelf| {
         shelf.prune();
@@ -116,7 +126,7 @@ async fn main() -> Result<()> {
 /// Where this instance runs, what it reopens, and where it records its view.
 struct Session {
     origin: snapshot::Origin,
-    restored: Option<snapshot::ViewSnapshot>,
+    restored: Option<entity::snapshot::ViewSnapshot>,
     /// The issue `linear-tui open` asked for.
     open: Option<String>,
     recorder: Option<snapshot::Recorder>,

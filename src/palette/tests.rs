@@ -1,10 +1,10 @@
 use crossterm::event::{KeyEventKind, KeyEventState};
 
 use super::*;
-use crate::api::types::{Issue, Priority};
 use crate::app::{IssueSource, Popup, Screen};
 use crate::config::Config;
-use crate::message::Request;
+use crate::entity::{Issue, Priority};
+use crate::usecase::Request;
 
 fn key(app: &mut App, code: KeyCode, modifiers: KeyModifiers) {
     keys::handle_key(
@@ -148,10 +148,12 @@ fn enter_runs_the_command_as_its_key_would() {
     assert_eq!(app.view.popup, Popup::None);
     assert!(matches!(
         app.outbox.requests.back(),
-        Some(Request::UpdatePriority {
-            priority: Priority::Urgent,
-            ..
-        })
+        Some(Request::Issue(
+            crate::usecase::issue::Request::SetPriority {
+                priority: Priority::Urgent,
+                ..
+            }
+        ))
     ));
     assert_eq!(app.focused_issue().unwrap().priority, Priority::Urgent);
 }
@@ -230,7 +232,7 @@ fn a_click_on_a_row_runs_it_and_a_click_outside_closes() {
 
 // ------------------------------------------------------ pages (pickers)
 
-use crate::api::types::{User, WorkflowState};
+use crate::entity::{User, WorkflowState};
 use crate::grouping::GroupBy;
 use crate::message::Message;
 
@@ -273,7 +275,7 @@ fn a_picker_narrows_as_you_type_and_enter_takes_the_top_match() {
     press(&mut app, KeyCode::Enter);
     assert!(matches!(
         app.outbox.requests.back(),
-        Some(Request::UpdateStatus { state_id, .. }) if state_id.as_str() == "s-prog"
+        Some(Request::Issue(crate::usecase::issue::Request::SetStatus { state_id, .. })) if state_id.as_str() == "s-prog"
     ));
 }
 
@@ -416,7 +418,9 @@ fn searches(app: &App) -> Vec<(String, u64)> {
         .requests
         .iter()
         .filter_map(|r| match r {
-            Request::PaletteSearch { term, seq } => Some((term.clone(), *seq)),
+            Request::Issue(crate::usecase::issue::Request::QuickSearch { term, seq }) => {
+                Some((term.clone(), *seq))
+            }
             _ => None,
         })
         .collect()

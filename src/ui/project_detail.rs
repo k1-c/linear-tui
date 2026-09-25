@@ -11,8 +11,8 @@ use ratatui::{
 use super::issue_list::{draw_list, draw_toolbar};
 use super::project_list::{health, project_state_color};
 use super::widgets::{person, progress_bar, short_date, truncate};
-use crate::api::types::hex_color;
 use crate::app::App;
+use crate::look::hex_color;
 
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
     let Some(project) = app.nav.current_project.clone() else {

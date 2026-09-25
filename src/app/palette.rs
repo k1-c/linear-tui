@@ -65,10 +65,7 @@ impl App {
                 palette.search_due = None;
                 palette.seq += 1;
                 palette.searching = true;
-                let request = Request::PaletteSearch {
-                    term: palette.query.value.trim().to_string(),
-                    seq: palette.seq,
-                };
+                let request = usecase::issue::quick_search(&palette.query.value, palette.seq);
                 self.request(request);
                 true
             }

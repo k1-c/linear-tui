@@ -9,7 +9,8 @@ use serde_json::json;
 
 use super::args::Args;
 use super::issue::is_identifier;
-use crate::snapshot::{self as snap, Destination, Shelf, ViewSnapshot};
+use crate::entity::snapshot::{self as snap, Destination, ViewSnapshot};
+use crate::snapshot::Shelf;
 
 pub fn run(args: &[String]) -> Result<()> {
     let args = Args::parse(args, &["json"], &["workspace"])?;
@@ -18,8 +19,10 @@ pub fn run(args: &[String]) -> Result<()> {
         Some(path) => PathBuf::from(path),
         None => std::env::current_dir()?,
     };
-    let workspace = snap::workspace_of(&cwd);
-    let found = Shelf::new(&snap::state_dir()?, &workspace).for_context();
+    let workspace = crate::snapshot::workspace_of(&cwd);
+    let instances = Shelf::new(&crate::snapshot::state_dir()?, &workspace).instances();
+    let found = crate::usecase::instance::to_report(&instances)
+        .map(|(instance, open)| (instance.view.clone(), open));
     let worktree_issue = worktree_issue(&cwd);
     if found.is_none() && worktree_issue.is_none() {
         bail!(
@@ -27,7 +30,7 @@ pub fn run(args: &[String]) -> Result<()> {
             workspace.display()
         );
     }
-    let now = snap::unix_now();
+    let now = crate::snapshot::unix_now();
     let out = if args.flag("json") {
         let value = json!({
             "workspace": workspace,
@@ -163,7 +166,7 @@ pub fn render(
     if let Some(term) = &s.search {
         out.push_str(&format!("- Search results for: {term}\n"));
     }
-    let ago = snap::ago(&s.updated_at, now).unwrap_or_else(|| s.updated_at.clone());
+    let ago = crate::snapshot::ago(&s.updated_at, now).unwrap_or_else(|| s.updated_at.clone());
     let state = if *running {
         format!("open (pid {})", s.pid)
     } else {
@@ -273,7 +276,7 @@ mod tests {
     fn the_markdown_says_what_is_open_and_marks_the_cursor() {
         let snapshot = fixture();
         // Two minutes after the snapshot was written.
-        let now = snap::parse_timestamp(&snapshot.updated_at).unwrap() + 120;
+        let now = crate::snapshot::parse_timestamp(&snapshot.updated_at).unwrap() + 120;
         let text = render(Some(&(snapshot, true)), Some("ENG-42"), now);
         assert!(text.contains("This worktree is for **ENG-42**"), "{text}");
         assert!(
@@ -300,7 +303,7 @@ mod tests {
     #[test]
     fn a_closed_instance_is_flagged_as_stale() {
         let snapshot = fixture();
-        let now = snap::parse_timestamp(&snapshot.updated_at).unwrap() + 7200;
+        let now = crate::snapshot::parse_timestamp(&snapshot.updated_at).unwrap() + 7200;
         let text = render(Some(&(snapshot, false)), None, now);
         assert!(text.contains("may be stale"), "{text}");
         assert!(text.contains("2 hours ago"), "{text}");

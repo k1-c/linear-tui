@@ -8,6 +8,7 @@ use ratatui::{
 
 use crate::app::{App, FormField};
 use crate::config::Theme;
+use crate::look::PriorityLook;
 
 /// Draw the modal issue-creation form.
 pub fn draw(f: &mut Frame, app: &App) {

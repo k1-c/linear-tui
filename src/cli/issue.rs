@@ -5,9 +5,9 @@ use serde_json::{Value, json};
 
 use super::args::{Args, text_or_stdin};
 use super::headless::{self, Session};
-use crate::api::ids::IssueId;
-use crate::api::types::{Comment, Issue, Priority, Team, User, WorkflowState};
-use crate::message::{Message, Request};
+use crate::entity::IssueId;
+use crate::entity::{Comment, Issue, Priority, Team, User, WorkflowState};
+use crate::message::Message;
 use crate::usecase;
 
 pub async fn run(args: &[String]) -> Result<()> {
@@ -57,7 +57,7 @@ async fn create(session: &Session, args: &[String]) -> Result<String> {
         Some(level) => parse_priority(level)?,
         None => Priority::None,
     };
-    let Message::Teams(teams) = session.run(Request::Teams).await? else {
+    let Message::Teams(teams) = session.run(usecase::team::load()).await? else {
         bail!("unexpected answer to a teams request");
     };
     let team = find_team(&teams, team)?;
@@ -92,12 +92,10 @@ async fn comment(session: &Session, args: &[String]) -> Result<String> {
     }
     // Resolved first, so a mistyped ID says so rather than failing the post.
     let issue = fetch(session, key).await?;
-    session
-        .run(Request::CreateComment {
-            issue_id: issue.id.clone(),
-            body,
-        })
-        .await?;
+    let mut store = crate::store::Store::default();
+    if let Some(request) = usecase::issue::comment(&mut store, &issue.id, body) {
+        session.run(request).await?;
+    }
     Ok(output(
         &args,
         format!("Commented on {}", issue.identifier),
@@ -115,7 +113,9 @@ async fn status(session: &Session, args: &[String]) -> Result<String> {
         .as_ref()
         .map(|t| t.id.clone())
         .with_context(|| format!("Linear did not say which team {} is in", issue.identifier))?;
-    let Message::TeamContext { states, .. } = session.run(Request::TeamContext { team_id }).await?
+    let Message::TeamContext { states, .. } = session
+        .run(usecase::team::Request::Context { team_id })
+        .await?
     else {
         bail!("unexpected answer to a team request");
     };
@@ -138,7 +138,10 @@ async fn status(session: &Session, args: &[String]) -> Result<String> {
 /// An issue by identifier or URL, with its comments.
 async fn fetch(session: &Session, key: &str) -> Result<Issue> {
     let issue_id = IssueId::new(issue_key(key)?);
-    match session.run(Request::IssueDetail { issue_id }).await {
+    match session
+        .run(usecase::issue::Request::Detail { issue_id })
+        .await
+    {
         Ok(Message::IssueDetail(issue)) => Ok(*issue),
         Ok(_) => bail!("unexpected answer to an issue request"),
         Err(e) => Err(e.context(format!("Could not load {key}"))),

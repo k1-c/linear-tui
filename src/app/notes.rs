@@ -1,35 +1,19 @@
-//! Notes for an agent: remarks on the issue under the cursor or on the whole
-//! view, collected while reading and sent together as one prompt.
-//!
-//! Inside herdr the prompt goes to the agent next to linear-tui through the
-//! plugin; anywhere else it is copied to the clipboard, to paste into
-//! whichever agent you use.
+//! Notes for an agent, as the user writes them: which issue a note is
+//! about, and where the prompt goes. The rules are `usecase::notes`.
 
 use super::*;
-use crate::herdr::Handoff;
-
-/// One note, and what it is about.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Note {
-    /// The issue it is about — `(identifier, title)` — or `None` for the
-    /// view as a whole.
-    pub about: Option<(String, String)>,
-    pub body: String,
-}
-
-/// Every prompt ends with this, so an agent that has never heard of
-/// linear-tui can still look closer.
-pub const HINT: &str = "`linear-tui context` shows this view with the row under my cursor; \
-`linear-tui issue show|comment|status <ID>` and `linear-tui issue create --team <key> --title <text>` \
-act on Linear.";
+use crate::entity::Handoff;
+use crate::entity::Subject;
+use crate::usecase::notes::{self, Delivery};
 
 impl App {
     /// `n`: a note on the issue under the cursor — or on the view, where
     /// there is none.
     pub fn start_note_on_issue(&mut self) {
-        let about = self
-            .focused_issue()
-            .map(|i| (i.identifier.clone(), i.title.clone()));
+        let about = self.focused_issue().map(|i| Subject {
+            identifier: i.identifier.clone(),
+            title: i.title.clone(),
+        });
         self.start_note(about);
     }
 
@@ -38,28 +22,23 @@ impl App {
         self.start_note(None);
     }
 
-    fn start_note(&mut self, about: Option<(String, String)>) {
+    fn start_note(&mut self, about: Option<Subject>) {
         self.view.note_about = about;
         self.view.note.clear();
         self.view.input_mode = InputMode::Note;
     }
 
     pub fn submit_note(&mut self) {
-        let body = std::mem::take(&mut self.view.note.value).trim().to_string();
+        let body = std::mem::take(&mut self.view.note.value);
         self.view.input_mode = InputMode::Normal;
         self.view.note.clear();
-        if body.is_empty() {
-            return;
+        let about = self.view.note_about.take();
+        if let Some(count) = notes::add(&mut self.notes, about, &body) {
+            let plural = if count == 1 { "" } else { "s" };
+            self.set_status(format!(
+                "{count} note{plural} — Ctrl+S sends them to your agent"
+            ));
         }
-        self.view.notes.push(Note {
-            about: self.view.note_about.take(),
-            body,
-        });
-        let count = self.view.notes.len();
-        let plural = if count == 1 { "" } else { "s" };
-        self.set_status(format!(
-            "{count} note{plural} — Ctrl+S sends them to your agent"
-        ));
     }
 
     pub fn cancel_note(&mut self) {
@@ -68,29 +47,25 @@ impl App {
         self.view.note_about = None;
     }
 
-    /// Send the notes as one prompt: to herdr's agent inside herdr, to the
-    /// clipboard anywhere else.
+    /// `Ctrl+S`: send the notes as one prompt.
     pub fn send_notes(&mut self) {
-        if self.view.notes.is_empty() {
-            self.set_status("No notes yet — n notes the issue under the cursor, N the whole view");
-            return;
-        }
-        let handoff = self.notes_prompt();
-        self.view.notes.clear();
-        if self.herdr {
-            self.request(Request::Herdr(handoff));
-        } else {
-            if let Handoff::Prompt { text, .. } = handoff {
+        let view = self.view_label();
+        match notes::send(&mut self.notes, view, self.herdr) {
+            Ok(Delivery::Herdr(request)) => self.request(request),
+            Ok(Delivery::Clipboard(text)) => {
                 self.outbox.clipboard = Some(text);
+                self.set_status("Notes copied — paste them into your agent");
             }
-            self.set_status("Notes copied — paste them into your agent");
+            // Say how to write one, in the keys of this terminal.
+            Err(refusal) => self.set_status(format!(
+                "{refusal} — n notes the issue under the cursor, N the whole view"
+            )),
         }
     }
 
     pub fn discard_notes(&mut self) {
-        let count = self.view.notes.len();
-        self.view.notes.clear();
-        self.set_status(match count {
+        let discarded = notes::discard(&mut self.notes);
+        self.set_status(match discarded {
             0 => "No notes to discard".to_string(),
             1 => "Discarded 1 note".to_string(),
             n => format!("Discarded {n} notes"),
@@ -99,43 +74,14 @@ impl App {
 
     /// A hand-off to herdr failed. A prompt is kept by copying it.
     pub(super) fn handoff_failed(&mut self, handoff: &Handoff, error: &str) {
-        let Handoff::Prompt { text, .. } = handoff else {
+        let Some(text) = notes::salvage(handoff) else {
             self.set_error(format!("Could not reach herdr: {error}"));
             return;
         };
-        self.outbox.clipboard = Some(text.clone());
+        self.outbox.clipboard = Some(text);
         self.set_error(format!(
             "Could not hand the notes to herdr: {error}\n\nThey are on the clipboard instead."
         ));
-    }
-
-    /// The notes as a prompt, whole and in parts.
-    pub fn notes_prompt(&self) -> Handoff {
-        let notes: Vec<String> = self
-            .view
-            .notes
-            .iter()
-            .map(|note| {
-                let about = match &note.about {
-                    Some((identifier, title)) => format!("**{identifier}** {title}"),
-                    None => "**This view**".to_string(),
-                };
-                // A multi-line note stays inside its list item.
-                let body = note.body.replace('\n', "\n  ");
-                format!("- {about}: {body}")
-            })
-            .collect();
-        let notes = notes.join("\n");
-        let view = self.view_label();
-        let text = format!(
-            "My notes on what I am looking at in linear-tui ({view}):\n\n{notes}\n\n({HINT})"
-        );
-        Handoff::Prompt {
-            text,
-            notes,
-            view,
-            hint: HINT.to_string(),
-        }
     }
 
     /// Where the user is, in words: `Engineering › Issues › ENG-42`.
@@ -216,65 +162,31 @@ mod tests {
     }
 
     #[test]
-    fn notes_name_their_issue_or_the_view_and_end_with_the_hint() {
+    fn n_notes_the_issue_under_the_cursor_and_ctrl_s_copies_the_prompt() {
         let mut app = app();
+        app.herdr = false;
         app.start_note_on_issue();
-        type_note(&mut app, "reproduce first\nthen fix");
-        app.start_note_on_view();
-        type_note(&mut app, "the top three are one bug");
-        let Handoff::Prompt {
-            text, notes, view, ..
-        } = app.notes_prompt()
-        else {
-            panic!("notes make a prompt");
-        };
-        assert_eq!(view, "Engineering › Issues");
-        assert_eq!(
-            notes,
-            "- **ENG-42** Checkout fails: reproduce first\n  then fix\n\
-             - **This view**: the top three are one bug"
-        );
-        assert!(
-            text.starts_with(
-                "My notes on what I am looking at in linear-tui (Engineering › Issues):"
-            )
-        );
-        assert!(text.ends_with(&format!("({HINT})")));
+        type_note(&mut app, "look");
+        assert_eq!(app.notes.len(), 1);
+        app.send_notes();
+        let text = app.outbox.clipboard.as_deref().unwrap();
+        assert!(text.contains("**ENG-42** Checkout fails: look"), "{text}");
+        assert!(text.contains("(Engineering › Issues)"), "{text}");
+        assert!(app.notes.is_empty());
     }
 
     #[test]
-    fn an_empty_note_is_dropped_and_escape_keeps_nothing() {
+    fn escape_keeps_nothing() {
         let mut app = app();
-        app.start_note_on_view();
-        type_note(&mut app, "   ");
         app.start_note_on_view();
         app.view.note.insert('x');
         app.cancel_note();
-        assert!(app.view.notes.is_empty());
+        assert!(app.notes.is_empty());
         assert_eq!(app.view.input_mode, InputMode::Normal);
     }
 
     #[test]
-    fn outside_herdr_the_notes_go_to_the_clipboard() {
-        let mut app = app();
-        app.herdr = false;
-        app.send_notes();
-        assert!(app.outbox.clipboard.is_none(), "nothing to send yet");
-        app.start_note_on_issue();
-        type_note(&mut app, "look");
-        app.send_notes();
-        assert!(
-            app.outbox
-                .clipboard
-                .as_deref()
-                .is_some_and(|t| t.contains("ENG-42"))
-        );
-        assert!(app.view.notes.is_empty());
-        assert!(app.outbox.requests.is_empty());
-    }
-
-    #[test]
-    fn inside_herdr_the_notes_are_handed_to_the_plugin() {
+    fn inside_herdr_ctrl_s_hands_the_notes_to_the_plugin() {
         let mut app = app();
         app.herdr = true;
         app.start_note_on_view();
@@ -282,7 +194,9 @@ mod tests {
         app.send_notes();
         assert!(matches!(
             app.outbox.requests.front(),
-            Some(Request::Herdr(Handoff::Prompt { .. }))
+            Some(Request::Notes(crate::usecase::notes::Request::Deliver(
+                Handoff::Prompt { .. }
+            )))
         ));
         assert!(app.outbox.clipboard.is_none());
     }

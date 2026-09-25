@@ -10,9 +10,10 @@ use std::collections::{HashMap, HashSet};
 
 use ratatui::style::Color;
 
-use crate::api::ids::IssueId;
-use crate::api::types::{Issue, Priority, StateType, hex_color};
 use crate::config::{GroupByName, Theme};
+use crate::entity::IssueId;
+use crate::entity::{Issue, Priority, StateType};
+use crate::look::{PriorityLook, StateLook, hex_color};
 
 /// Which axis a list stacks its sections along.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -65,64 +66,7 @@ impl GroupBy {
         }
     }
 }
-
-/// Linear's three standing slices of a team's issues.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Preset {
-    #[default]
-    Active,
-    Backlog,
-    All,
-}
-
-impl Preset {
-    pub fn all() -> &'static [Preset] {
-        &[Preset::Active, Preset::Backlog, Preset::All]
-    }
-
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Active => "Active",
-            Self::Backlog => "Backlog",
-            Self::All => "All issues",
-        }
-    }
-
-    /// The `state` clause of an `IssueFilter` that selects this slice on the
-    /// server, or `None` for no restriction.
-    ///
-    /// Active is written as "none of the inactive categories" rather than "one
-    /// of started/unstarted", so an issue in a category Linear adds later still
-    /// comes back — the same fallback [`Self::admits`] makes on the client.
-    pub fn state_filter(&self) -> Option<serde_json::Value> {
-        match self {
-            Self::All => None,
-            Self::Active => Some(serde_json::json!({
-                "type": { "nin": ["backlog", "triage", "completed", "canceled", "duplicate"] }
-            })),
-            Self::Backlog => Some(serde_json::json!({
-                "type": { "in": ["backlog", "triage"] }
-            })),
-        }
-    }
-
-    /// Whether an issue belongs in this slice.
-    ///
-    /// An issue whose state category this client does not recognise counts as
-    /// active: a new Linear category should surface somewhere obvious rather
-    /// than vanish from the default view.
-    pub fn admits(&self, issue: &Issue) -> bool {
-        let state_type = issue.state.as_ref().and_then(|s| s.state_type);
-        match self {
-            Self::All => true,
-            Self::Active => match state_type {
-                Some(t) => t.is_active() || t == StateType::Unknown,
-                None => true,
-            },
-            Self::Backlog => state_type.is_some_and(|t| t.is_backlog()),
-        }
-    }
-}
+pub use crate::entity::Preset;
 
 /// One labelled stack of issues.
 pub struct Section<'a> {
@@ -140,7 +84,7 @@ pub struct Section<'a> {
 /// Sort key that puts a section where Linear would put it.
 struct Rank(u8, i64, String);
 
-fn assignee_name(user: &crate::api::types::User) -> String {
+fn assignee_name(user: &crate::entity::User) -> String {
     user.display_name
         .clone()
         .unwrap_or_else(|| user.name.clone())
@@ -463,44 +407,6 @@ mod tests {
             .map(|(i, depth)| (i.id.as_str(), *depth))
             .collect();
         assert_eq!(order, [("p", 0), ("c", 1), ("o", 0)]);
-    }
-
-    // ------------------------------------------------------------- presets
-
-    #[test]
-    fn active_admits_started_and_unstarted_only() {
-        assert!(Preset::Active.admits(&with_state("1", "s", "Doing", "started", 1.0)));
-        assert!(Preset::Active.admits(&with_state("2", "s", "Todo", "unstarted", 1.0)));
-        assert!(!Preset::Active.admits(&with_state("3", "s", "Done", "completed", 1.0)));
-        assert!(!Preset::Active.admits(&with_state("4", "s", "Later", "backlog", 1.0)));
-    }
-
-    #[test]
-    fn backlog_admits_backlog_and_triage() {
-        assert!(Preset::Backlog.admits(&with_state("1", "s", "Backlog", "backlog", 1.0)));
-        assert!(Preset::Backlog.admits(&with_state("2", "s", "Triage", "triage", 1.0)));
-        assert!(!Preset::Backlog.admits(&with_state("3", "s", "Doing", "started", 1.0)));
-    }
-
-    /// A category added to Linear after this client shipped must not make
-    /// issues disappear from the default view.
-    #[test]
-    fn an_unknown_category_stays_visible_under_active() {
-        let odd = with_state("1", "s", "Something", "inventedIn2027", 1.0);
-        assert!(Preset::Active.admits(&odd));
-        assert!(Preset::All.admits(&odd));
-    }
-
-    #[test]
-    fn only_all_is_unfiltered_on_the_server() {
-        assert!(Preset::All.state_filter().is_none());
-        assert!(Preset::Active.state_filter().is_some());
-        assert!(Preset::Backlog.state_filter().is_some());
-    }
-
-    #[test]
-    fn an_issue_without_a_state_stays_visible_under_active() {
-        assert!(Preset::Active.admits(&issue(&base("1", "X-1"))));
     }
 
     fn assigned(id: &str, user_id: &str, name: &str) -> Issue {

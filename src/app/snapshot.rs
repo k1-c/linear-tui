@@ -3,14 +3,14 @@
 //! reorders.
 
 use super::*;
-use crate::snapshot::{self as snap, ViewSnapshot};
+use crate::entity::snapshot::{self as snap, ViewSnapshot};
 
 impl App {
     /// The view as a snapshot, or `None` while there is no view worth
     /// recording yet: before the teams arrive, or while a restore is still
     /// finding its way back — writing then would replace the snapshot being
     /// restored with the half-built page in front of it.
-    pub fn snapshot(&self, origin: &snap::Origin) -> Option<ViewSnapshot> {
+    pub fn snapshot(&self, origin: &crate::snapshot::Origin) -> Option<ViewSnapshot> {
         if self.store.teams.is_empty() || self.restore.as_ref().is_some_and(|r| r.dest.is_some()) {
             return None;
         }
@@ -26,7 +26,7 @@ impl App {
             workspace: origin.workspace.clone(),
             cwd: origin.cwd.clone(),
             pid: origin.pid,
-            updated_at: snap::timestamp_now(),
+            updated_at: crate::snapshot::timestamp_now(),
             closed_at: None,
             herdr_pane: origin.herdr_pane.clone(),
             team: self.current_team().map(team_ref),

@@ -19,7 +19,9 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use directories::ProjectDirs;
 
-use super::{VERSION, ViewSnapshot, timestamp_now};
+use super::timestamp_now;
+use crate::entity::snapshot::{VERSION, ViewSnapshot};
+use crate::entity::{Instance, InstanceId};
 
 /// Overrides the state directory, for tests and for tools that want to read
 /// the snapshots without knowing the platform's conventions.
@@ -153,35 +155,21 @@ impl Shelf {
         snapshots
     }
 
-    /// What a launch reopens: the snapshot closed most recently, or — when
-    /// none was closed cleanly — the one that moved last. `own_pid`'s file is
-    /// a stale one from a process that happened to have this PID before.
-    pub fn for_restore(&self, own_pid: u32) -> Option<ViewSnapshot> {
-        let candidates: Vec<ViewSnapshot> = self
-            .read_all()
+    /// Every instance with a readable record here, as its record and the
+    /// system describe it. Which to reopen or report is
+    /// `usecase::instance`'s to decide.
+    pub fn instances(&self) -> Vec<Instance> {
+        self.read_all()
             .into_iter()
-            .map(|(_, s)| s)
-            .filter(|s| s.pid != own_pid || s.closed_at.is_some())
-            .collect();
-        let closed = candidates
-            .iter()
-            .filter(|s| s.closed_at.is_some())
-            .max_by(|a, b| a.closed_at.cmp(&b.closed_at));
-        closed.or(candidates.first()).cloned()
-    }
-
-    /// What `context` reports: the running instance that moved last, or the
-    /// newest snapshot of all when none is running. The flag says whether
-    /// its instance is still running.
-    pub fn for_context(&self) -> Option<(ViewSnapshot, bool)> {
-        let all = self.read_all();
-        let live = all
-            .iter()
-            .find(|(_, s)| s.closed_at.is_none() && is_running(s.pid));
-        match live {
-            Some((_, s)) => Some((s.clone(), true)),
-            None => all.into_iter().next().map(|(_, s)| (s, false)),
-        }
+            .map(|(_, view)| Instance {
+                id: InstanceId {
+                    workspace: view.workspace.clone(),
+                    pid: view.pid,
+                },
+                running: is_running(view.pid),
+                view,
+            })
+            .collect()
     }
 
     /// Delete all but the newest few snapshots of instances that are gone.

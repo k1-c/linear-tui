@@ -9,9 +9,9 @@ use ratatui::{
 };
 
 use super::widgets::{progress_bar, row, short_date, truncate};
-use crate::api::types::Cycle;
 use crate::app::App;
 use crate::config::Theme;
+use crate::entity::Cycle;
 
 pub fn cycle_name(cycle: &Cycle) -> String {
     cycle.label()

@@ -19,11 +19,13 @@ use super::widgets::{
     agent_glyph, avatar, estimate, fit, label_chip, message_row, priority_glyph, short_date,
     state_glyph, truncate, user_name,
 };
-use crate::api::types::{Issue, hex_color};
+use crate::app::FilterSummary;
 use crate::app::{App, Chip, IssueSource, ListRow, ListView};
 use crate::config::Theme;
+use crate::entity::AgentStatus;
+use crate::entity::Issue;
 use crate::grouping::{GroupBy, Preset};
-use crate::herdr::AgentStatus;
+use crate::look::hex_color;
 
 /// The issue-list screen: preset chips over the grouped list.
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {

@@ -2,6 +2,7 @@
 //! screen and handed to a use case.
 
 use super::*;
+use crate::usecase::issue::CopyField;
 
 impl App {
     /// Linear's `I` — assign the focused issue to the current user.
@@ -58,7 +59,8 @@ impl App {
         let term = self.list().search.value.clone();
         let team_id = self.team_id();
         self.set_status(format!("Searching Linear for \"{term}\"…"));
-        self.request(Request::Search { term, team_id });
+        let request = usecase::issue::search(&term, team_id);
+        self.send(request);
         self.view.input_mode = InputMode::Normal;
     }
 
@@ -93,48 +95,51 @@ impl App {
 
     /// Open the focused issue (or the selected project) on linear.app.
     pub fn open_in_browser(&mut self) {
-        let url = match self.nav.screen {
-            Screen::ProjectList => self
-                .project_rows()
-                .get(self.project_cursor())
-                .and_then(|p| p.url.clone()),
-            Screen::ProjectDetail if self.focused_issue().is_none() => self
-                .nav
-                .current_project
-                .as_ref()
-                .and_then(|p| p.url.clone()),
-            _ => self.focused_issue().and_then(|i| i.url.clone()),
-        };
-        match url {
-            Some(url) => self.request(Request::OpenUrl(url)),
-            None => self.set_status("Nothing to open here"),
+        match self.nav.screen {
+            Screen::ProjectList => {
+                let url = self
+                    .project_rows()
+                    .get(self.project_cursor())
+                    .and_then(|p| p.url.clone());
+                self.run(usecase::project::open_url(url));
+            }
+            Screen::ProjectDetail if self.focused_issue().is_none() => {
+                let url = self
+                    .nav
+                    .current_project
+                    .as_ref()
+                    .and_then(|p| p.url.clone());
+                self.run(usecase::project::open_url(url));
+            }
+            _ => {
+                let url = self.focused_issue().and_then(|i| i.url.clone());
+                self.run(usecase::issue::open_url(url));
+            }
         }
     }
 
-    /// Queue `text` for the clipboard; the main loop emits the OSC 52 sequence.
-    fn copy(&mut self, what: &str, text: Option<String>) {
-        match text {
-            Some(text) => {
-                self.set_status(format!("Copied {what}: {text}"));
+    /// Copy a field of the focused issue. The main loop emits the OSC 52
+    /// sequence for the clipboard.
+    fn copy(&mut self, field: CopyField) {
+        match usecase::issue::copy(self.focused_issue(), field) {
+            Ok(text) => {
+                self.set_status(format!("Copied {}: {text}", field.label()));
                 self.outbox.clipboard = Some(text);
             }
-            None => self.set_status(format!("No {what} to copy")),
+            Err(refusal) => self.set_status(refusal.to_string()),
         }
     }
 
     pub fn copy_identifier(&mut self) {
-        let id = self.focused_issue().map(|i| i.identifier.clone());
-        self.copy("identifier", id);
+        self.copy(CopyField::Identifier);
     }
 
     pub fn copy_url(&mut self) {
-        let url = self.focused_issue().and_then(|i| i.url.clone());
-        self.copy("URL", url);
+        self.copy(CopyField::Url);
     }
 
     pub fn copy_branch_name(&mut self) {
-        let branch = self.focused_issue().and_then(|i| i.branch_name.clone());
-        self.copy("branch name", branch);
+        self.copy(CopyField::BranchName);
     }
 
     /// Open the issue-creation form for the current team.

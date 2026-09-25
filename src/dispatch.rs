@@ -6,7 +6,10 @@
 use anyhow::Result;
 
 use crate::api::client::LinearClient;
-use crate::message::{Message, Page, Request};
+use crate::entity::Handoff;
+use crate::entity::Page;
+use crate::message::Message;
+use crate::usecase::{Request, agent, cycle, favorite, issue, notes, project, team, user, view};
 
 /// Run one request against the API and turn the outcome into a [`Message`].
 ///
@@ -24,25 +27,61 @@ pub async fn execute_request(client: &LinearClient, req: Request, per_page: u32)
 
 async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Result<Message> {
     let append = req.cursor().is_some();
-    Ok(match req {
-        Request::Teams => Message::Teams(client.teams().await?),
-        Request::Viewer => Message::Viewer(client.viewer().await?.id),
-        Request::TeamContext { team_id } => {
+    match req {
+        Request::Issue(req) => issue(client, req, per_page, append).await,
+        Request::Project(req) => project(client, req, append).await,
+        Request::Cycle(cycle::Request::TeamCycles { team_id, after }) => {
+            let (cycles, info) = client.cycles(team_id, after.as_deref()).await?;
+            Ok(Message::Cycles {
+                team_id: team_id.clone(),
+                page: Page::new(cycles, info, append),
+            })
+        }
+        Request::Team(team::Request::Teams) => Ok(Message::Teams(client.teams().await?)),
+        Request::Team(team::Request::Context { team_id }) => {
             // Independent queries — fetch them concurrently.
             let (states, members) = tokio::join!(
                 client.workflow_states(team_id),
                 client.team_members(team_id)
             );
-            Message::TeamContext {
+            Ok(Message::TeamContext {
                 team_id: team_id.clone(),
                 states: states?,
                 members: members?,
-            }
+            })
         }
-        Request::Issues {
+        Request::View(view::Request::Views) => {
+            Ok(Message::CustomViews(client.custom_views().await?))
+        }
+        Request::Favorite(favorite::Request::Favorites) => {
+            Ok(Message::Favorites(client.favorites().await?))
+        }
+        Request::Favorite(favorite::Request::OpenInBrowser(url)) => open_in_browser(url),
+        Request::User(user::Request::Viewer) => Ok(Message::Viewer(client.viewer().await?.id)),
+        Request::Notes(notes::Request::Deliver(handoff)) => {
+            crate::herdr::deliver(handoff).await?;
+            Ok(Message::Mutated(handoff.done()))
+        }
+        Request::Agent(agent::Request::Focus { pane }) => {
+            let handoff = Handoff::Focus { pane: pane.clone() };
+            crate::herdr::deliver(&handoff).await?;
+            Ok(Message::Mutated(handoff.done()))
+        }
+    }
+}
+
+async fn issue(
+    client: &LinearClient,
+    req: &issue::Request,
+    per_page: u32,
+    append: bool,
+) -> Result<Message> {
+    use issue::Request as R;
+    Ok(match req {
+        R::TeamIssues {
             team_id,
-            after,
             preset,
+            after,
         } => {
             let (issues, info) = client
                 .issues(team_id, preset.state_filter(), after.as_deref(), per_page)
@@ -53,13 +92,39 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
                 page: Page::new(issues, info, append),
             }
         }
-        Request::MyIssues { user_id, after } => {
+        R::MyIssues { user_id, after } => {
             let (issues, info) = client
                 .my_issues(user_id, after.as_deref(), per_page)
                 .await?;
             Message::MyIssues(Page::new(issues, info, append))
         }
-        Request::Search { term, team_id } => {
+        R::ViewIssues { view_id, after } => {
+            let (issues, info) = client
+                .custom_view_issues(view_id, after.as_deref(), per_page)
+                .await?;
+            Message::ViewIssues {
+                view_id: view_id.clone(),
+                page: Page::new(issues, info, append),
+            }
+        }
+        R::ProjectIssues { project_id, after } => {
+            let (issues, info) = client.project_issues(project_id, after.as_deref()).await?;
+            Message::ProjectIssues {
+                project_id: project_id.clone(),
+                page: Page::new(issues, info, append),
+            }
+        }
+        R::CycleIssues { cycle_id, after } => {
+            let (issues, info) = client.cycle_issues(cycle_id, after.as_deref()).await?;
+            Message::CycleIssues {
+                cycle_id: cycle_id.clone(),
+                page: Page::new(issues, info, append),
+            }
+        }
+        R::Detail { issue_id } => {
+            Message::IssueDetail(Box::new(client.issue_detail(issue_id).await?))
+        }
+        R::Search { term, team_id } => {
             let (issues, _) = client
                 .search_issues(term, team_id.as_ref(), per_page)
                 .await?;
@@ -69,70 +134,19 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
                 issues,
             }
         }
-        Request::PaletteSearch { term, seq } => {
+        R::QuickSearch { term, seq } => {
             let (issues, _) = client.search_issues(term, None, per_page).await?;
             Message::PaletteResults { seq: *seq, issues }
         }
-        Request::CustomViews => Message::CustomViews(client.custom_views().await?),
-        Request::Favorites => Message::Favorites(client.favorites().await?),
-        Request::ViewIssues { view_id, after } => {
-            let (issues, info) = client
-                .custom_view_issues(view_id, after.as_deref(), per_page)
-                .await?;
-            Message::ViewIssues {
-                view_id: view_id.clone(),
-                page: Page::new(issues, info, append),
-            }
-        }
-        Request::ViewProjects { view_id, after } => {
-            let (projects, info) = client
-                .custom_view_projects(view_id, after.as_deref())
-                .await?;
-            Message::ViewProjects {
-                view_id: view_id.clone(),
-                page: Page::new(projects, info, append),
-            }
-        }
-        Request::Projects { team_id, after } => {
-            let (projects, info) = client.projects(team_id, after.as_deref()).await?;
-            Message::Projects {
-                team_id: team_id.clone(),
-                page: Page::new(projects, info, append),
-            }
-        }
-        Request::Cycles { team_id, after } => {
-            let (cycles, info) = client.cycles(team_id, after.as_deref()).await?;
-            Message::Cycles {
-                team_id: team_id.clone(),
-                page: Page::new(cycles, info, append),
-            }
-        }
-        Request::IssueDetail { issue_id } => {
-            Message::IssueDetail(Box::new(client.issue_detail(issue_id).await?))
-        }
-        Request::ProjectIssues { project_id, after } => {
-            let (issues, info) = client.project_issues(project_id, after.as_deref()).await?;
-            Message::ProjectIssues {
-                project_id: project_id.clone(),
-                page: Page::new(issues, info, append),
-            }
-        }
-        Request::CycleIssues { cycle_id, after } => {
-            let (issues, info) = client.cycle_issues(cycle_id, after.as_deref()).await?;
-            Message::CycleIssues {
-                cycle_id: cycle_id.clone(),
-                page: Page::new(issues, info, append),
-            }
-        }
-        Request::UpdateStatus { issue_id, state_id } => {
+        R::SetStatus { issue_id, state_id } => {
             client.update_issue_state(issue_id, state_id).await?;
             Message::Mutated("Status updated")
         }
-        Request::UpdatePriority { issue_id, priority } => {
+        R::SetPriority { issue_id, priority } => {
             client.update_issue_priority(issue_id, *priority).await?;
             Message::Mutated("Priority updated")
         }
-        Request::UpdateAssignee {
+        R::SetAssignee {
             issue_id,
             assignee_id,
         } => {
@@ -141,11 +155,11 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
                 .await?;
             Message::Mutated("Assignee updated")
         }
-        Request::CreateComment { issue_id, body } => {
+        R::Comment { issue_id, body } => {
             client.create_comment(issue_id, body).await?;
             Message::Mutated("Comment posted")
         }
-        Request::CreateIssue {
+        R::Create {
             team_id,
             title,
             description,
@@ -159,15 +173,37 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
                 issue: Box::new(issue),
             }
         }
-        Request::OpenUrl(url) => {
-            open::that_detached(url)?;
-            Message::Mutated("Opened in browser")
-        }
-        Request::Herdr(handoff) => {
-            crate::herdr::deliver(handoff).await?;
-            Message::Mutated(handoff.done())
-        }
+        R::OpenInBrowser(url) => open_in_browser(url)?,
     })
+}
+
+async fn project(client: &LinearClient, req: &project::Request, append: bool) -> Result<Message> {
+    use project::Request as R;
+    Ok(match req {
+        R::TeamProjects { team_id, after } => {
+            let (projects, info) = client.projects(team_id, after.as_deref()).await?;
+            Message::Projects {
+                team_id: team_id.clone(),
+                page: Page::new(projects, info, append),
+            }
+        }
+        R::ViewProjects { view_id, after } => {
+            let (projects, info) = client
+                .custom_view_projects(view_id, after.as_deref())
+                .await?;
+            Message::ViewProjects {
+                view_id: view_id.clone(),
+                page: Page::new(projects, info, append),
+            }
+        }
+        R::OpenInBrowser(url) => open_in_browser(url)?,
+    })
+}
+
+/// Hand a URL to the desktop's default browser.
+fn open_in_browser(url: &str) -> Result<Message> {
+    open::that_detached(url)?;
+    Ok(Message::Mutated("Opened in browser"))
 }
 
 #[cfg(test)]
@@ -180,7 +216,7 @@ mod tests {
 
     use super::*;
     use crate::api::client::StaticCredentials;
-    use crate::api::ids::TeamId;
+    use crate::entity::TeamId;
 
     fn client(server: &MockServer) -> LinearClient {
         LinearClient::with_endpoint(server.uri(), Arc::new(StaticCredentials("key".into())))
@@ -198,10 +234,10 @@ mod tests {
             .mount(&server)
             .await;
 
-        let request = Request::Cycles {
+        let request = Request::Cycle(cycle::Request::TeamCycles {
             team_id: TeamId::new("t1"),
             after: Some("c1".into()),
-        };
+        });
         match execute_request(&client(&server), request, 50).await {
             Message::Cycles { team_id, page } => {
                 assert_eq!(team_id, "t1");
@@ -219,7 +255,7 @@ mod tests {
             .mount(&server)
             .await;
 
-        let request = Request::Teams;
+        let request = Request::Team(team::Request::Teams);
         match execute_request(&client(&server), request.clone(), 50).await {
             Message::Failed {
                 request: failed,

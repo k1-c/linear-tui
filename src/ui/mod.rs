@@ -256,7 +256,7 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
             let view = app.store.custom_views.get(i);
             // A team's view sits under that team, as in Linear.
             if let Some(team) = view.and_then(|v| v.team.as_ref()) {
-                if let Some(color) = team.color.as_deref().and_then(crate::api::types::hex_color) {
+                if let Some(color) = team.color.as_deref().and_then(crate::look::hex_color) {
                     crumbs.push(Span::styled("\u{25cf} ", Style::default().fg(color)));
                 }
                 crumbs.push(dim(team.name.clone()));
@@ -270,7 +270,7 @@ fn draw_breadcrumb(f: &mut Frame, app: &App, area: Rect) {
             if let Some(color) = app
                 .current_team()
                 .and_then(|t| t.color.as_deref())
-                .and_then(crate::api::types::hex_color)
+                .and_then(crate::look::hex_color)
             {
                 crumbs.insert(1, Span::styled("\u{25cf} ", Style::default().fg(color)));
             }
@@ -401,7 +401,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         )];
         spans.extend(input_spans(&app.list().search, th));
         let mut tail = format!("   {} matches", app.visible_issues().len());
-        for h in keys::hints(keys::Ctx::Search) {
+        for h in keys::hints(keys::Ctx::Search, app.herdr) {
             tail.push_str(&format!(" \u{00b7} {} {}", h.keys, h.what));
         }
         spans.push(Span::styled(tail, Style::default().fg(th.muted)));
@@ -423,7 +423,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
             format!(" {chord} \u{2026} "),
             Style::default().fg(th.accent).add_modifier(Modifier::BOLD),
         )];
-        for h in keys::hints(keys::Ctx::GoTo) {
+        for h in keys::hints(keys::Ctx::GoTo, app.herdr) {
             spans.extend(hint(h.keys, h.what, th));
         }
         f.render_widget(Paragraph::new(Line::from(spans)), area);
@@ -432,7 +432,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
 
     let mut spans: Vec<Span> = Vec::new();
     // Notes waiting to be sent stay in view until they are.
-    let notes = app.view.notes.len();
+    let notes = app.notes.len();
     if notes > 0 {
         let plural = if notes == 1 { "" } else { "s" };
         spans.push(Span::styled(
@@ -442,7 +442,7 @@ fn draw_status_bar(f: &mut Frame, app: &App, area: Rect) {
         spans.extend(hint("^S", "send", th));
     }
     spans.extend(
-        keys::hints(keys::context(app))
+        keys::hints(keys::context(app), app.herdr)
             .into_iter()
             .flat_map(|h| hint(h.keys, h.what, th)),
     );
@@ -519,7 +519,7 @@ fn draw_help(f: &mut Frame, app: &mut App) {
 
     let mut help_text = Vec::new();
     for heading in keys::Section::ALL {
-        let mut rows = keys::help_rows(heading).peekable();
+        let mut rows = keys::help_rows(heading, app.herdr).peekable();
         if rows.peek().is_none() {
             continue;
         }

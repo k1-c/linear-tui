@@ -5,9 +5,9 @@
 
 use ratatui::{Terminal, backend::TestBackend};
 
-use crate::api::types::Issue;
 use crate::app::{App, Chip, IssueSource, ListRow, Nav, Popup, Screen};
 use crate::config::Config;
+use crate::entity::Issue;
 use crate::grouping::Preset;
 
 fn stated(id: &str, title: &str, state: &str, kind: &str) -> Issue {
@@ -136,7 +136,7 @@ fn a_change_popup_draws_where_it_records_and_a_click_applies_it() {
     assert_eq!(app.view.popup, Popup::None);
     assert_eq!(
         app.store.issues[IssueSource::Team].items[1].priority,
-        crate::api::types::Priority::Urgent
+        crate::entity::Priority::Urgent
     );
 }
 
@@ -177,7 +177,7 @@ fn a_narrowed_picker_draws_its_query_and_a_click_picks_the_filtered_row() {
     app.click(area.x + 1, area.y);
     assert_eq!(
         app.store.issues[IssueSource::Team].items[1].priority,
-        crate::api::types::Priority::High
+        crate::entity::Priority::High
     );
 }
 
@@ -284,7 +284,7 @@ fn every_documented_binding_appears_in_the_help_overlay() {
     app.open_help();
     let lines = render(&mut app, 100, 120);
     // A herdr-only row is listed only inside herdr.
-    for binding in crate::keys::BINDINGS.iter().filter(|b| b.shown()) {
+    for binding in crate::keys::BINDINGS.iter().filter(|b| b.shown(app.herdr)) {
         let Some(help) = binding.help else { continue };
         let row = format!("  {:<9}  {}", help.keys, help.text);
         assert!(

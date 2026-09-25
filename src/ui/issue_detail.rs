@@ -22,10 +22,11 @@ use super::widgets::{
     self, agent_glyph, avatar, label_chip, person, priority_glyph, short_date, state_color,
     state_glyph, truncate, user_name,
 };
-use crate::api::types::{Comment, Issue, StateType, hex_color};
 use crate::app::{App, InputMode};
 use crate::config::Theme;
-use crate::herdr::AgentLink;
+use crate::entity::AgentLink;
+use crate::entity::{Comment, Issue, StateType};
+use crate::look::hex_color;
 
 /// Width of the properties panel when there is room for one.
 const PANEL_WIDTH: u16 = 34;

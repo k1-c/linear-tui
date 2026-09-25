@@ -15,8 +15,8 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::api::types::Priority;
 use crate::app::{App, FormField, Input, InputMode, Nav, Popup, Screen, TeamSection};
+use crate::entity::Priority;
 use crate::grouping::Preset;
 
 /// Where a key is pressed. A binding lists the contexts it applies in.
@@ -411,9 +411,10 @@ impl Binding {
         self
     }
 
-    /// Whether it exists in this terminal.
-    pub(crate) fn shown(&self) -> bool {
-        !self.herdr_only || crate::herdr::available()
+    /// Whether it exists: a herdr-only binding exists only inside herdr
+    /// (`App::herdr`).
+    pub(crate) fn shown(&self, herdr: bool) -> bool {
+        !self.herdr_only || herdr
     }
 
     fn applies_in(&self, ctx: Ctx) -> bool {
@@ -890,10 +891,10 @@ pub fn context(app: &App) -> Ctx {
 
 /// The palette's commands for a context: by section, what acts on the issue
 /// at hand first, then in table order.
-pub fn commands(ctx: Ctx) -> Vec<&'static Binding> {
+pub fn commands(ctx: Ctx, herdr: bool) -> Vec<&'static Binding> {
     let mut commands: Vec<&Binding> = BINDINGS
         .iter()
-        .filter(|b| b.shown() && b.command.is_some_and(|c| c.on.contains(&ctx)))
+        .filter(|b| b.shown(herdr) && b.command.is_some_and(|c| c.on.contains(&ctx)))
         .collect();
     commands.sort_by_key(|b| b.command.map(|c| c.section.palette_rank()));
     commands
@@ -955,10 +956,10 @@ impl Binding {
 }
 
 /// The status-bar hints for a context, in display order.
-pub fn hints(ctx: Ctx) -> Vec<&'static Hint> {
+pub fn hints(ctx: Ctx, herdr: bool) -> Vec<&'static Hint> {
     let mut hints: Vec<&Hint> = BINDINGS
         .iter()
-        .filter(|b| b.shown())
+        .filter(move |b| b.shown(herdr))
         .filter_map(|b| b.hint.as_ref())
         .filter(|h| h.on.contains(&ctx))
         .collect();
@@ -967,10 +968,10 @@ pub fn hints(ctx: Ctx) -> Vec<&'static Hint> {
 }
 
 /// The help overlay's rows under one heading, in table order.
-pub fn help_rows(section: Section) -> impl Iterator<Item = &'static Help> {
+pub fn help_rows(section: Section, herdr: bool) -> impl Iterator<Item = &'static Help> {
     BINDINGS
         .iter()
-        .filter(|b| b.shown())
+        .filter(move |b| b.shown(herdr))
         .filter_map(|b| b.help.as_ref())
         .filter(move |h| h.section == section)
 }
@@ -1023,7 +1024,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
     if let Some(binding) = BINDINGS
         .iter()
-        .find(|b| b.shown() && b.applies_in(ctx) && b.matches(&key))
+        .find(|b| b.shown(app.herdr) && b.applies_in(ctx) && b.matches(&key))
     {
         (binding.action)(app);
         return;
@@ -1233,9 +1234,9 @@ fn edit(app: &mut App, change: impl FnOnce(&mut Input)) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::types::Issue;
     use crate::app::{IssueSource, Screen};
     use crate::config::Config;
+    use crate::entity::Issue;
     use crossterm::event::{KeyEventKind, KeyEventState};
 
     fn press(app: &mut App, code: KeyCode) {
@@ -1394,10 +1395,12 @@ mod tests {
         assert_eq!(app.view.popup, Popup::None);
         assert!(matches!(
             app.outbox.requests.back(),
-            Some(crate::message::Request::UpdatePriority {
-                priority: Priority::Urgent,
-                ..
-            })
+            Some(crate::usecase::Request::Issue(
+                crate::usecase::issue::Request::SetPriority {
+                    priority: Priority::Urgent,
+                    ..
+                }
+            ))
         ));
     }
 
@@ -1488,7 +1491,7 @@ mod tests {
         assert_eq!(app.view.input_mode, InputMode::Normal);
         assert!(matches!(
             app.outbox.requests.back(),
-            Some(crate::message::Request::CreateComment { body, .. }) if body == "hi\nthere"
+            Some(crate::usecase::Request::Issue(crate::usecase::issue::Request::Comment { body, .. })) if body == "hi\nthere"
         ));
     }
 
@@ -1599,7 +1602,7 @@ mod table_tests {
     #[test]
     fn no_two_commands_share_a_title_in_a_context() {
         for ctx in NORMAL.iter().chain(&[GoTo]) {
-            let titles: Vec<&str> = commands(*ctx)
+            let titles: Vec<&str> = commands(*ctx, true)
                 .iter()
                 .filter_map(|b| b.command.map(|c| c.title))
                 .collect();

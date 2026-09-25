@@ -1,4 +1,4 @@
 pub mod client;
+#[cfg(test)]
+mod decode_tests;
 pub mod error;
-pub mod ids;
-pub mod types;

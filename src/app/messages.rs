@@ -2,6 +2,8 @@
 //! them still belong on screen.
 
 use super::*;
+use crate::store::{List, ListOf};
+use crate::usecase::project::Projects;
 
 /// Identifies one of the paginated sub-lists, for index clamping.
 #[derive(Debug, Clone, Copy)]
@@ -20,35 +22,32 @@ impl App {
     fn fold_message(&mut self, msg: Message) {
         match msg {
             Message::Teams(teams) => {
-                let preferred = self.restored_team(&teams).or_else(|| {
-                    let default_team = self.default_team.as_ref()?;
-                    teams
-                        .iter()
-                        .position(|t| t.name == *default_team || t.key == *default_team)
-                });
+                let remembered = self.restored_team_id().cloned();
+                let preferred = usecase::team::pick_initial(
+                    &teams,
+                    remembered.as_ref(),
+                    self.default_team.as_deref(),
+                );
                 if let Some(idx) = preferred {
                     self.nav.team = idx;
                 }
                 self.store.teams = teams;
+                let Some(team_id) = self.team_id() else {
+                    return;
+                };
+                let request = usecase::team::ensure_context(&mut self.store, team_id.clone());
+                self.send(request);
                 // A restore opens its own first page.
                 if self.restoring_destination() {
-                    if let Some(team_id) = self.team_id() {
-                        self.ensure_team_context(team_id);
-                    }
                     return;
                 }
                 self.nav.dest = Nav::Team(self.nav.team, TeamSection::Issues);
-                if let Some(team_id) = self.team_id() {
-                    self.ensure_team_context(team_id.clone());
-                    self.request(Request::Issues {
-                        team_id,
-                        after: None,
-                        preset: self.view.lists[IssueSource::Team].preset,
-                    });
-                }
+                let preset = self.view.lists[IssueSource::Team].preset;
+                let open = usecase::issue::open_team_issues(&mut self.store, team_id, preset);
+                self.open_issues(IssueSource::Team, open);
             }
             Message::Viewer(id) => {
-                self.store.viewer_id = Some(id);
+                usecase::user::take_viewer(&mut self.store, id);
                 if self.nav.dest == Nav::MyIssues {
                     self.reload_current_tab();
                 }
@@ -60,11 +59,8 @@ impl App {
             } => {
                 // Kept whichever team is selected: it is filed under its own
                 // team, so it can only ever be offered for that team's issues.
-                self.outbox.team_contexts.remove(&team_id);
                 let waiting = self.popup_team_id() == Some(&team_id);
-                self.store
-                    .team_contexts
-                    .insert(team_id, TeamContext { states, members });
+                usecase::team::context_arrived(&mut self.store, team_id, states, members);
                 // A popup opened while this was loading starts on the
                 // issue's current value, as it would have if it were cached.
                 if waiting {
@@ -76,19 +72,18 @@ impl App {
                 preset,
                 page,
             } => {
-                // A page for a team or preset the user has since left would
-                // file, say, another team's backlog under this team's Active.
-                if !self.is_current_team(&team_id)
-                    || preset != self.view.lists[IssueSource::Team].preset
-                {
-                    return;
+                let of = ListOf::TeamIssues { team_id, preset };
+                if self.accept_issue_page(IssueSource::Team, &of, page) {
+                    self.clear_status();
                 }
-                self.accept_issue_page(IssueSource::Team, page);
-                self.clear_status();
             }
             Message::MyIssues(page) => {
-                self.accept_issue_page(IssueSource::My, page);
-                self.clear_status();
+                let Some(of) = self.store.issues[IssueSource::My].of.clone() else {
+                    return;
+                };
+                if self.accept_issue_page(IssueSource::My, &of, page) {
+                    self.clear_status();
+                }
             }
             Message::PaletteResults { seq, issues } => self.accept_palette_results(seq, issues),
             Message::SearchResults {
@@ -101,44 +96,45 @@ impl App {
                 if team_id.is_some() && team_id != self.team_id() {
                     return;
                 }
+                let Some(team) = self.team_id() else {
+                    return;
+                };
+                usecase::issue::take_search_results(&mut self.store, team, issues);
                 self.nav.dest = Nav::Team(self.nav.team, TeamSection::Issues);
                 self.nav.screen = Screen::IssueList;
-                self.store.issues[IssueSource::Team].items = issues;
-                self.store.issues[IssueSource::Team].page_info = PageInfo::default();
-                self.view.lists[IssueSource::Team].filters.clear();
-                // Search answers "where is it", done or not; the Active slice
-                // would quietly hide half the matches. Set without refetching,
-                // which would replace the results with the team's list.
-                self.view.lists[IssueSource::Team].preset = Preset::All;
-                self.view.lists[IssueSource::Team].search.clear();
-                self.view.lists[IssueSource::Team].selected = 0;
+                let list = &mut self.view.lists[IssueSource::Team];
+                list.filters.clear();
+                // The results are the team's All slice; set without refetching,
+                // which would replace them with the team's list.
+                list.preset = Preset::All;
+                list.search.clear();
+                list.selected = 0;
                 self.nav.global_search = Some(term);
             }
             Message::ViewProjects { view_id, page } => {
-                if !self.accepts_view_page(&view_id, page.append, ViewKind::Projects) {
+                let append = page.append;
+                let of = ListOf::ViewProjects(view_id);
+                if !usecase::project::take_page(&mut self.store, Projects::View, &of, page) {
                     return;
                 }
-                let append = page.append;
-                self.store.view_projects.accept(page);
                 if !append {
                     self.view.selected_view_project_index = 0;
                 }
-                self.store.loaded_view_projects_id = Some(view_id);
                 self.clear_status();
             }
             Message::Projects { team_id, page } => {
-                if !self.is_current_team(&team_id) {
+                let of = ListOf::TeamProjects(team_id);
+                if !usecase::project::take_page(&mut self.store, Projects::Team, &of, page) {
                     return;
                 }
-                self.store.projects.accept(page);
                 self.clamp(Field::Projects);
                 self.clear_status();
             }
             Message::Cycles { team_id, page } => {
-                if !self.is_current_team(&team_id) {
+                let of = ListOf::TeamCycles(team_id);
+                if !usecase::cycle::take_page(&mut self.store, &of, page) {
                     return;
                 }
-                self.store.cycles.accept(page);
                 self.clamp(Field::Cycles);
                 self.clear_status();
             }
@@ -149,7 +145,7 @@ impl App {
                     Nav::View(i) => self.store.custom_views.get(i).map(|v| v.id.clone()),
                     _ => None,
                 };
-                self.store.set_custom_views(views);
+                usecase::view::take_views(&mut self.store, views);
                 if let Some(id) = open {
                     match self.store.custom_views.iter().position(|v| v.id == id) {
                         Some(i) => self.nav.dest = Nav::View(i),
@@ -161,44 +157,36 @@ impl App {
                     .selected_view_index
                     .min(self.listed_views().len().saturating_sub(1));
             }
-            Message::Favorites(favorites) => self.store.set_favorites(favorites),
+            Message::Favorites(favorites) => {
+                usecase::favorite::take_favorites(&mut self.store, favorites)
+            }
             Message::ViewIssues { view_id, page } => {
-                if !self.accepts_view_page(&view_id, page.append, ViewKind::Issues) {
-                    return;
+                let of = ListOf::ViewIssues(view_id);
+                if self.accept_issue_page(IssueSource::View, &of, page) {
+                    self.clear_status();
                 }
-                self.store.loaded_view_id = Some(view_id);
-                self.accept_issue_page(IssueSource::View, page);
-                self.clear_status();
             }
             Message::IssueDetail(issue) => {
-                self.restored_issue_loaded(&issue);
-                self.store.refresh_issue(*issue);
+                let id = issue.id.clone();
+                let adopted = usecase::issue::take_detail(&mut self.store, *issue);
+                self.restored_issue_loaded(&id, adopted);
             }
             Message::ProjectIssues { project_id, page } => {
-                if self.nav.current_project.as_ref().map(|p| &p.id) != Some(&project_id) {
-                    return;
-                }
-                self.accept_issue_page(IssueSource::Project, page);
+                let of = ListOf::ProjectIssues(project_id);
+                self.accept_issue_page(IssueSource::Project, &of, page);
             }
             Message::CycleIssues { cycle_id, page } => {
-                if self.nav.current_cycle.as_ref().map(|c| &c.id) != Some(&cycle_id) {
-                    return;
-                }
-                self.accept_issue_page(IssueSource::Cycle, page);
+                let of = ListOf::CycleIssues(cycle_id);
+                self.accept_issue_page(IssueSource::Cycle, &of, page);
             }
             Message::IssueCreated { team_id, issue } => {
                 self.set_status(format!("Created {}", issue.identifier));
-                // Another team's list is not on screen; its next fetch will
-                // include the issue anyway.
-                if !self.is_current_team(&team_id) {
-                    return;
-                }
-                // Show it immediately rather than waiting for a refetch, with
-                // the cursor on it — found by id, since grouping decides where
-                // in the list it lands.
+                // Show it with the cursor on it — found by id, since grouping
+                // decides where in the list it lands.
                 let id = issue.id.clone();
-                self.store.issues[IssueSource::Team].items.insert(0, *issue);
-                if self.issue_source() == IssueSource::Team && self.nav.screen == Screen::IssueList
+                if usecase::issue::created(&mut self.store, &team_id, *issue)
+                    && self.issue_source() == IssueSource::Team
+                    && self.nav.screen == Screen::IssueList
                 {
                     self.restore_issue_selection(Some(&id));
                 }
@@ -208,63 +196,49 @@ impl App {
                 // A posted comment clears the cached thread; pull it back in.
                 self.queue_detail_fetches();
             }
-            Message::Failed { request, error } => {
-                if let Request::IssueDetail { issue_id } = request.as_ref()
-                    && self.restored_issue_failed(issue_id)
-                {
-                    return;
-                }
-                self.restore_lost(&request);
-                if let Request::Herdr(handoff) = request.as_ref() {
-                    self.handoff_failed(handoff, &error);
-                    return;
-                }
-                // A failed page must be retryable.
-                if let Some(cursor) = request.cursor() {
-                    self.outbox.prefetched.remove(cursor);
-                }
-                // A palette search that failed is not worth an error over
-                // the palette; the local matches are still there.
-                if let Request::PaletteSearch { seq, .. } = request.as_ref() {
-                    if *seq == self.view.palette.seq {
-                        self.view.palette.searching = false;
-                    }
-                    self.set_status(format!("Search failed: {error}"));
-                    return;
-                }
-                // Reopening the popup asks again.
-                if let Request::TeamContext { team_id } = request.as_ref() {
-                    self.outbox.team_contexts.remove(team_id);
-                }
-                // The change is already on screen; ask Linear what the issue
-                // really looks like now rather than guess what to undo.
-                if let Some(issue_id) = request.patched_issue() {
-                    self.request(Request::IssueDetail {
-                        issue_id: issue_id.clone(),
-                    });
-                }
-                self.set_error(format!("{}: {error}", request.failure()));
+            Message::Failed { request, error } => self.request_failed(&request, &error),
+        }
+    }
+
+    /// Linear, the browser, or herdr could not do what was asked.
+    fn request_failed(&mut self, request: &Request, error: &str) {
+        if let Request::Issue(usecase::issue::Request::Detail { issue_id }) = request
+            && self.restored_issue_failed(issue_id)
+        {
+            return;
+        }
+        self.restore_lost(request);
+        match request {
+            Request::Notes(usecase::notes::Request::Deliver(handoff)) => {
+                return self.handoff_failed(handoff, error);
             }
+            Request::Agent(_) => {
+                return self.set_error(format!("Could not reach herdr: {error}"));
+            }
+            // A palette search that failed is not worth an error over the
+            // palette; the local matches are still there.
+            Request::Issue(usecase::issue::Request::QuickSearch { seq, .. }) => {
+                if *seq == self.view.palette.seq {
+                    self.view.palette.searching = false;
+                }
+                return self.set_status(format!("Search failed: {error}"));
+            }
+            // Reopening the popup asks again.
+            Request::Team(usecase::team::Request::Context { team_id }) => {
+                usecase::team::context_failed(&mut self.store, team_id);
+            }
+            Request::Issue(change) => {
+                if let Some(issue_id) = change.changed_issue() {
+                    self.request(usecase::issue::change_refused(issue_id));
+                }
+            }
+            _ => {}
         }
-    }
-
-    fn is_current_team(&self, team_id: &TeamId) -> bool {
-        self.current_team().is_some_and(|t| &t.id == team_id)
-    }
-
-    /// Whether a page of saved view `view_id` belongs on screen.
-    ///
-    /// A first page is taken only for the view that is open; a next page only
-    /// when the list it would extend is that view's.
-    fn accepts_view_page(&self, view_id: &CustomViewId, append: bool, kind: ViewKind) -> bool {
-        if append {
-            let loaded = match kind {
-                ViewKind::Issues => &self.store.loaded_view_id,
-                ViewKind::Projects => &self.store.loaded_view_projects_id,
-            };
-            return loaded.as_ref() == Some(view_id);
+        // A failed page must be retryable.
+        if let Some(cursor) = request.cursor() {
+            self.store.page_failed(cursor);
         }
-        matches!(self.nav.dest, Nav::View(i) if self.store.custom_views.get(i).is_some_and(|v| &v.id == view_id))
+        self.set_error(format!("{}: {error}", crate::message::failure(request)));
     }
 
     /// Fold a page into one of the issue lists, keeping the cursor on the
@@ -273,7 +247,11 @@ impl App {
     /// Grouping decides where each row lands, so even an appended page can
     /// slot issues in above the cursor; restoring by index would quietly move
     /// the selection — and whatever popup is open — to another issue.
-    fn accept_issue_page(&mut self, source: IssueSource, page: Page<Issue>) {
+    /// Returns whether the page was taken.
+    fn accept_issue_page(&mut self, source: IssueSource, of: &ListOf, page: Page<Issue>) -> bool {
+        if !self.store.wants_page(List::Issues(source), of) {
+            return false;
+        }
         let on_screen = source == self.issue_source();
         let keep = if on_screen {
             let restored = (!page.append)
@@ -284,12 +262,13 @@ impl App {
             None
         };
         let append = page.append;
-        self.store.issues[source].accept_issues(page);
+        usecase::issue::take_page(&mut self.store, source, of, page);
         if on_screen {
             self.restore_issue_selection(keep.as_ref());
         } else if !append {
             *self.selected_index_of(source) = 0;
         }
+        true
     }
 
     /// Keep a selection index inside its (possibly shrunken) list.

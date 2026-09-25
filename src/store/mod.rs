@@ -7,12 +7,15 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::api::ids::{CustomViewId, IssueId, TeamId, UserId};
-use crate::api::types::{
+use crate::entity::Page;
+use crate::entity::{
     CustomView, Cycle, Favorite, Issue, PageInfo, Project, Team, User, WorkflowState,
 };
-use crate::message::Page;
+use crate::entity::{CustomViewId, CycleId, IssueId, Preset, ProjectId, TeamId, UserId};
 
+mod lists;
+
+pub use lists::{Opening, PageAsk};
 #[cfg(test)]
 mod tests;
 
@@ -66,14 +69,60 @@ impl<T> std::ops::IndexMut<IssueSource> for PerSource<T> {
     }
 }
 
+/// What a paginated list is a list of. A page fetched for anything else is
+/// not folded into it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ListOf {
+    /// A team's issues, in one of Linear's slices.
+    TeamIssues {
+        team_id: TeamId,
+        preset: Preset,
+    },
+    /// The issues assigned to a user.
+    MyIssues(UserId),
+    /// A saved issue view's issues.
+    ViewIssues(CustomViewId),
+    ProjectIssues(ProjectId),
+    CycleIssues(CycleId),
+    TeamProjects(TeamId),
+    /// A saved project view's projects.
+    ViewProjects(CustomViewId),
+    TeamCycles(TeamId),
+}
+
+impl ListOf {
+    /// Whether `other` lists the same thing, if perhaps another slice of it:
+    /// a team's Backlog after its Active issues.
+    pub fn same_owner(&self, other: &ListOf) -> bool {
+        match (self, other) {
+            (Self::TeamIssues { team_id: a, .. }, Self::TeamIssues { team_id: b, .. }) => a == b,
+            _ => self == other,
+        }
+    }
+}
+
+/// One of the paginated lists the store holds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum List {
+    Issues(IssueSource),
+    /// The selected team's projects.
+    Projects,
+    /// A saved project view's projects.
+    ViewProjects,
+    /// The selected team's cycles.
+    Cycles,
+}
+
 /// A paginated list as fetched so far.
 #[derive(Debug)]
 pub struct Rows<T> {
     /// In the order Linear returned them.
     pub items: Vec<T>,
     pub page_info: PageInfo,
-    /// Whether a first page has arrived for what the list currently belongs to.
+    /// Whether a first page has arrived for what the list belongs to.
     pub loaded: bool,
+    /// What the list belongs to, once its first page has been asked for.
+    pub of: Option<ListOf>,
 }
 
 impl<T> Default for Rows<T> {
@@ -82,8 +131,56 @@ impl<T> Default for Rows<T> {
             items: Vec::new(),
             page_info: PageInfo::default(),
             loaded: false,
+            of: None,
         }
     }
+}
+
+/// What every paginated list has, whatever it lists.
+pub trait Listing {
+    fn of(&self) -> Option<&ListOf>;
+    fn set_of(&mut self, of: ListOf);
+    fn loaded(&self) -> bool;
+    fn set_loaded(&mut self, loaded: bool);
+    fn page_info(&self) -> &PageInfo;
+    /// Forget the rows and what they belonged to.
+    fn reset(&mut self);
+}
+
+impl<T> Listing for Rows<T> {
+    fn of(&self) -> Option<&ListOf> {
+        self.of.as_ref()
+    }
+    fn set_of(&mut self, of: ListOf) {
+        self.of = Some(of);
+    }
+    fn loaded(&self) -> bool {
+        self.loaded
+    }
+    fn set_loaded(&mut self, loaded: bool) {
+        self.loaded = loaded;
+    }
+    fn page_info(&self) -> &PageInfo {
+        &self.page_info
+    }
+    fn reset(&mut self) {
+        Rows::reset(self);
+    }
+}
+
+/// What has been asked of Linear and not answered yet, so it is asked once.
+///
+/// Not something Linear told us, but kept beside what it told us: the use
+/// cases that ask decide by it, and a failure clears it so the ask can be
+/// made again.
+#[derive(Debug, Default)]
+pub struct Requested {
+    /// Page cursors already asked for. A next-page request stays in flight
+    /// while the user keeps scrolling; each step near the bottom would
+    /// otherwise ask for the same page again, appending it once per step.
+    pub cursors: HashSet<String>,
+    /// Teams whose states and members are on their way.
+    pub team_contexts: HashSet<TeamId>,
 }
 
 impl<T> Rows<T> {
@@ -148,20 +245,44 @@ pub struct Store {
     pub favorites: Vec<Favorite>,
     pub favorites_loaded: bool,
     pub issues: PerSource<Rows<Issue>>,
-    /// Which view `issues[View]` belongs to, so switching views refetches.
-    pub loaded_view_id: Option<CustomViewId>,
     /// The selected team's projects.
     pub projects: Rows<Project>,
     /// The selected team's cycles.
     pub cycles: Rows<Cycle>,
     /// A saved project view's projects.
     pub view_projects: Rows<Project>,
-    pub loaded_view_projects_id: Option<CustomViewId>,
     /// The issue open in the detail view, with its comment thread.
     pub current_issue: Option<Issue>,
+    pub requested: Requested,
 }
 
 impl Store {
+    /// One of the paginated lists, whatever it lists.
+    pub fn listing(&self, list: List) -> &dyn Listing {
+        match list {
+            List::Issues(source) => &self.issues[source],
+            List::Projects => &self.projects,
+            List::ViewProjects => &self.view_projects,
+            List::Cycles => &self.cycles,
+        }
+    }
+
+    pub fn listing_mut(&mut self, list: List) -> &mut dyn Listing {
+        match list {
+            List::Issues(source) => &mut self.issues[source],
+            List::Projects => &mut self.projects,
+            List::ViewProjects => &mut self.view_projects,
+            List::Cycles => &mut self.cycles,
+        }
+    }
+
+    /// Whether a page fetched for `of` belongs in `list`: only while the list
+    /// still belongs to exactly that. A page that lands after the user moved
+    /// on — to another team, view, project, cycle, or preset — is dropped.
+    pub fn wants_page(&self, list: List, of: &ListOf) -> bool {
+        self.listing(list).of() == Some(of)
+    }
+
     /// Apply `f` to every copy of the issue we hold, so the UI updates
     /// without a refetch.
     pub fn patch_issue(&mut self, issue_id: &IssueId, f: impl Fn(&mut Issue)) {

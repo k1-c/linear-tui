@@ -4,6 +4,7 @@ use std::process::Command;
 use std::time::{Duration, Instant};
 
 use super::*;
+use crate::entity::snapshot::*;
 
 fn scratch(name: &str) -> PathBuf {
     let dir =
@@ -81,29 +82,20 @@ fn a_minimal_snapshot_parses_with_every_optional_field_absent() {
 }
 
 #[test]
-fn a_launch_restores_the_snapshot_closed_last() {
-    let shelf = Shelf::new(&scratch("restore"), Path::new("/repo"));
-    // Moved last, but still open in another terminal.
-    put(&shelf, &snapshot(1, "2026-09-25T10:00:00Z", None));
-    put(
-        &shelf,
-        &snapshot(2, "2026-09-25T08:00:00Z", Some("2026-09-25T09:00:00Z")),
-    );
-    put(
-        &shelf,
-        &snapshot(3, "2026-09-25T07:00:00Z", Some("2026-09-25T07:30:00Z")),
-    );
-    assert_eq!(shelf.for_restore(99).unwrap().pid, 2);
-}
-
-#[test]
-fn without_a_clean_close_the_snapshot_that_moved_last_is_restored() {
-    let shelf = Shelf::new(&scratch("crash"), Path::new("/repo"));
+fn each_record_is_read_as_an_instance() {
+    let shelf = Shelf::new(&scratch("instances"), Path::new("/repo"));
     put(&shelf, &snapshot(1, "2026-09-25T08:00:00Z", None));
-    put(&shelf, &snapshot(2, "2026-09-25T09:00:00Z", None));
-    assert_eq!(shelf.for_restore(99).unwrap().pid, 2);
-    // A stale file under this process's own PID is not this process's view.
-    assert_eq!(shelf.for_restore(2).unwrap().pid, 1);
+    put(
+        &shelf,
+        &snapshot(2, "2026-09-25T09:00:00Z", Some("2026-09-25T09:30:00Z")),
+    );
+    let mut pids: Vec<(u32, bool)> = shelf
+        .instances()
+        .iter()
+        .map(|i| (i.id.pid, i.closed()))
+        .collect();
+    pids.sort();
+    assert_eq!(pids, [(1, false), (2, true)]);
 }
 
 #[test]
@@ -117,7 +109,8 @@ fn unreadable_and_newer_snapshots_are_skipped() {
         &shelf,
         &snapshot(3, "2026-09-25T08:00:00Z", Some("2026-09-25T08:00:00Z")),
     );
-    assert_eq!(shelf.for_restore(99).unwrap().pid, 3);
+    let pids: Vec<u32> = shelf.instances().iter().map(|i| i.id.pid).collect();
+    assert_eq!(pids, [3]);
 }
 
 #[test]
@@ -130,7 +123,7 @@ fn each_workspace_has_its_own_shelf() {
         &a,
         &snapshot(1, "2026-09-25T08:00:00Z", Some("2026-09-25T08:00:00Z")),
     );
-    assert!(b.for_restore(99).is_none());
+    assert!(b.instances().is_empty());
 }
 
 #[test]
@@ -177,7 +170,7 @@ fn the_recorder_waits_for_the_view_to_rest_and_skips_what_it_wrote() {
     assert!(fs::metadata(shelf.path_for(5)).unwrap().modified().unwrap() >= written);
 
     recorder.close(snapshot(5, "2026-09-25T08:00:03Z", None));
-    assert!(shelf.for_restore(99).unwrap().closed_at.is_some());
+    assert!(shelf.instances()[0].closed());
 }
 
 fn git(dir: &Path, args: &[&str]) {

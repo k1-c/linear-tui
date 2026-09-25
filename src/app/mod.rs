@@ -1,9 +1,9 @@
-use crate::api::ids::*;
-use crate::api::types::*;
 use crate::config::{Config, Theme};
+use crate::entity::*;
 use crate::grouping::{GroupBy, Preset, Section, group};
-use crate::message::{Message, Page, Request};
+use crate::message::Message;
 pub use crate::store::{IssueSource, PerSource, Store, TeamContext};
+use crate::usecase::Request;
 use crate::usecase::{self, Refusal};
 
 mod actions;
@@ -30,7 +30,6 @@ pub use frame::*;
 pub use input::*;
 pub use lists::*;
 pub use navigation::*;
-pub use notes::*;
 pub use outbox::*;
 pub use sidebar::*;
 pub use view::*;
@@ -183,7 +182,9 @@ pub struct App {
     /// hand work to its plugin.
     pub herdr: bool,
     /// herdr's agents and the issues they work on, from the plugin.
-    pub agents: Vec<crate::herdr::AgentLink>,
+    pub agents: Vec<crate::entity::AgentLink>,
+    /// Notes written for the agent and not yet sent.
+    pub notes: Notes,
     /// A snapshot being reopened, while it still has steps to take.
     restore: Option<restore::Restore>,
 
@@ -204,6 +205,7 @@ impl App {
             should_quit: false,
             herdr: crate::herdr::available(),
             agents: Vec::new(),
+            notes: Default::default(),
             restore: None,
             theme: Theme::from_name(config.ui.theme),
             items_per_page: config.ui.items_per_page,
@@ -214,15 +216,18 @@ impl App {
         if !config.warnings.is_empty() {
             app.set_error(format!("config.toml:\n{}", config.warnings.join("\n")));
         }
-        app.request(Request::Teams);
-        app.request(Request::Viewer);
-        app.request(Request::CustomViews);
-        app.request(Request::Favorites);
+        // The sidebar shows the views and favorites whatever page is open,
+        // and every page waits on the teams and on who the user is.
+        app.request(usecase::team::load());
+        app.request(usecase::user::load());
+        let views = usecase::view::reload_views(&mut app.store);
+        app.request(views);
+        app.request(usecase::favorite::load());
         app
     }
 
     /// Send what a use case asked for, or say why it declined. True when it ran.
-    fn run(&mut self, outcome: Result<Request, Refusal>) -> bool {
+    fn run<R: Into<Request>>(&mut self, outcome: Result<R, Refusal>) -> bool {
         match outcome {
             Ok(request) => {
                 self.request(request);
@@ -235,8 +240,15 @@ impl App {
         }
     }
 
-    pub fn request(&mut self, req: Request) {
-        self.outbox.push(req);
+    pub fn request(&mut self, req: impl Into<Request>) {
+        self.outbox.push(req.into());
+    }
+
+    /// Send what a use case asked for, if it asked for anything.
+    fn send(&mut self, req: Option<impl Into<Request>>) {
+        if let Some(req) = req {
+            self.request(req);
+        }
     }
 
     pub fn loading(&self) -> bool {

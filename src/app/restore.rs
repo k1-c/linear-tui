@@ -9,7 +9,7 @@
 //! the project list, a deleted issue on the list it was opened from.
 
 use super::*;
-use crate::snapshot::{self as snap, ViewSnapshot};
+use crate::entity::snapshot::{self as snap, ViewSnapshot};
 
 /// What is left of a restore.
 #[derive(Debug)]
@@ -108,9 +108,8 @@ impl App {
     }
 
     /// The team a restore reopens, by its position in `teams`.
-    pub(super) fn restored_team(&self, teams: &[Team]) -> Option<usize> {
-        let id = self.restore.as_ref()?.team.as_ref()?;
-        teams.iter().position(|t| &t.id == id)
+    pub(super) fn restored_team_id(&self) -> Option<&TeamId> {
+        self.restore.as_ref()?.team.as_ref()
     }
 
     /// Take the next steps of the restore that what has arrived allows.
@@ -145,7 +144,8 @@ impl App {
             }
             if let Some(term) = r.search.take() {
                 let team_id = self.team_id();
-                self.request(Request::Search { term, team_id });
+                let request = usecase::issue::search(&term, team_id);
+                self.send(request);
             }
             // A favorite opens its own project, cycle, or issue page.
             if let Nav::Favorite(_) = self.nav.dest {
@@ -309,10 +309,16 @@ impl App {
             return;
         };
         match (request, &restore.dest) {
-            (Request::CustomViews, Some(snap::Destination::View { .. })) => {
+            (
+                Request::View(usecase::view::Request::Views),
+                Some(snap::Destination::View { .. }),
+            ) => {
                 restore.dest = Some(snap::Destination::Views);
             }
-            (Request::Favorites, Some(snap::Destination::Favorite { .. })) => {
+            (
+                Request::Favorite(usecase::favorite::Request::Favorites),
+                Some(snap::Destination::Favorite { .. }),
+            ) => {
                 restore.dest = Some(snap::Destination::MyIssues);
                 restore.project = None;
                 restore.cycle = None;
@@ -362,18 +368,9 @@ impl App {
     }
 
     /// The restored issue page loaded; nothing is left to undo.
-    pub(super) fn restored_issue_loaded(&mut self, issue: &Issue) {
-        // An issue opened by identifier learns its real ID now.
-        let mut adopted = false;
-        if let Some(current) = &mut self.store.current_issue
-            && current.id != issue.id
-            && current.identifier == issue.identifier
-        {
-            *current = issue.clone();
-            adopted = true;
-        }
+    pub(super) fn restored_issue_loaded(&mut self, issue_id: &IssueId, adopted: bool) {
         if let Some(restore) = &mut self.restore
-            && (adopted || restore.opened_issue.as_ref() == Some(&issue.id))
+            && (adopted || restore.opened_issue.as_ref() == Some(issue_id))
         {
             restore.opened_issue = None;
             if restore.is_done() {
@@ -499,7 +496,7 @@ mod tests {
         assert_eq!(after.nav.dest, Nav::Team(0, TeamSection::Issues));
         assert!(requested(
             &after,
-            |r| matches!(r, Request::Issues { team_id, .. } if team_id == "t2")
+            |r| matches!(r, Request::Issue(crate::usecase::issue::Request::TeamIssues { team_id, .. }) if team_id == "t2")
         ));
         after.handle_message(Message::Issues {
             team_id: TeamId::from("t2"),
@@ -523,7 +520,10 @@ mod tests {
         ));
         app.handle_message(Message::Teams(vec![team("t1", "ENG")]));
         // Nothing to open yet, and the team's list is not fetched meanwhile.
-        assert!(!requested(&app, |r| matches!(r, Request::Issues { .. })));
+        assert!(!requested(&app, |r| matches!(
+            r,
+            Request::Issue(crate::usecase::issue::Request::TeamIssues { .. })
+        )));
         assert!(
             app.snapshot(&origin()).is_none(),
             "nothing is recorded mid-restore"
@@ -540,7 +540,7 @@ mod tests {
         assert_eq!(app.store.custom_views[index].id, "v2");
         assert!(requested(
             &app,
-            |r| matches!(r, Request::ViewIssues { view_id, .. } if view_id == "v2")
+            |r| matches!(r, Request::Issue(crate::usecase::issue::Request::ViewIssues { view_id, .. }) if view_id == "v2")
         ));
     }
 
@@ -574,7 +574,7 @@ mod tests {
         assert_eq!(app.nav.dest, Nav::Team(0, TeamSection::Issues));
         assert!(requested(
             &app,
-            |r| matches!(r, Request::Issues { team_id, .. } if team_id == "t1")
+            |r| matches!(r, Request::Issue(crate::usecase::issue::Request::TeamIssues { team_id, .. }) if team_id == "t1")
         ));
     }
 
@@ -664,9 +664,9 @@ mod tests {
         assert_eq!(app.nav.screen, Screen::IssueDetail);
 
         app.handle_message(Message::Failed {
-            request: Box::new(Request::IssueDetail {
+            request: Box::new(Request::Issue(crate::usecase::issue::Request::Detail {
                 issue_id: IssueId::from("9"),
-            }),
+            })),
             error: "Entity not found".into(),
         });
         assert_eq!(app.nav.screen, Screen::IssueList);
@@ -692,7 +692,10 @@ mod tests {
         ));
         app.handle_message(Message::Teams(vec![team("t1", "ENG")]));
         app.cancel_restore();
-        assert!(requested(&app, |r| matches!(r, Request::Issues { .. })));
+        assert!(requested(&app, |r| matches!(
+            r,
+            Request::Issue(crate::usecase::issue::Request::TeamIssues { .. })
+        )));
         // The views arriving later no longer yank the user away.
         app.handle_message(Message::CustomViews(vec![view("v1")]));
         assert_eq!(app.nav.dest, Nav::Team(0, TeamSection::Issues));
@@ -719,10 +722,10 @@ mod tests {
         app.handle_message(Message::Teams(vec![team("t1", "ENG")]));
         assert!(requested(&app, |r| matches!(
             r,
-            Request::Issues {
+            Request::Issue(crate::usecase::issue::Request::TeamIssues {
                 preset: Preset::Backlog,
                 ..
-            }
+            })
         )));
         assert_eq!(app.list().filters.priority, Some(Priority::High));
     }
@@ -736,9 +739,12 @@ mod tests {
         assert_eq!(app.nav.detail_return, Screen::IssueList);
         assert!(requested(&app, |r| matches!(
             r,
-            Request::IssueDetail { issue_id } if issue_id == "ENG-9"
+            Request::Issue(crate::usecase::issue::Request::Detail { issue_id }) if issue_id == "ENG-9"
         )));
-        assert!(requested(&app, |r| matches!(r, Request::Issues { .. })));
+        assert!(requested(&app, |r| matches!(
+            r,
+            Request::Issue(crate::usecase::issue::Request::TeamIssues { .. })
+        )));
 
         let mut fresh = issue("9");
         fresh.id = IssueId::from("uuid-9");

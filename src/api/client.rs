@@ -8,8 +8,7 @@ use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
 use super::error::{ApiError, GraphQLError};
-use super::ids::*;
-use super::types::*;
+use crate::entity::*;
 
 const API_URL: &str = "https://api.linear.app/graphql";
 

@@ -1,6 +1,7 @@
 //! Where the user is: the screen, the destination behind it, and the way back.
 
 use super::*;
+use crate::usecase::project::Projects;
 
 #[derive(Debug)]
 pub struct Navigation {
@@ -54,120 +55,141 @@ impl App {
         }
     }
 
-    /// Queue the fetch that populates the current destination.
+    /// Open what the current destination shows. A list already holding it
+    /// asks for nothing; the use cases decide.
     pub fn reload_current_tab(&mut self) {
         match self.nav.dest {
             Nav::MyIssues => {
-                if let Some(user_id) = self.store.viewer_id.clone() {
-                    self.request(Request::MyIssues {
-                        user_id,
-                        after: None,
-                    });
+                // Until Linear says who the user is, the Viewer answer opens it.
+                if let Ok(open) = usecase::issue::open_my_issues(&mut self.store) {
+                    self.open_issues(IssueSource::My, open);
                 }
             }
             Nav::Views | Nav::Team(_, TeamSection::Views) => {
-                if !self.store.views_loaded {
-                    self.request(Request::CustomViews);
-                }
+                let request = usecase::view::ensure_views(&self.store);
+                self.send(request);
             }
             Nav::View(index) => {
-                if let Some(view) = self.store.custom_views.get(index) {
-                    let view_id = view.id.clone();
-                    self.request(match ViewKind::of(view) {
-                        ViewKind::Issues => Request::ViewIssues {
-                            view_id,
-                            after: None,
-                        },
-                        ViewKind::Projects => Request::ViewProjects {
-                            view_id,
-                            after: None,
-                        },
-                    });
+                let Some(view) = self.store.custom_views.get(index) else {
+                    return;
+                };
+                let view_id = view.id.clone();
+                if ViewKind::of(view) == ViewKind::Issues {
+                    let open = usecase::issue::open_view_issues(&mut self.store, view_id);
+                    self.open_issues(IssueSource::View, open);
+                } else {
+                    let open = usecase::project::open_view_projects(&mut self.store, view_id);
+                    self.open_projects(Projects::View, open);
                 }
             }
-            // A favorite's page reloads through `queue_detail_fetches`.
+            // A favorite's page opens through `queue_detail_fetches`.
             Nav::Favorite(_) => {}
             Nav::Team(_, section) => {
                 let Some(team_id) = self.team_id() else {
                     return;
                 };
-                let request = match section {
-                    TeamSection::Issues => Request::Issues {
-                        team_id,
-                        after: None,
-                        preset: self.view.lists[IssueSource::Team].preset,
-                    },
-                    TeamSection::Projects => Request::Projects {
-                        team_id,
-                        after: None,
-                    },
-                    TeamSection::Cycles => Request::Cycles {
-                        team_id,
-                        after: None,
-                    },
-                    TeamSection::Views => return,
-                };
-                self.request(request);
+                match section {
+                    TeamSection::Issues => {
+                        let preset = self.view.lists[IssueSource::Team].preset;
+                        let open =
+                            usecase::issue::open_team_issues(&mut self.store, team_id, preset);
+                        self.open_issues(IssueSource::Team, open);
+                    }
+                    TeamSection::Projects => {
+                        let open = usecase::project::open_team_projects(&mut self.store, team_id);
+                        self.open_projects(Projects::Team, open);
+                    }
+                    TeamSection::Cycles => {
+                        let open = usecase::cycle::open_team_cycles(&mut self.store, team_id);
+                        if open.replaced() {
+                            self.view.selected_cycle_index = 0;
+                        }
+                        self.send(open.request());
+                    }
+                    TeamSection::Views => {}
+                }
             }
         }
     }
 
-    /// Force a refetch of the current destination, discarding its cached flag.
+    /// Send what opening an issue list takes; a list that held something
+    /// else starts at its top.
+    pub(super) fn open_issues(&mut self, source: IssueSource, open: usecase::Open) {
+        if open.replaced() {
+            self.view.lists[source].selected = 0;
+        }
+        self.send(open.request());
+    }
+
+    /// Send what opening a list of projects takes.
+    fn open_projects(&mut self, projects: Projects, open: usecase::Open) {
+        if open.replaced() {
+            match projects {
+                Projects::Team => self.view.selected_project_index = 0,
+                Projects::View => self.view.selected_view_project_index = 0,
+            }
+        }
+        self.send(open.request());
+    }
+
+    /// Refresh: fetch what the current destination and screen show again.
     pub fn force_reload(&mut self) {
         self.nav.global_search = None;
-        self.outbox.prefetched.clear();
-        match self.nav.dest {
-            Nav::MyIssues => self.store.issues[IssueSource::My].loaded = false,
-            Nav::Views | Nav::Team(_, TeamSection::Views) => self.store.views_loaded = false,
-            Nav::View(_) => {
-                self.store.loaded_view_id = None;
-                self.store.loaded_view_projects_id = None;
+        self.store.forget_pages();
+        let request = match self.nav.dest {
+            Nav::MyIssues => usecase::issue::reload(&mut self.store, IssueSource::My),
+            Nav::Views | Nav::Team(_, TeamSection::Views) => {
+                Some(usecase::view::reload_views(&mut self.store).into())
             }
-            Nav::Team(_, TeamSection::Projects) => self.store.projects.loaded = false,
-            Nav::Team(_, TeamSection::Cycles) => self.store.cycles.loaded = false,
-            Nav::Team(_, TeamSection::Issues) | Nav::Favorite(_) => {}
+            Nav::View(_) if self.in_project_view() => {
+                usecase::project::reload(&mut self.store, Projects::View)
+            }
+            Nav::View(_) => usecase::issue::reload(&mut self.store, IssueSource::View),
+            Nav::Team(_, TeamSection::Projects) => {
+                usecase::project::reload(&mut self.store, Projects::Team)
+            }
+            Nav::Team(_, TeamSection::Cycles) => usecase::cycle::reload(&mut self.store),
+            Nav::Team(_, TeamSection::Issues) => {
+                usecase::issue::reload(&mut self.store, IssueSource::Team)
+            }
+            Nav::Favorite(_) => None,
+        };
+        match request {
+            Some(request) => self.request(request),
+            // Never opened yet: open it.
+            None => self.reload_current_tab(),
         }
         if self.nav.screen == Screen::ProjectDetail {
-            self.store.issues[IssueSource::Project].loaded = false;
+            let request = usecase::issue::reload(&mut self.store, IssueSource::Project);
+            self.send(request);
         }
         if self.nav.screen == Screen::CycleDetail {
-            self.store.issues[IssueSource::Cycle].loaded = false;
+            let request = usecase::issue::reload(&mut self.store, IssueSource::Cycle);
+            self.send(request);
         }
-        self.reload_current_tab();
         self.queue_detail_fetches();
     }
 
-    /// Queue whatever the current screen still needs but has not fetched yet.
+    /// Open whatever the current screen shows beyond its destination: the
+    /// open issue's thread, a project's or a cycle's issues.
     pub fn queue_detail_fetches(&mut self) {
         match self.nav.screen {
             Screen::IssueDetail => {
-                if let Some(issue) = &self.store.current_issue
-                    && issue.comments.is_none()
-                {
-                    let issue_id = issue.id.clone();
-                    self.request(Request::IssueDetail { issue_id });
-                }
+                let request = usecase::issue::ensure_thread(&self.store);
+                self.send(request);
             }
             Screen::ProjectDetail => {
-                if !self.store.issues[IssueSource::Project].loaded
-                    && let Some(project) = &self.nav.current_project
-                {
-                    let project_id = project.id.clone();
-                    self.request(Request::ProjectIssues {
-                        project_id,
-                        after: None,
-                    });
+                if let Some(project) = &self.nav.current_project {
+                    let id = project.id.clone();
+                    let open = usecase::issue::open_project_issues(&mut self.store, id);
+                    self.open_issues(IssueSource::Project, open);
                 }
             }
             Screen::CycleDetail => {
-                if !self.store.issues[IssueSource::Cycle].loaded
-                    && let Some(cycle) = &self.nav.current_cycle
-                {
-                    let cycle_id = cycle.id.clone();
-                    self.request(Request::CycleIssues {
-                        cycle_id,
-                        after: None,
-                    });
+                if let Some(cycle) = &self.nav.current_cycle {
+                    let id = cycle.id.clone();
+                    let open = usecase::issue::open_cycle_issues(&mut self.store, id);
+                    self.open_issues(IssueSource::Cycle, open);
                 }
             }
             _ => {}
@@ -215,34 +237,7 @@ impl App {
         self.nav.screen = screen;
         self.view.sidebar.focus = false;
 
-        let cached = match nav {
-            Nav::MyIssues => self.store.issues[IssueSource::My].loaded,
-            Nav::Views | Nav::Team(_, TeamSection::Views) => self.store.views_loaded,
-            Nav::View(index) => self.store.custom_views.get(index).is_some_and(|view| {
-                let loaded = match ViewKind::of(view) {
-                    ViewKind::Issues => &self.store.loaded_view_id,
-                    ViewKind::Projects => &self.store.loaded_view_projects_id,
-                };
-                loaded.as_ref() == Some(&view.id)
-            }),
-            Nav::Team(_, TeamSection::Issues) => self.store.issues[IssueSource::Team].loaded,
-            Nav::Team(_, TeamSection::Projects) => self.store.projects.loaded,
-            Nav::Team(_, TeamSection::Cycles) => self.store.cycles.loaded,
-            Nav::Favorite(_) => true,
-        };
-        if let Nav::View(_) = nav
-            && !cached
-        {
-            // A different view's rows are still in the list; clear them so
-            // the old results are not briefly attributed to the new view.
-            self.reset_list(IssueSource::View);
-            self.store.view_projects.items.clear();
-            self.store.view_projects.page_info = PageInfo::default();
-            self.view.selected_view_project_index = 0;
-        }
-        if !cached {
-            self.reload_current_tab();
-        }
+        self.reload_current_tab();
     }
 
     /// Go to the current team's issue list.
@@ -269,33 +264,18 @@ impl App {
         }
     }
 
-    /// Switch the current team, discarding everything scoped to the old one.
+    /// Switch the current team; the old team's lists go.
     fn select_team_index(&mut self, index: usize) {
         self.nav.team = index;
         // The old team's cursors mean nothing to the new team's lists.
-        self.reset_list(IssueSource::Team);
-        self.store.projects.page_info = PageInfo::default();
-        self.store.cycles.page_info = PageInfo::default();
-        // The old team's projects and cycles would otherwise sit on screen,
-        // under the new team's name, until the refetch lands.
-        self.store.projects.items.clear();
-        self.store.cycles.items.clear();
+        self.view.lists[IssueSource::Team].selected = 0;
         self.view.selected_project_index = 0;
         self.view.selected_cycle_index = 0;
         self.view.lists[IssueSource::Team].filters.clear();
-        self.invalidate_tab_caches();
         if let Some(team_id) = self.team_id() {
-            self.ensure_team_context(team_id);
+            let request = usecase::team::switch(&mut self.store, team_id);
+            self.send(request);
         }
-    }
-
-    pub fn invalidate_tab_caches(&mut self) {
-        self.store.issues[IssueSource::My].loaded = false;
-        self.store.loaded_view_id = None;
-        self.store.projects.loaded = false;
-        self.store.cycles.loaded = false;
-        self.store.issues[IssueSource::Project].loaded = false;
-        self.store.issues[IssueSource::Cycle].loaded = false;
     }
 
     pub fn open_issue_detail(&mut self) {
@@ -311,10 +291,10 @@ impl App {
             self.nav.detail_return = self.nav.screen;
             self.nav.detail_return_nav = self.nav.dest;
         }
-        self.store.current_issue = Some(issue.clone());
         self.view.detail_scroll = 0;
         self.nav.screen = Screen::IssueDetail;
-        self.queue_detail_fetches();
+        let request = usecase::issue::open(&mut self.store, issue.clone());
+        self.send(request);
     }
 
     /// Leave the detail view for wherever it was opened from.
@@ -373,10 +353,8 @@ impl App {
 
     /// Drop the cached issue detail and fetch it again.
     pub fn refresh_detail(&mut self) {
-        if let Some(issue) = &mut self.store.current_issue {
-            issue.comments = None;
-        }
-        self.queue_detail_fetches();
+        let request = usecase::issue::refresh(&mut self.store);
+        self.send(request);
     }
 
     /// Open a project's page from anywhere, as if picked from the team's
@@ -479,15 +457,11 @@ impl App {
     /// and each team's page holds the views scoped to it; the tab picks issue
     /// or project views.
     pub fn listed_views(&self) -> Vec<usize> {
-        let scope = self.views_scope();
-        self.store
-            .custom_views
-            .iter()
-            .enumerate()
-            .filter(|(_, v)| v.team.as_ref().map(|t| &t.id) == scope)
-            .filter(|(_, v)| ViewKind::of(v) == self.view.view_kind)
-            .map(|(i, _)| i)
-            .collect()
+        usecase::view::listed(
+            &self.store.custom_views,
+            self.views_scope(),
+            self.view.view_kind == ViewKind::Issues,
+        )
     }
 
     pub fn set_view_kind(&mut self, kind: ViewKind) {

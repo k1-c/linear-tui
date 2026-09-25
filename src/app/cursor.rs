@@ -54,21 +54,11 @@ impl App {
     }
 
     fn maybe_prefetch_cycles(&mut self) {
-        if self.view.selected_cycle_index + PREFETCH_MARGIN < self.store.cycles.items.len()
-            || !self.store.cycles.page_info.has_next_page
-        {
+        if self.view.selected_cycle_index + PREFETCH_MARGIN < self.store.cycles.items.len() {
             return;
         }
-        if let (Some(team_id), Some(cursor)) = (
-            self.team_id(),
-            self.store.cycles.page_info.end_cursor.clone(),
-        ) && self.outbox.prefetched.insert(cursor.clone())
-        {
-            self.request(Request::Cycles {
-                team_id,
-                after: Some(cursor),
-            });
-        }
+        let request = usecase::cycle::next_page(&mut self.store);
+        self.send(request);
     }
 
     /// Largest scroll offset that still shows content.

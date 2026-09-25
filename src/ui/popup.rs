@@ -7,9 +7,9 @@ use ratatui::{
 };
 
 use super::widgets::{avatar, centered_rect, priority_glyph, state_glyph, user_name};
-use crate::api::types::Priority;
 use crate::app::{App, FilterKind, Popup};
 use crate::config::Theme;
+use crate::entity::Priority;
 use crate::grouping::GroupBy;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -144,7 +144,7 @@ fn draw_team_select(f: &mut Frame, app: &mut App) {
             let color = team
                 .color
                 .as_deref()
-                .and_then(crate::api::types::hex_color)
+                .and_then(crate::look::hex_color)
                 .unwrap_or(th.accent);
             numbered_item(
                 num(i),

@@ -14,24 +14,14 @@ pub struct IssueList {
     /// The live search box. Each list keeps its own, as it keeps its own
     /// filters: narrowing one list must not quietly narrow another.
     pub search: Input,
-    pub filters: Filters,
+    pub filters: IssueFilter,
 }
 
 impl IssueList {
     /// Whether an issue survives this list's preset, search box, and filters.
     /// `query` is the search text, lowercased once by the caller.
     fn admits(&self, issue: &Issue, query: &str) -> bool {
-        self.preset.admits(issue)
-            && (query.is_empty()
-                || issue.title.to_lowercase().contains(query)
-                || issue.identifier.to_lowercase().contains(query))
-            && self.filters.status.as_ref().is_none_or(|status| {
-                issue
-                    .state
-                    .as_ref()
-                    .is_some_and(|state| &state.name == status)
-            })
-            && self.filters.priority.is_none_or(|p| issue.priority == p)
+        usecase::issue::matches(issue, self.preset, &self.filters, query)
     }
 }
 
@@ -119,23 +109,13 @@ fn layout_of(sections: &[Section<'_>], by: GroupBy) -> Vec<ListRow> {
     rows
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct Filters {
-    pub status: Option<String>,
-    pub priority: Option<Priority>,
+/// How the status line names a list's filter.
+pub trait FilterSummary {
+    fn summary(&self) -> String;
 }
 
-impl Filters {
-    pub fn is_active(&self) -> bool {
-        self.status.is_some() || self.priority.is_some()
-    }
-
-    pub fn clear(&mut self) {
-        self.status = None;
-        self.priority = None;
-    }
-
-    pub fn summary(&self) -> String {
+impl FilterSummary for IssueFilter {
+    fn summary(&self) -> String {
         let mut parts = Vec::new();
         if let Some(s) = &self.status {
             parts.push(format!("Status:{s}"));
@@ -339,11 +319,8 @@ impl App {
             && self.nav.global_search.is_none()
             && let Some(team_id) = self.team_id()
         {
-            self.request(Request::Issues {
-                team_id,
-                after: None,
-                preset,
-            });
+            let open = usecase::issue::open_team_issues(&mut self.store, team_id, preset);
+            self.send(open.request());
         }
     }
 
@@ -373,84 +350,20 @@ impl App {
         if self.selected_index() + PREFETCH_MARGIN < visible {
             return;
         }
-        let info = &self.store.issues[source].page_info;
-        if !info.has_next_page {
-            return;
-        }
-        let Some(cursor) = info.end_cursor.clone() else {
-            return;
-        };
-        let after = Some(cursor.clone());
-        let request = match source {
-            IssueSource::Team => self.team_id().map(|team_id| Request::Issues {
-                team_id,
-                after,
-                preset: self.view.lists[IssueSource::Team].preset,
-            }),
-            IssueSource::My => self
-                .store
-                .viewer_id
-                .clone()
-                .map(|user_id| Request::MyIssues { user_id, after }),
-            IssueSource::View => self
-                .store
-                .loaded_view_id
-                .clone()
-                .map(|view_id| Request::ViewIssues { view_id, after }),
-            IssueSource::Project => {
-                self.nav
-                    .current_project
-                    .as_ref()
-                    .map(|p| Request::ProjectIssues {
-                        project_id: p.id.clone(),
-                        after,
-                    })
-            }
-            IssueSource::Cycle => self
-                .nav
-                .current_cycle
-                .as_ref()
-                .map(|c| Request::CycleIssues {
-                    cycle_id: c.id.clone(),
-                    after,
-                }),
-        };
-        if let Some(request) = request
-            && self.outbox.prefetched.insert(cursor)
-        {
-            self.request(request);
-        }
+        let request = usecase::issue::next_page(&mut self.store, source);
+        self.send(request);
     }
 
     pub(super) fn maybe_prefetch_projects(&mut self) {
-        let in_view = self.in_project_view();
-        let info = if in_view {
-            &self.store.view_projects.page_info
-        } else {
-            &self.store.projects.page_info
-        };
-        if self.project_cursor() + PREFETCH_MARGIN < self.project_rows().len()
-            || !info.has_next_page
-        {
+        if self.project_cursor() + PREFETCH_MARGIN < self.project_rows().len() {
             return;
         }
-        let Some(cursor) = info.end_cursor.clone() else {
-            return;
-        };
-        let after = Some(cursor.clone());
-        let request = if in_view {
-            self.store
-                .loaded_view_projects_id
-                .clone()
-                .map(|view_id| Request::ViewProjects { view_id, after })
+        let projects = if self.in_project_view() {
+            usecase::project::Projects::View
         } else {
-            self.team_id()
-                .map(|team_id| Request::Projects { team_id, after })
+            usecase::project::Projects::Team
         };
-        if let Some(request) = request
-            && self.outbox.prefetched.insert(cursor)
-        {
-            self.request(request);
-        }
+        let request = usecase::project::next_page(&mut self.store, projects);
+        self.send(request);
     }
 }

@@ -111,12 +111,8 @@ impl App {
 
     /// Ask for a team's states and members, unless they are loaded or on the way.
     pub(super) fn ensure_team_context(&mut self, team_id: TeamId) {
-        if self.store.team_contexts.contains_key(&team_id)
-            || !self.outbox.team_contexts.insert(team_id.clone())
-        {
-            return;
-        }
-        self.request(Request::TeamContext { team_id });
+        let request = usecase::team::ensure_context(&mut self.store, team_id);
+        self.send(request);
     }
 
     /// The team whose states or members the open change popup offers.

@@ -1,6 +1,8 @@
 //! The navigation sidebar: its rows, Favorites, and moving through it.
 
 use super::*;
+use crate::look::{StateLook, hex_color};
+use crate::usecase::favorite::{Target, TeamPage};
 
 /// One line of the navigation sidebar.
 #[derive(Debug, Clone)]
@@ -222,67 +224,71 @@ impl App {
     /// destination, so opening one lights the same row as getting there any
     /// other way.
     pub(super) fn favorite_action(&self, index: usize) -> SidebarAction {
-        let fav = &self.store.favorites[index];
-        if fav.is_folder() {
-            return SidebarAction::Fold(index);
+        let store = &self.store;
+        let team = |id: &TeamId| store.teams.iter().position(|t| &t.id == id);
+        match self.favorite_target(index) {
+            Target::Folder => SidebarAction::Fold(index),
+            Target::View(id) => match store.custom_views.iter().position(|v| v.id == id) {
+                Some(i) => SidebarAction::Go(Nav::View(i)),
+                None => SidebarAction::Go(Nav::Favorite(index)),
+            },
+            Target::MyIssues => SidebarAction::Go(Nav::MyIssues),
+            Target::TeamPage(id, page) => match team(&id) {
+                Some(i) => SidebarAction::Go(Nav::Team(
+                    i,
+                    match page {
+                        TeamPage::Issues => TeamSection::Issues,
+                        TeamPage::Cycles => TeamSection::Cycles,
+                        TeamPage::Projects => TeamSection::Projects,
+                    },
+                )),
+                None => SidebarAction::Go(Nav::Favorite(index)),
+            },
+            // Opened in place, under the favorite in the sidebar.
+            _ => SidebarAction::Go(Nav::Favorite(index)),
         }
-        if let Some(view) = &fav.custom_view
-            && let Some(i) = self.store.custom_views.iter().position(|v| v.id == view.id)
-        {
-            return SidebarAction::Go(Nav::View(i));
-        }
-        if fav.kind == "predefinedView" {
-            if fav.predefined_view_type.as_deref() == Some("myIssues") {
-                return SidebarAction::Go(Nav::MyIssues);
-            }
-            let team = fav
-                .predefined_view_team
-                .as_ref()
-                .and_then(|t| self.store.teams.iter().position(|x| x.id == t.id));
-            let section = match fav.predefined_view_type.as_deref() {
-                Some("issues" | "allIssues" | "activeIssues" | "backlog") => {
-                    Some(TeamSection::Issues)
-                }
-                Some("cycles") => Some(TeamSection::Cycles),
-                Some("projects") => Some(TeamSection::Projects),
-                _ => None,
-            };
-            if let (Some(team), Some(section)) = (team, section) {
-                return SidebarAction::Go(Nav::Team(team, section));
-            }
-        }
-        SidebarAction::Go(Nav::Favorite(index))
+    }
+
+    /// Where the favorite at `index` leads.
+    fn favorite_target(&self, index: usize) -> Target {
+        usecase::favorite::target(
+            &self.store.favorites[index],
+            &self.store.custom_views,
+            &self.store.teams,
+        )
     }
 
     /// Open a favorite that has no destination of its own: a project, cycle,
     /// or issue in place, and anything this client has no page for — a
     /// document, a label, a workspace-wide page — on linear.app.
     pub(super) fn open_favorite(&mut self, index: usize) {
-        let Some(fav) = self.store.favorites.get(index).cloned() else {
+        if index >= self.store.favorites.len() {
             return;
-        };
+        }
         self.view.sidebar.focus = false;
-        if let Some(project) = fav.project {
-            self.nav.dest = Nav::Favorite(index);
-            self.open_project(project);
-        } else if let Some(cycle) = fav.cycle {
-            self.nav.dest = Nav::Favorite(index);
-            self.open_cycle(cycle);
-        } else if let Some(issue) = fav.issue {
-            // Just enough to draw the header; the detail fetch fills the rest.
-            let stub = Issue {
-                id: issue.id,
-                identifier: issue.identifier,
-                title: issue.title,
-                state: issue.state,
-                ..Issue::default()
-            };
-            self.open_issue_from_list(&stub);
-            self.nav.dest = Nav::Favorite(index);
-        } else if let Some(url) = fav.url {
-            self.request(Request::OpenUrl(url));
-        } else {
-            self.set_status("This favorite cannot be opened here");
+        match self.favorite_target(index) {
+            Target::Project(project) => {
+                self.nav.dest = Nav::Favorite(index);
+                self.open_project(project);
+            }
+            Target::Cycle(cycle) => {
+                self.nav.dest = Nav::Favorite(index);
+                self.open_cycle(cycle);
+            }
+            Target::Issue(issue) => {
+                // Just enough to draw the header; the detail fetch fills the rest.
+                let stub = Issue {
+                    id: issue.id,
+                    identifier: issue.identifier,
+                    title: issue.title,
+                    state: issue.state,
+                    ..Issue::default()
+                };
+                self.open_issue_from_list(&stub);
+                self.nav.dest = Nav::Favorite(index);
+            }
+            Target::Browser(url) => self.request(usecase::favorite::Request::OpenInBrowser(url)),
+            _ => self.set_status("This favorite cannot be opened here"),
         }
     }
 
