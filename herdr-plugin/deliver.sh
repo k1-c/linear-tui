@@ -75,6 +75,10 @@ for file in "$outbox"/*.json; do
   mv "$file" "$claimed" 2>/dev/null || continue
   case "$(jq -r '.kind // empty' "$claimed")" in
   prompt) deliver_prompt "$claimed" ;;
+  focus)
+    pane="$(jq -r '.pane // empty' "$claimed")"
+    "$H" agent focus "$pane" >/dev/null 2>&1 || notify "linear-tui" "Could not switch to $pane"
+    ;;
   *) printf 'linear-tui plugin: unknown request in %s\n' "$claimed" >&2 ;;
   esac
   rm -f "$claimed"

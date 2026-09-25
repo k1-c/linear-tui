@@ -441,3 +441,25 @@ mod timings {
         });
     }
 }
+
+#[test]
+fn an_issue_a_herdr_agent_works_on_carries_its_state() {
+    let mut app = app();
+    app.set_agents(
+        crate::herdr::parse_agents(
+            r#"{"version":1,"agents":[{"pane":"w1:p1","workspace_label":"docs","agent":"claude","status":"blocked","issue":"ENG-1"}]}"#,
+        )
+        .unwrap(),
+    );
+    let lines = render(&mut app, 120, 20);
+    let row = |id: &str| lines.iter().find(|l| l.contains(id)).unwrap().clone();
+    assert!(row("ENG-1").contains('\u{25b2}'), "{}", row("ENG-1"));
+    assert!(!row("ENG-2").contains('\u{25b2}'), "{}", row("ENG-2"));
+
+    // The issue page names the agent and how to reach it.
+    let issue = app.store.issues[IssueSource::Team].items[0].clone();
+    app.open_issue_from_list(&issue);
+    let text = screen_text(&render(&mut app, 140, 30));
+    assert!(text.contains("claude waiting for you"), "{text}");
+    assert!(text.contains("docs · g w to go"), "{text}");
+}

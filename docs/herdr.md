@@ -13,8 +13,9 @@ without it. Everything herdr-specific lives in the plugin's scripts.
 herdr plugin install k1-c/linear-tui/herdr-plugin
 ```
 
-It needs herdr 0.9.1 or newer, `jq`, and `linear-tui` on your `PATH` (or set
-`LINEAR_TUI_BIN`, below). For a local checkout, link it instead:
+It needs herdr 0.9.1 or newer, `jq`, and a `linear-tui` that has
+`linear-tui paths` (the release that ships this plugin, or newer) on your `PATH`
+— or set `LINEAR_TUI_BIN`, below. For a local checkout, link it instead:
 `herdr plugin link ./herdr-plugin`.
 
 Bind the action to a key in herdr's `config.toml`:
@@ -48,6 +49,39 @@ again in each pane it was running in — found from the view snapshots that name
 a herdr pane, were never closed, and belong to a process that is gone. The pane
 must have come back as a plain shell in the same directory; linear-tui then
 reopens its own view.
+
+## Agents on issues
+
+The plugin keeps a list of herdr's agents in `$STATE/herdr/agents.json`,
+refreshed on every agent state change, when panes, tabs, workspaces and
+worktrees open or close, and at startup. Each agent is tied to the issue its
+checkout's branch names — `me/eng-42-checkout-fails` is ENG-42, as Linear
+suggests branch names.
+
+linear-tui, inside herdr, reads the list once a second when it changes:
+
+- an issue row carries the state of the agent working on it: `▲` waiting for
+  you, `●` working, `○` idle, `✓` done;
+- the issue page's panel names the agent, its state, and its workspace;
+- `g w` brings that agent's pane to the front (only inside herdr).
+
+With several agents on one issue, the one waiting for you is shown, then the
+one at work.
+
+```json
+{
+  "version": 1,
+  "updated_at": "2026-09-25T06:01:02Z",
+  "agents": [
+    { "pane": "w2:p1", "workspace": "w2", "workspace_label": "shop",
+      "agent": "claude", "status": "working",
+      "cwd": "/home/me/dev/shop-worktrees/eng-42", "issue": "ENG-42" }
+  ]
+}
+```
+
+`status` is herdr's: `working`, `blocked`, `idle`, `done`, or `unknown`.
+`issue` is `null` for an agent on a branch that names none.
 
 ## Notes for the agent
 
@@ -88,6 +122,9 @@ leaves one file per request in `$STATE/herdr/outbox/<millis>-<pid>.json`
   "hint": "`linear-tui context` shows this view …"
 }
 ```
+
+`g w` leaves `{ "version": 1, "from": { … }, "kind": "focus", "pane": "w2:p1" }`,
+which `deliver` answers with `herdr agent focus`.
 
 `deliver` claims each file by renaming it, handles it, and deletes it. `from`
 is taken from `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`, and the working directory.
@@ -151,7 +188,8 @@ Checked against herdr 0.9.1 and Claude Code 2.1:
 - `lib.sh` — shared helpers: config, `PATH`, the `linear-tui` binary.
 - `open.sh` — the `open` and `open-link` actions.
 - `deliver.sh`, `prompt.example.md` — the `deliver` action, and a prompt template to start from.
-- `restore.sh` — the startup hook.
+- `restore.sh` — the startup hook that restarts linear-tui in its panes.
+- `agents.sh` — keeps `agents.json` current.
 - `event.sh`, `notice.md` — the opt-in agent notice.
 
 Failures go to herdr's plugin log: `herdr plugin log list --plugin k1-c.linear-tui`.

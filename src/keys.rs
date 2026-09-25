@@ -337,6 +337,8 @@ pub struct Binding {
     pub help: Option<Help>,
     pub hint: Option<Hint>,
     pub command: Option<Command>,
+    /// Only inside herdr: elsewhere it neither answers nor is listed.
+    pub herdr_only: bool,
 }
 
 impl Binding {
@@ -403,8 +405,19 @@ impl Binding {
         self
     }
 
+    /// Mark a binding that only makes sense inside herdr.
+    const fn herdr_only(mut self) -> Self {
+        self.herdr_only = true;
+        self
+    }
+
+    /// Whether it exists in this terminal.
+    fn shown(&self) -> bool {
+        !self.herdr_only || crate::herdr::available()
+    }
+
     fn applies_in(&self, ctx: Ctx) -> bool {
-        self.context.contains(&ctx)
+        self.context.contains(&ctx) && self.shown()
     }
 
     fn matches(&self, key: &KeyEvent) -> bool {
@@ -420,6 +433,7 @@ const fn bind(keys: &'static [Key], context: &'static [Ctx], action: fn(&mut App
         help: None,
         hint: None,
         command: None,
+        herdr_only: false,
     }
 }
 
@@ -576,6 +590,21 @@ pub static BINDINGS: &[Binding] = &[
     .hint(0, "c", "cycles")
     .command("Go to cycles", &["sprint"])
     .on(NORMAL),
+    // Inside herdr: the pane of the agent working on the issue. Linear has
+    // no agents beside it, and no `g w`.
+    bind(&[plain('w')], &[GoTo], App::jump_to_agent)
+        .help(
+            Section::Agent,
+            "g w",
+            "Go to the agent working on the issue",
+        )
+        .hint(0, "w", "agent")
+        .command(
+            "Go to the agent working on this issue",
+            &["herdr", "pane", "workspace"],
+        )
+        .on(ISSUE_SCREENS)
+        .herdr_only(),
     // vim: gg
     bind(&[plain('g')], &[GoTo], first).hint(0, "g", "top"),
     // Destination jumps by number, a TUI shorthand for the sidebar. Linear has
@@ -864,7 +893,7 @@ pub fn context(app: &App) -> Ctx {
 pub fn commands(ctx: Ctx) -> Vec<&'static Binding> {
     let mut commands: Vec<&Binding> = BINDINGS
         .iter()
-        .filter(|b| b.command.is_some_and(|c| c.on.contains(&ctx)))
+        .filter(|b| b.shown() && b.command.is_some_and(|c| c.on.contains(&ctx)))
         .collect();
     commands.sort_by_key(|b| b.command.map(|c| c.section.palette_rank()));
     commands
@@ -929,6 +958,7 @@ impl Binding {
 pub fn hints(ctx: Ctx) -> Vec<&'static Hint> {
     let mut hints: Vec<&Hint> = BINDINGS
         .iter()
+        .filter(|b| b.shown())
         .filter_map(|b| b.hint.as_ref())
         .filter(|h| h.on.contains(&ctx))
         .collect();
@@ -940,6 +970,7 @@ pub fn hints(ctx: Ctx) -> Vec<&'static Hint> {
 pub fn help_rows(section: Section) -> impl Iterator<Item = &'static Help> {
     BINDINGS
         .iter()
+        .filter(|b| b.shown())
         .filter_map(|b| b.help.as_ref())
         .filter(move |h| h.section == section)
 }

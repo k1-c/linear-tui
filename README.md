@@ -147,8 +147,9 @@ Every command takes `--json`. The output formats are specified in
 
 With [herdr](https://herdr.dev/), the plugin in `herdr-plugin/` opens
 linear-tui as a pane over any workspace, delivers your notes to the agent next
-to it, opens Ctrl+clicked Linear issue links in linear-tui, and restarts
-linear-tui in its panes after herdr restarts:
+to it, shows which issues agents are working on, opens Ctrl+clicked Linear
+issue links in linear-tui, and restarts linear-tui in its panes after herdr
+restarts:
 
 ```sh
 herdr plugin install k1-c/linear-tui/herdr-plugin
@@ -244,6 +245,10 @@ clipboard.
 | `n` | Note on the issue under the cursor (`Ctrl+Enter` to add) |
 | `Shift+N` | Note on the whole view |
 | `Ctrl+S` | Send the notes to your agent |
+| `g w` | Go to the herdr agent working on the issue (inside herdr) |
+
+Inside herdr, an issue row also shows the state of the agent working on it —
+`▲` waiting for you, `●` working, `○` idle.
 
 ### Copy and open
 

@@ -80,8 +80,9 @@ impl App {
         if self.herdr {
             self.request(Request::Herdr(handoff));
         } else {
-            let Handoff::Prompt { text, .. } = handoff;
-            self.outbox.clipboard = Some(text);
+            if let Handoff::Prompt { text, .. } = handoff {
+                self.outbox.clipboard = Some(text);
+            }
             self.set_status("Notes copied — paste them into your agent");
         }
     }
@@ -96,9 +97,12 @@ impl App {
         });
     }
 
-    /// The hand-off to herdr failed: keep the prompt by copying it.
-    pub(super) fn notes_not_delivered(&mut self, handoff: &Handoff, error: &str) {
-        let Handoff::Prompt { text, .. } = handoff;
+    /// A hand-off to herdr failed. A prompt is kept by copying it.
+    pub(super) fn handoff_failed(&mut self, handoff: &Handoff, error: &str) {
+        let Handoff::Prompt { text, .. } = handoff else {
+            self.set_error(format!("Could not reach herdr: {error}"));
+            return;
+        };
         self.outbox.clipboard = Some(text.clone());
         self.set_error(format!(
             "Could not hand the notes to herdr: {error}\n\nThey are on the clipboard instead."
@@ -220,7 +224,10 @@ mod tests {
         type_note(&mut app, "the top three are one bug");
         let Handoff::Prompt {
             text, notes, view, ..
-        } = app.notes_prompt();
+        } = app.notes_prompt()
+        else {
+            panic!("notes make a prompt");
+        };
         assert_eq!(view, "Engineering › Issues");
         assert_eq!(
             notes,

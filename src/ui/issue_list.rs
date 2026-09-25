@@ -16,13 +16,14 @@ use ratatui::{
 use unicode_width::UnicodeWidthStr;
 
 use super::widgets::{
-    avatar, estimate, fit, label_chip, message_row, priority_glyph, short_date, state_glyph,
-    truncate, user_name,
+    agent_glyph, avatar, estimate, fit, label_chip, message_row, priority_glyph, short_date,
+    state_glyph, truncate, user_name,
 };
 use crate::api::types::{Issue, hex_color};
 use crate::app::{App, Chip, IssueSource, ListRow, ListView};
 use crate::config::Theme;
 use crate::grouping::{GroupBy, Preset};
+use crate::herdr::AgentStatus;
 
 /// The issue-list screen: preset chips over the grouped list.
 pub fn draw(f: &mut Frame, app: &mut App, area: Rect) {
@@ -192,10 +193,13 @@ pub fn draw_list(f: &mut Frame, app: &mut App, area: Rect) -> usize {
             ListRow::Issue { ordinal, depth } => match issues.get(*ordinal) {
                 Some(issue) => issue_line(
                     issue,
-                    *depth,
+                    RowState {
+                        depth: *depth,
+                        selected: Some(index) == selected_row,
+                        agent: app.agent_for(&issue.identifier).map(|a| a.status),
+                    },
                     id_width,
                     width,
-                    Some(index) == selected_row,
                     columns,
                     &th,
                 ),
@@ -245,18 +249,32 @@ pub struct Columns {
     pub assignee: bool,
 }
 
+/// What sets one row apart from the others.
+#[derive(Debug, Clone, Copy)]
+pub struct RowState {
+    /// How deep a sub-issue nests under its parent.
+    pub depth: u8,
+    pub selected: bool,
+    /// The state of a herdr agent working on the issue.
+    pub agent: Option<AgentStatus>,
+}
+
 /// One issue row. Columns drop out from the right as the pane narrows, in
 /// roughly the order Linear hides them: labels first, then project, estimate,
 /// date — the title and assignee go last.
 pub fn issue_line(
     issue: &Issue,
-    depth: u8,
+    row: RowState,
     id_width: usize,
     width: usize,
-    selected: bool,
     columns: Columns,
     th: &Theme,
 ) -> Line<'static> {
+    let RowState {
+        depth,
+        selected,
+        agent,
+    } = row;
     let show_labels = width >= 110;
     let show_project = width >= 90 && columns.project;
     let show_estimate = width >= 80;
@@ -265,6 +283,11 @@ pub fn issue_line(
 
     // Right-hand cluster, built first so the title gets whatever is left.
     let mut right: Vec<Span<'static>> = Vec::new();
+    // A herdr agent on the issue leads the cluster: it is what changes.
+    if let Some(status) = agent {
+        right.push(agent_glyph(status, th));
+        right.push(Span::raw(" "));
+    }
     if show_labels && let Some(labels) = &issue.labels {
         for label in labels.nodes.iter().take(2) {
             let mut chip = label_chip(label, th);
