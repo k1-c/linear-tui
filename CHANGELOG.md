@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1] - 2026-09-25
+
+### Documentation
+
+- Describe the layers and how to write the use case layer
+- **e2e**: Run the end-to-end tests locally from mise.local.toml
+
+### Miscellaneous
+
+- Ignore Claude Code worktrees
+
+### Refactoring
+
+- Layer the crate into entities, use cases, and adapters
+- Group src into one directory per layer
+- Group the layers into core, interface, and infra
+
+### Styling
+
+- Format the merged imports
+
+### Testing
+
+- **usecase**: Check that the use case layer reads as the specification
+- **e2e**: Read an empty team variable as no choice
+
+### Build
+
+- Add a coverage task with cargo-llvm-cov
+- Include store and entity in the coverage summary
+
+
+
 ## [0.9.0] - 2026-09-25
 
 ### Documentation
