@@ -189,13 +189,26 @@ before setup) the job says so and passes.
 
 ### Running them locally
 
-With the same variables exported:
+Put the same variables in `mise.local.toml` at the root of the checkout.
+It is git-ignored, and mise reads it for every task:
+
+```toml
+[env]
+LINEAR_E2E_API_KEY_A = "lin_api_…"
+LINEAR_E2E_WORKSPACE_A = "<A's URL key>"
+LINEAR_E2E_API_KEY_B = "lin_api_…"
+LINEAR_E2E_WORKSPACE_B = "<B's URL key>"
+```
+
+Then one command runs them, in about two minutes:
 
 ```sh
 mise run e2e     # cargo test --test e2e -- --ignored --test-threads=1
 ```
 
-A plain `cargo test` never touches Linear: the scenarios are `#[ignore]`d.
+Run them before merging a change to what linear-tui shows or does, rather
+than waiting for CI. A plain `cargo test` never touches Linear: the
+scenarios are `#[ignore]`d.
 
 ## Documentation
 

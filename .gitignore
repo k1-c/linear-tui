@@ -1,3 +1,6 @@
 /target
 # Claude
 .claude/settings.local.json
+
+# Local mise settings, such as the E2E credentials (docs/development.md)
+mise.local.toml
