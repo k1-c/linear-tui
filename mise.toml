@@ -9,7 +9,9 @@
 # rustls, so there is no system OpenSSL or pkg-config to install.
 
 [tools]
-rust = "stable"
+rust = { version = "stable", components = "llvm-tools-preview" }
+# `mise run coverage`
+"aqua:taiki-e/cargo-llvm-cov" = "0.9.1"
 
 [tasks.fmt]
 description = "Format the workspace"
@@ -30,6 +32,17 @@ run = "cargo build"
 [tasks.dev]
 description = "Run the TUI from source"
 run = "cargo run"
+
+[tasks.coverage]
+description = "Line coverage of the unit tests, by file; the use case layer first"
+run = [
+    "cargo llvm-cov --summary-only 2>/dev/null | grep -E '^(Filename|usecase/)'",
+    "cargo llvm-cov report --summary-only | grep -E '^(Filename|TOTAL)'",
+]
+
+[tasks."coverage:html"]
+description = "Line coverage as a browsable report in target/llvm-cov/html"
+run = "cargo llvm-cov --html"
 
 [tasks.verify]
 description = "Format, lint, test, and build, in that order"
