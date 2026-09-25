@@ -17,6 +17,18 @@ An `<ID>` is an identifier in any case (`ENG-123`, `eng-123`), an issue URL
 (`https://linear.app/<org>/issue/ENG-123/…`), or an issue UUID. An argument
 given as `-` is read from stdin, so a multi-line body needs no quoting.
 
+## `linear-tui open <ID>`
+
+Not headless: starts the TUI on that issue, over the team's issue list,
+instead of reopening the remembered view. The herdr plugin's link handler uses
+it.
+
+## `linear-tui paths [--json]`
+
+Where linear-tui keeps its files: `config` (`config.toml`) and `state` (view
+snapshots, and the herdr plugin's outbox). With `--json`:
+`{ "config": "…", "state": "…" }`. Honors `LINEAR_TUI_STATE_DIR`.
+
 ## `linear-tui context [--json] [--workspace <path>]`
 
 What linear-tui is showing in the repository of the current directory (or of

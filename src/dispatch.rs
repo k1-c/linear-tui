@@ -163,6 +163,10 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
             open::that_detached(url)?;
             Message::Mutated("Opened in browser")
         }
+        Request::Herdr(handoff) => {
+            crate::herdr::deliver(handoff).await?;
+            Message::Mutated(handoff.done())
+        }
     })
 }
 

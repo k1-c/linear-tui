@@ -137,6 +137,7 @@ linear-tui issue show ENG-42             # description, fields, and comments as 
 linear-tui issue comment ENG-42 -        # post a comment read from stdin
 linear-tui issue status ENG-42 "In Review"
 linear-tui issue create --team ENG --title "Retry payment webhooks"
+linear-tui open ENG-42                   # the TUI, on that issue (an issue URL works too)
 ```
 
 Every command takes `--json`. The output formats are specified in
@@ -145,8 +146,9 @@ Every command takes `--json`. The output formats are specified in
 ### In herdr
 
 With [herdr](https://herdr.dev/), the plugin in `herdr-plugin/` opens
-linear-tui as a pane over any workspace and can introduce it to the agents you
-start:
+linear-tui as a pane over any workspace, delivers your notes to the agent next
+to it, opens Ctrl+clicked Linear issue links in linear-tui, and restarts
+linear-tui in its panes after herdr restarts:
 
 ```sh
 herdr plugin install k1-c/linear-tui/herdr-plugin
@@ -230,6 +232,19 @@ type there too. Until you type, they keep their single keys — `j` / `k` to mov
 | `i` | Assign to me |
 | `m` | Add a comment (`Ctrl+Enter` to send) |
 
+### Notes for your agent
+
+Linear has no agent beside it, so these are linear-tui's own. Jot remarks while
+you read, then send them all as one prompt: inside herdr to the agent in the
+same workspace (see [docs/herdr.md](docs/herdr.md)), anywhere else to the
+clipboard.
+
+| Key | Action |
+| --- | --- |
+| `n` | Note on the issue under the cursor (`Ctrl+Enter` to add) |
+| `Shift+N` | Note on the whole view |
+| `Ctrl+S` | Send the notes to your agent |
+
 ### Copy and open
 
 | Key | Action |
@@ -251,7 +266,7 @@ type there too. Until you type, they keep their single keys — `j` / `k` to mov
 | `?` | Show all shortcuts |
 | `q`, `Ctrl+c` | Quit |
 
-Text fields (search, comments, the new-issue form) accept readline-style
+Text fields (search, comments, notes, the new-issue form) accept readline-style
 editing: `Ctrl+w`, `Ctrl+u`, `Ctrl+k`, `Ctrl+a`, `Ctrl+e`, and arrow keys.
 
 ### Differences from Linear

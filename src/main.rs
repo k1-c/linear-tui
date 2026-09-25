@@ -7,6 +7,7 @@ mod dispatch;
 mod event;
 mod fuzzy;
 mod grouping;
+mod herdr;
 mod keys;
 mod logging;
 mod message;
@@ -53,10 +54,17 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    // Handle CLI subcommands
-    if args.len() > 1 {
-        return cli::handle_subcommand(&args[1..]).await;
-    }
+    // `open <ID>` runs the TUI; every other subcommand runs without it.
+    let open = match args.get(1).map(String::as_str) {
+        Some("open") => {
+            let [_, _, key] = args.as_slice() else {
+                anyhow::bail!("Usage: linear-tui open <ID>");
+            };
+            Some(cli::issue_key(key)?)
+        }
+        Some(_) => return cli::handle_subcommand(&args[1..]).await,
+        None => None,
+    };
 
     // Load config and authenticate
     let mut config = Config::load()?;
@@ -82,6 +90,8 @@ async fn main() -> Result<()> {
             }
             None
         }
+        // Asked for an issue, the remembered view is not reopened.
+        None if open.is_some() => None,
         None => shelf.as_ref().and_then(|s| s.for_restore(origin.pid)),
     };
     let recorder = shelf.map(|shelf| {
@@ -96,6 +106,7 @@ async fn main() -> Result<()> {
         Session {
             origin,
             restored,
+            open,
             recorder,
         },
     )
@@ -106,6 +117,8 @@ async fn main() -> Result<()> {
 struct Session {
     origin: snapshot::Origin,
     restored: Option<snapshot::ViewSnapshot>,
+    /// The issue `linear-tui open` asked for.
+    open: Option<String>,
     recorder: Option<snapshot::Recorder>,
 }
 
@@ -173,6 +186,7 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
     let Session {
         origin,
         restored,
+        open,
         mut recorder,
     } = session;
     let _guard = TerminalGuard::enter()?;
@@ -188,6 +202,9 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
     if let Some(snapshot) = restored {
         tracing::info!(updated_at = %snapshot.updated_at, "restoring the last view");
         app.restore(snapshot);
+    }
+    if let Some(identifier) = &open {
+        app.open_on_launch(identifier);
     }
     let mut cache = ui::Cache::default();
     let mut last_tick = Instant::now();

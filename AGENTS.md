@@ -62,7 +62,8 @@ the pins current, so never add one by tag or branch.
   (`handle_message`), `navigation.rs`, `popups.rs`, `actions.rs` (intents that
   resolve the target and call a use case), `cursor.rs`, `lists.rs` (filtering,
   grouping, prefetch), `sidebar.rs`, `mouse.rs` (`App::click`), `input.rs`,
-  `snapshot.rs` (capture the view) and `restore.rs` (reopen it on launch);
+  `snapshot.rs` (capture the view) and `restore.rs` (reopen it on launch,
+  or open the issue `linear-tui open` names), `notes.rs` (notes for the agent);
   `tests.rs` the state tests
 - `src/snapshot/` — the view snapshot (`docs/view-snapshot.md`): its types, the
   per-workspace files under the state dir (`Shelf`), and the debounced writer
@@ -74,12 +75,15 @@ the pins current, so never add one by tag or branch.
 - `src/event.rs` — terminal event polling
 - `src/ui/` — rendering (View): `sidebar`, `issue_list`, `issue_detail`,
   `view_list`, `project_list`, `project_detail`, `cycle_list`, `cycle_detail`,
-  `popup`, `palette`, `new_issue`, plus `markdown` (wrapping Markdown renderer) and
+  `popup`, `palette`, `new_issue`, `note`, plus `markdown` (wrapping Markdown renderer) and
   `widgets` (glyphs, chips, width-aware truncation)
 - `src/api/` — Linear GraphQL client and types (see `docs/api-type-guide.md`)
 - `tests/fixtures/` — API response fixtures for deserialization tests
 - `src/auth/` — OAuth2 + PKCE, token storage, API key fallback
 - `src/config.rs` — config file + theme (`~/.config/linear-tui/config.toml`)
+- `src/herdr.rs` — the hand-off to the herdr plugin: writes a request to the
+  outbox and invokes the plugin's `deliver` action (`Request::Herdr`). The only
+  place that runs `HERDR_BIN_PATH`; `App::herdr` says whether it is set
 - `herdr-plugin/` — the herdr plugin (`docs/herdr.md`): a manifest and shell
   scripts; every herdr call lives here, never in the Rust code
 - `demo/` — the README GIF: `seed.py` fills a throwaway workspace, `demo.tape`

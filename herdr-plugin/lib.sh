@@ -1,3 +1,4 @@
+# shellcheck shell=bash disable=SC2034
 # Shared by the linear-tui plugin's scripts. Sourced, never run.
 #
 # Every herdr call goes through "$H" (HERDR_BIN_PATH), which works whatever
@@ -39,12 +40,27 @@ linear_tui_bin() {
   fi
 }
 
+# linear-tui's state directory, where it keeps view snapshots and the
+# requests it leaves for this plugin.
+linear_tui_state() {
+  local bin
+  bin="$(linear_tui_bin)" || return 1
+  "$bin" paths --json | jq -r '.state'
+}
+
 # The directory the invocation is about: the focused pane's live directory,
 # else the workspace's.
 context_cwd() {
-  local context="${HERDR_PLUGIN_CONTEXT_JSON:-}"
-  [ -n "$context" ] || context='{}'
-  printf '%s' "$context" | jq -r '.focused_pane_cwd // .workspace_cwd // empty'
+  context_json | jq -r '.focused_pane_cwd // .workspace_cwd // empty'
+}
+
+# The invocation context herdr passed, or `{}`.
+context_json() {
+  if [ -n "${HERDR_PLUGIN_CONTEXT_JSON:-}" ]; then
+    printf '%s' "$HERDR_PLUGIN_CONTEXT_JSON"
+  else
+    printf '{}'
+  fi
 }
 
 # Pane ids in workspace $1 whose foreground process is linear-tui.

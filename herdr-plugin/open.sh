@@ -3,10 +3,14 @@
 #
 #   open.sh open   focus the workspace's linear-tui pane, or open one in the
 #                  focused pane's directory
+#   open.sh link   open a new linear-tui pane on the Linear issue URL that was
+#                  Ctrl+clicked (a link handler)
 set -uo pipefail
+# shellcheck source=lib.sh
 . "$(dirname "$0")/lib.sh"
 
 mode="${1:-open}"
+open_args=()
 ws="${HERDR_WORKSPACE_ID:-}"
 [ -n "$ws" ] || fail "no workspace context (invoke from inside herdr)"
 bin="$(linear_tui_bin)" || fail "linear-tui is not installed; set LINEAR_TUI_BIN in $HERDR_PLUGIN_CONFIG_DIR/config.env"
@@ -21,7 +25,13 @@ open)
     exit 0
   fi
   ;;
-*) fail "unknown mode '$mode' (open)" ;;
+link)
+  url="${HERDR_PLUGIN_CLICKED_URL:-}"
+  [ -n "$url" ] || url="$(context_json | jq -r '.clicked_url // empty')"
+  [ -n "$url" ] || fail "no clicked URL"
+  open_args=(--env "LINEAR_TUI_OPEN=$url")
+  ;;
+*) fail "unknown mode '$mode' (open | link)" ;;
 esac
 
 cwd="$(context_cwd)"
@@ -44,5 +54,5 @@ overlay) set -- --placement overlay ;;
 esac
 
 "$H" plugin pane open --plugin "$PLUGIN_ID" --entrypoint tui "$@" \
-  --cwd "$cwd" --env "LINEAR_TUI_BIN=$bin" --focus >/dev/null ||
+  --cwd "$cwd" --env "LINEAR_TUI_BIN=$bin" "${open_args[@]}" --focus >/dev/null ||
   fail "herdr plugin pane open failed"
