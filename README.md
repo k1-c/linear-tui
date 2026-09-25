@@ -4,14 +4,12 @@
 
 # linear-tui
 
-**A TUI client for [Linear.app](https://linear.app) — manage issues, projects, and cycles from your terminal.**
+**[Linear](https://linear.app) in your terminal — with Linear's own shortcuts, and a coding agent that sees what you see.**
 
 [![Crates.io](https://img.shields.io/crates/v/linear-tui.svg)](https://crates.io/crates/linear-tui)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/k1-c/linear-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/k1-c/linear-tui/actions/workflows/ci.yml)
 [![Rust](https://img.shields.io/badge/rust-1.88%2B-orange.svg)](https://www.rust-lang.org)
-
-Built with [ratatui](https://ratatui.rs/) and the Linear GraphQL API.
 
 <img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/demo.gif" alt="linear-tui browsing issues grouped by status, opening an issue with Markdown and comments, then a project, a cycle, and a saved view">
 
@@ -19,383 +17,112 @@ Built with [ratatui](https://ratatui.rs/) and the Linear GraphQL API.
 
 ---
 
-## Features
+## Why linear-tui
 
-- **Sidebar navigation, like Linear's** — My Issues, your **Favorites** (in Linear's order, with folders), and the current team's Issues / Cycles / Projects / Views under a team switcher
-- **Favorites** — favorite projects, cycles, issues, and views open right in the terminal; favorites of kinds the TUI has no page for (documents, labels, …) open on linear.app
-- **Saved views** — issue and project views, on the workspace Views page and each team's own, with Linear's Issues / Projects tabs; Linear evaluates each view's filter, so it shows exactly what it shows on linear.app
-- **Grouped lists** — issues stacked under collapsible status headers (or by assignee, priority, project), sub-issues nested under their parent, and Linear's Active / Backlog / All issues presets
-- **Rich rows** — priority and status glyphs in the workspace's own colours, label chips, project, estimate, assignee avatar, and date, dropping columns gracefully as the terminal narrows
-- **Issue detail like the web app** — rendered Markdown (bold, code, lists, headings, quotes, code blocks) with proper Japanese line breaking, threaded comment cards, sub-issues, and a properties panel with status, priority, assignee, **creator**, estimate, due date, cycle, labels, project and milestone; step to the next/previous issue with `J`/`K`
-- **Mouse support** — click sidebar entries, preset chips, group headers, popup entries; click a row to select it and again to open it; scroll with the wheel
-- **Issue management** — create issues, change status, priority, and assignee, and comment
-- **Never blocks** — Every API call runs off the UI thread, so navigation and input stay responsive while data loads
-- **Search** — Filter as you type locally, or `Ctrl+G` to search all of Linear
-- **Open & copy** — Jump to the issue in your browser, or copy its identifier, URL, or suggested branch name
-- **Linear's own keybindings** — `c` to create, `s`/`p`/`a`/`i` to update, `g`+key to go places, plus vim-style `j`/`k`
-- **One-command sign-in** — `linear-tui auth login` opens the browser; no application to register, no client secret, or use a personal API key instead
-- **Theme support** — Default (dark), Light, and Ocean color schemes
-- **Pagination** — Cursor-based infinite scrolling across every list
-- **Picks up where you left off** — each repository (and its worktrees) reopens on the page, list settings, and issue you last had open there
+- **It feels like Linear.** The sidebar, Favorites, saved views, grouped and
+  collapsible lists, the issue page with rendered Markdown and threaded
+  comments — and Linear's keys: `c` to create, `s` / `p` / `a` / `i` to update,
+  `g` then a letter to go places.
+- **It never waits on the network.** Every request runs off the UI thread, and
+  every change shows at once, so moving around stays instant on a slow
+  connection.
+- **It shares your screen with your coding agent.** `linear-tui context` tells
+  an agent which issue you have open and which row your cursor is on; notes you
+  jot while reading go to it as one prompt.
+- **It is one binary.** No application to register, no client secret, no
+  OpenSSL: `linear-tui auth login` and you are in.
 
-## Installation
+## Highlights
 
-### From crates.io
+### Everything behind `Ctrl+K`
+
+The command palette lists every action for where you are, with its shortcut, and
+finds any issue, project, cycle, view, or team page by name or ID.
+
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/palette.gif" alt="The command palette listing commands with their shortcuts, finding an issue by a word of its title, changing status and grouping from it, and opening a favorite project by name">
+
+### Picks up where you left off
+
+Each repository — and every worktree of it — reopens on the page, list
+settings, and issue you last had open there. Pages are remembered by Linear ID,
+so a reordered sidebar never reopens the wrong one.
+
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/resume.gif" alt="Opening an issue in a saved view grouped by priority, quitting, and launching linear-tui again straight back on that issue, with Esc returning to the view">
+
+### Your agent sees what you see
+
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/agents.gif" alt="linear-tui on the left, an agent's shell on the right: two notes jotted on an issue and the view are copied with Ctrl+S, then linear-tui context shows the open issue with the cursor, and linear-tui issue show prints it">
+
+```sh
+linear-tui context                       # the page, the open issue, the list with your cursor
+linear-tui issue show ENG-42             # description, fields, and comments as Markdown
+linear-tui issue comment ENG-42 -        # comment, body from stdin
+linear-tui issue status ENG-42 "In Review"
+```
+
+Say "fix this one" or "look at the top three" and the agent knows which you
+mean. With the [agent plugin](docs/agent-plugin.md), Claude Code and Codex learn
+these commands on their own, without a prompt being sent. While you read, `n`
+notes an issue and `Ctrl+S` sends your notes to the agent as one prompt.
+[More on agents →](docs/agents.md)
+
+### At home in herdr
+
+In [herdr](https://herdr.dev/), linear-tui opens in a pane beside your agents:
+notes go straight to the agent next to it, issue rows show which agent is
+working on them, `g w` jumps to that agent, and Ctrl+clicking a Linear link
+opens it in linear-tui. [The herdr plugin →](docs/herdr.md)
+
+### And the rest
+
+Favorites and saved views exactly as Linear evaluates them · sub-issues nested
+under their parent · Active / Backlog / All presets · mouse support · CJK-aware
+layout and Markdown line breaking · copy the ID, URL, or branch name over SSH ·
+dark, light, and ocean themes.
+
+## Install
 
 ```sh
 cargo install linear-tui
 ```
 
-### From GitHub Releases
+Pre-built binaries for Linux, macOS (Intel and Apple Silicon), and Windows are on
+the [Releases](https://github.com/k1-c/linear-tui/releases) page. To build from
+a checkout, `cargo install --path .` needs only a Rust toolchain.
 
-Pre-built binaries are available for Linux, macOS (Intel/Apple Silicon), and Windows on the [Releases](https://github.com/k1-c/linear-tui/releases) page.
-
-### From source
-
-```sh
-git clone https://github.com/k1-c/linear-tui.git
-cd linear-tui
-cargo install --path .
-```
-
-Building needs only a Rust toolchain — see [Development](#development) for the
-mise setup.
-
-## Getting Started
-
-Just run it:
+## Get started
 
 ```sh
 linear-tui
 ```
 
-On first launch it asks how you want to connect, and nothing else has to be set
-up beforehand.
+The first run asks how to connect — through the browser, or with a personal API
+key — and opens your issues. [Signing in](docs/authentication.md) covers SSH,
+admin-approved workspaces, and your own OAuth application.
 
-### Signing in through the browser
+A few keys to begin with:
 
-```sh
-linear-tui auth login
-```
-
-This opens Linear in your browser, and the authorization screen appears as
-**k1-c/tui** — the application linear-tui is registered as. (Linear does not
-allow "Linear" in an application's name, which is why it is not called
-linear-tui there.)
-
-Approving it hands a token back to a local callback on port 53681, 53682, or
-53683. Tokens are stored in `~/.config/linear-tui/tokens.json` with `0600`
-permissions and refreshed automatically.
-
-No client secret is involved: Linear's PKCE flow makes one optional, so
-linear-tui ships as a public OAuth client.
-
-### Signing in with a personal API key
-
-Useful when the browser flow cannot reach your terminal — over SSH, for example,
-where the callback would land on the wrong machine.
-
-Create a key under
-[Settings > Account > Security & access](https://linear.app/settings/account/security),
-then:
-
-```sh
-linear-tui auth token <your-api-key>
-```
-
-The key is verified before it is saved.
-
-### Checking and clearing credentials
-
-```sh
-linear-tui auth status        # which credentials are in use, and who they belong to
-linear-tui auth logout        # forget the OAuth token
-linear-tui auth logout --all  # forget the API key in config.toml as well
-```
-
-### Using your own Linear application
-
-Some workspaces require third-party applications to be approved by an admin. If
-that blocks you — or you would simply rather authorize against your own — register
-one at [Linear Settings > API](https://linear.app/settings/api) with
-`http://localhost:53681/callback` (plus 53682 and 53683) as its redirect URIs:
-
-```sh
-linear-tui auth set-oauth <client-id> [client-secret]
-```
-
-`LINEAR_CLIENT_ID` and `LINEAR_CLIENT_SECRET` override the config file.
-
-## For coding agents
-
-An agent working in the same repository can read what you are looking at and
-act on Linear with your credentials — no Linear MCP server, no second sign-in:
-
-```sh
-linear-tui context                       # the page, open issue, and list on screen, cursor marked
-linear-tui issue show ENG-42             # description, fields, and comments as Markdown
-linear-tui issue comment ENG-42 -        # post a comment read from stdin
-linear-tui issue status ENG-42 "In Review"
-linear-tui issue create --team ENG --title "Retry payment webhooks"
-linear-tui open ENG-42                   # the TUI, on that issue (an issue URL works too)
-```
-
-Every command takes `--json`. The output formats are specified in
-[docs/cli.md](docs/cli.md).
-
-### Teaching your agent about it
-
-Install the agent plugin once, and every new Claude Code or Codex session in a
-repository where you use linear-tui is told how to run the commands above —
-through a SessionStart hook, so no prompt is sent and no turn is spent.
-Elsewhere it adds nothing.
-
-```sh
-# Claude Code
-claude plugin marketplace add k1-c/linear-tui
-claude plugin install linear-tui@linear-tui
-
-# Codex
-codex plugin marketplace add k1-c/linear-tui
-codex plugin add linear-tui@linear-tui
-```
-
-It also brings a `linear-tui` skill for "this issue" / "the top three". See
-[docs/agent-plugin.md](docs/agent-plugin.md).
-
-### In herdr
-
-With [herdr](https://herdr.dev/), the plugin in `herdr-plugin/` opens
-linear-tui as a pane over any workspace, delivers your notes to the agent next
-to it, shows which issues agents are working on, opens Ctrl+clicked Linear
-issue links in linear-tui, and restarts linear-tui in its panes after herdr
-restarts:
-
-```sh
-herdr plugin install k1-c/linear-tui/herdr-plugin
-```
-
-See [docs/herdr.md](docs/herdr.md) for keybindings and settings.
-
-## Keybindings
-
-Shortcuts follow [Linear's own keyboard shortcuts](https://linear.app/docs) wherever
-a terminal allows it, so muscle memory carries over from the web app.
-
-### Command palette
-
-`Ctrl+K` opens the command palette, as in Linear. It lists everything that can
-be done where you are, with the key that does the same next to each entry, so it
-also teaches the shortcuts. Type to narrow it down — letters match in order,
-`cs` finds **C**hange **s**tatus — then `Enter` to run, or `Esc` to close.
-`↑` / `↓` (or `Ctrl+p` / `Ctrl+n`) move; recently used commands come first.
-
-The palette also goes places. Type an issue ID or part of a title, or the name
-of a team page, saved view, favorite, project, or cycle, and `Enter` opens it.
-Issues already loaded match at once. Linear is searched once you stop typing
-for a moment, so an issue in no list on screen turns up too. Start the query
-with `>` to see commands only.
-
-A command that needs a value — *Change status…*, *Assign to…*, *Group by…*,
-*Switch team…*, *Filter…* — turns the palette into a list of choices; `Esc` (or
-`Backspace` on an empty query) steps back to the commands.
-
-The same pickers open directly with `s`, `p`, `a`, `t` and `f`, and narrow as you
-type there too. Until you type, they keep their single keys — `j` / `k` to move,
-`1`-`9` to pick, `q` to close; an upper-case letter always starts a query.
-
-### Navigation
-
-| Key | Action |
+| Key | |
 | --- | --- |
-| `j` / `k`, `↓` / `↑` | Move cursor down / up |
-| `g` `g` / `G` | Jump to first / last item |
-| `Enter`, `Space` | Open (Linear: peek) |
-| `Esc` | Back / close |
-| `J` / `K` | Next / previous issue, in the detail view |
-| `Tab` | Move focus between the sidebar and the content |
-| `Ctrl+b` | Show / hide the sidebar |
-| `h` / `l` | Fold / unfold a Favorites folder (while the sidebar has focus) |
-| `t` | Switch team (or Enter / click on the team row in the sidebar) |
-| `g` `a` / `g` `b` / `g` `e` | Active / Backlog / All issues of the current team |
-| `g` `m` / `g` `v` / `g` `p` / `g` `c` | Go to My Issues / Views / Projects / Cycles |
-| `1`-`5` | Team issues / My Issues / Projects / Cycles / Views |
-| `Ctrl+d` / `Ctrl+u` | Half page down / up |
-| `PgDn` / `PgUp` | Full page down / up |
+| `j` / `k`, `Enter`, `Esc` | Move, open, go back |
+| `Ctrl+K` | Everything else, with its shortcut |
+| `c` · `s` · `p` · `a` · `m` | Create · status · priority · assignee · comment |
+| `/` then `Ctrl+G` | Filter the list · search all of Linear |
+| `g` `m` / `g` `p` / `g` `c` / `g` `v` | My Issues / Projects / Cycles / Views |
+| `?` | Every shortcut |
 
-### List display
+## Documentation
 
-| Key | Action |
+| | |
 | --- | --- |
-| `Shift+Tab` | Next preset: Active → Backlog → All issues (on a Views page: Issues ⇄ Projects tab) |
-| `D` | Group by status → assignee → priority → project → none |
-| `z` / `Z` | Fold the group under the cursor / fold or unfold every group |
+| [Keybindings](docs/keybindings.md) | Every shortcut, the palette, the mouse, differences from Linear |
+| [Configuration](docs/configuration.md) | `config.toml`, per-directory settings, themes, files |
+| [Working with coding agents](docs/agents.md) | `context`, notes, the agent plugin, herdr |
+| [Headless commands](docs/cli.md) | The CLI contract for agents and scripts |
+| [Troubleshooting](docs/troubleshooting.md) | Sign-in, clipboard, shortcuts, restores |
+| [Development](docs/development.md) | Building, testing, recording the demos |
 
-### Mouse
-
-| Action | Effect |
-| --- | --- |
-| Click a row | Select it; click it again to open it |
-| Click a sidebar entry | Go there; a folder folds, the team row opens the team switcher |
-| Click a preset chip, tab, or group header | Switch preset or tab / fold the group |
-| Click a popup or palette entry | Choose it; click outside to close |
-| Wheel | Scroll whatever is under the pointer |
-
-### Issue actions
-
-| Key | Action |
-| --- | --- |
-| `c` | Create a new issue (`Ctrl+Enter` to save) |
-| `s` | Change status |
-| `p` | Change priority |
-| `Shift+1` … `Shift+4`, `Shift+0` | Set priority directly (Urgent → Low, None) |
-| `a` | Assign to someone |
-| `i` | Assign to me |
-| `m` | Add a comment (`Ctrl+Enter` to send) |
-
-### Notes for your agent
-
-Linear has no agent beside it, so these are linear-tui's own. Jot remarks while
-you read, then send them all as one prompt: inside herdr to the agent in the
-same workspace (see [docs/herdr.md](docs/herdr.md)), anywhere else to the
-clipboard.
-
-| Key | Action |
-| --- | --- |
-| `n` | Note on the issue under the cursor (`Ctrl+Enter` to add) |
-| `Shift+N` | Note on the whole view |
-| `Ctrl+S` | Send the notes to your agent |
-| `g w` | Go to the herdr agent working on the issue (inside herdr) |
-
-Inside herdr, an issue row also shows the state of the agent working on it —
-`▲` waiting for you, `●` working, `○` idle.
-
-### Copy and open
-
-| Key | Action |
-| --- | --- |
-| `Ctrl+.` or `y` | Copy the issue ID |
-| `Ctrl+Shift+,` or `Y` | Copy the issue URL |
-| `Ctrl+Shift+.` or `b` | Copy the suggested git branch name |
-| `o` | Open the issue (or project) on linear.app |
-
-### Search and filtering
-
-| Key | Action |
-| --- | --- |
-| `/` | Filter the visible list as you type |
-| `Ctrl+G` | Search all of Linear for the current query |
-| `f` / `Shift+F` | Filter by status & priority / clear filters |
-| `t` | Switch team |
-| `Ctrl+r`, `F5` | Refresh the current view |
-| `?` | Show all shortcuts |
-| `q`, `Ctrl+c` | Quit |
-
-Text fields (search, comments, notes, the new-issue form) accept readline-style
-editing: `Ctrl+w`, `Ctrl+u`, `Ctrl+k`, `Ctrl+a`, `Ctrl+e`, and arrow keys.
-
-### Differences from Linear
-
-A terminal cannot deliver every shortcut the web app uses, and a few of Linear's
-actions have no meaning here. Where they differ:
-
-| Linear | linear-tui | Why |
-| --- | --- | --- |
-| `Ctrl+.`, `Ctrl+Shift+.`, `Ctrl+Shift+,`, `Ctrl+M` | also `y`, `b`, `Y`, `m` | Legacy terminals cannot distinguish `Ctrl`+punctuation, and `Ctrl+M` *is* `Enter`. The originals work in terminals supporting the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (kitty, Ghostty, WezTerm, foot, Alacritty), which is enabled automatically when available. |
-| `Cmd+K` — command menu | `Ctrl+K` | A terminal never receives `Cmd`. `Ctrl+K` is what Linear uses outside macOS; inside a text field it keeps its readline meaning (delete to the end). |
-| `r` — rename issue | *(unbound)* | Renaming isn't supported yet; refreshing uses the terminal's `Ctrl+r` instead. |
-| `j` / `k` — next / previous issue in the issue view | `J` / `K` | In the detail view `j`/`k` scroll the text, which a terminal cannot do with a trackpad. |
-| Display options menu (grouping, collapsing) | `D`, `z`, `Z`, `Shift+Tab` | Linear keeps these behind a menu with no shortcut; the keys are ones Linear leaves free. |
-| Double-click to open | click the selected row again | Terminals do not report double-clicks. |
-| `Ctrl+d` — set due date | half page down | The scrolling convention wins in a terminal. |
-| — | `o`, `t`, `q`, `Tab`, `Ctrl+b`, `1`-`5` | Open in browser, switch team, quit, and sidebar focus have no web-app equivalent. |
-
-Copying uses the OSC 52 terminal escape, so it works over SSH. If nothing
-lands on your clipboard, enable it in your terminal — under tmux that means
-`set -g set-clipboard on`.
-
-## Configuration
-
-Config file: `~/.config/linear-tui/config.toml`
-
-```toml
-[auth]
-# OAuth tokens are managed automatically via `linear-tui auth login`
-# To use a personal API key instead:
-# api_key = "lin_api_xxxxx"
-# To authorize against your own Linear application:
-# oauth_client_id = "..."
-# oauth_client_secret = "..."   # optional — PKCE does not require one
-
-[ui]
-default_team = "Core"       # Auto-select this team on startup
-items_per_page = 50          # Issues per page (pagination)
-theme = "default"            # "default" | "light" | "ocean"
-sidebar = true               # Show the sidebar (it hides itself below 100 columns)
-sidebar_width = 26           # Sidebar width in columns (18-48)
-group_by = "status"          # "status" | "assignee" | "priority" | "project" | "none"
-
-# Always open on a team in one directory, instead of where you left off there.
-[workspaces."~/dev/storefront"]
-team = "WEB"
-```
-
-### Where you left off
-
-linear-tui remembers what it is showing — the page, the list's preset, filters
-and grouping, and the issue under the cursor — separately for each repository,
-and reopens it on the next launch there. Worktrees of one repository share it;
-outside git, the directory itself is the key. Pages are remembered by their
-Linear ID, so reordering teams or views does not reopen the wrong one, and a
-page that has since been deleted opens its parent instead. Pressing a key
-before the page is back cancels the rest of the restore.
-
-A `[workspaces."<path>"]` entry in `config.toml` wins over the remembered view.
-The record is a small JSON file per running instance under
-`~/.local/state/linear-tui/workspaces/`; its format is in
-[docs/view-snapshot.md](docs/view-snapshot.md).
-
-### Themes
-
-| Theme | Description |
-| --- | --- |
-| `default` | Dark theme with cyan accents |
-| `light` | Light background with blue accents |
-| `ocean` | Dark blue palette with soft colors |
-
-## Development
-
-The Rust toolchain is pinned in `mise.toml`, so [mise](https://mise.jdx.dev/)
-is all you need to install:
-
-```sh
-git clone https://github.com/k1-c/linear-tui.git
-cd linear-tui
-mise install       # fetch the pinned toolchain
-mise run dev       # run the TUI from source
-mise run verify    # format, lint, test, build
-```
-
-`mise run fmt`, `lint`, `test`, and `build` run the steps individually. Without
-mise, any stable rustup toolchain works — `cargo run`, `cargo test`, and the
-rest behave the same.
-
-There is nothing else to install: TLS goes through rustls, so no system OpenSSL
-or `pkg-config` is involved.
-
-### Recording the demo
-
-The GIF above is scripted with [VHS](https://github.com/charmbracelet/vhs), so it
-can be re-recorded after a UI change. Sign linear-tui in to a throwaway
-workspace, fill it with demo data once, then record:
-
-```sh
-python3 demo/seed.py                        # issues, projects, cycles, views
-LINEAR_DEMO_TEAM=<team name> demo/record.sh # writes assets/demo.gif
-```
-
-`record.sh` needs `vhs`, `ttyd`, and `ffmpeg`, and runs linear-tui with a
-throwaway config so your own settings stay out of the recording.
+The full index is [docs/README.md](docs/README.md).
 
 ## License
 
