@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1] - 2026-09-25
+
+### Documentation
+
+- **demo**: Record the palette, resuming, and agents as their own GIFs
+- Split the README into a landing page and docs/
+- **demo**: Record resuming and working beside an agent
+
+
+
 ## [0.8.0] - 2026-09-25
 
 ### Features
