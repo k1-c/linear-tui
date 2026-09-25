@@ -9,8 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::entity::Page;
 use crate::entity::{
-    CustomView, Cycle, Favorite, Issue, Organization, PageInfo, Project, Team, User,
-    WorkflowState,
+    CustomView, Cycle, Favorite, Issue, Organization, PageInfo, Project, Team, User, WorkflowState,
 };
 use crate::entity::{CustomViewId, CycleId, IssueId, Preset, ProjectId, TeamId, UserId};
 

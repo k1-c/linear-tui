@@ -3,8 +3,8 @@ use std::io::{self, Write};
 
 use super::oauth;
 use super::token::TokenStore;
-use crate::entity::Viewer;
 use crate::config::Config;
+use crate::entity::Viewer;
 
 const API_KEY_SETTINGS_URL: &str = "https://linear.app/settings/account/security";
 

@@ -32,10 +32,10 @@ use tokio::sync::mpsc;
 use base64::Engine;
 
 use api::client::LinearClient;
-use entity::OrganizationId;
 use app::App;
 use auth::token::TokenStore;
 use config::Config;
+use entity::OrganizationId;
 use message::Message;
 
 /// Spinner advance interval.
@@ -235,7 +235,10 @@ async fn run_tui(
         match auth::switch_to(&token_store, config.auth.api_key.as_deref(), &target).await {
             Ok(auth) => {
                 tracing::info!(organization = %target, "switched workspace");
-                if let (Some(org), Some(view)) = (organization.take(), app.snapshot(&origin, snapshot::timestamp_now())) {
+                if let (Some(org), Some(view)) = (
+                    organization.take(),
+                    app.snapshot(&origin, snapshot::timestamp_now()),
+                ) {
                     left.insert(org, view);
                 }
                 organization = Some(target.clone());

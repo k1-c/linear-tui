@@ -5,9 +5,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use super::oauth::TokenResponse;
-use crate::entity::OrganizationId;
-use crate::entity::Organization;
 use crate::config::Config;
+use crate::entity::Organization;
+use crate::entity::OrganizationId;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OAuthTokens {

@@ -10,9 +10,9 @@ use anyhow::Result;
 use token::{Account, OAuthTokens, TokenStore};
 
 use crate::adapter::api::client::{Credentials, LinearClient, StaticCredentials};
+use crate::config::Config;
 use crate::entity::OrganizationId;
 use crate::entity::{Organization, Viewer};
-use crate::config::Config;
 
 pub enum AuthMethod {
     OAuth(Account),
