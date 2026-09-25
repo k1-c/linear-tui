@@ -93,8 +93,11 @@ the pins current, so never add one by tag or branch.
   `plugin.json` files when it changes; release-plz does not
 - `herdr-plugin/` — the herdr plugin (`docs/herdr.md`): a manifest and shell
   scripts; every herdr call lives here, never in the Rust code
-- `demo/` — the README GIF: `seed.py` fills a throwaway workspace, `demo.tape`
-  is the VHS script, `record.sh` records it into `assets/demo.gif`
+- `demo/` — the GIFs in `assets/`: `seed.py` fills a throwaway workspace, one
+  VHS script per feature (`demo.tape`, `palette.tape`, `resume.tape`,
+  `agents.tape`), `record.sh` records them (`docs/development.md#demos`)
+- `docs/` — user and contributor documentation, indexed by `docs/README.md`;
+  the README is the landing page and links into it
 
 ## Architecture
 
@@ -172,8 +175,8 @@ palette entry.
   support the original under the kitty keyboard protocol — enabled automatically
   in `TerminalGuard::enter` — and add a plain-key alias that collides with
   nothing in Linear.
-- Record every intentional deviation in the README's "Differences from Linear"
-  table, with the reason.
+- Document the binding in `docs/keybindings.md`, and record every intentional
+  deviation in its "Differences from Linear" table, with the reason.
 
 ## API Types
 
