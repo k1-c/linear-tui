@@ -1,11 +1,16 @@
 #!/usr/bin/env bash
-# Record assets/demo.gif against the demo workspace.
+# Record the demo GIFs in assets/ against the demo workspace.
 #
-#   demo/record.sh [tape]                              # use the linear-tui login
+#   demo/record.sh [tape ...]                          # use the linear-tui login
+#   demo/record.sh all                                 # every demo/*.tape
 #   LINEAR_DEMO_API_KEY=lin_api_... demo/record.sh     # or a demo API key
 #
-# linear-tui runs with a throwaway config directory, so nothing from your own
-# config.toml (theme, default team, sidebar width) leaks into the recording.
+# Without a tape it records demo/demo.tape, the README's main GIF.
+#
+# linear-tui runs with throwaway config and state directories, so nothing from
+# your own config.toml (theme, default team, sidebar width) or a view it
+# remembered for this checkout leaks into the recording, and the recording
+# leaves no remembered view behind.
 # Without LINEAR_DEMO_API_KEY the OAuth login is copied in, which means the
 # workspace linear-tui is signed in to is the one that gets recorded.
 #
@@ -14,7 +19,13 @@
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
-tape="${1:-demo/demo.tape}"
+if [[ $# -eq 0 ]]; then
+  tapes=(demo/demo.tape)
+elif [[ "$1" == all ]]; then
+  tapes=(demo/*.tape)
+else
+  tapes=("$@")
+fi
 
 for tool in vhs ttyd ffmpeg; do
   command -v "$tool" >/dev/null || { echo "$tool is not installed" >&2; exit 1; }
@@ -62,5 +73,10 @@ ${LINEAR_DEMO_TEAM:+default_team = \"$LINEAR_DEMO_TEAM\"}
 theme = "default"
 EOF
 
-XDG_CONFIG_HOME="$config_home" PATH="$PWD/target/release:$PATH" vhs "$tape"
-echo "Wrote $(grep -m1 '^Output' "$tape" | cut -d' ' -f2)"
+# Each tape starts with no remembered view of its own, so one recording
+# cannot reopen where another left off.
+for tape in "${tapes[@]}"; do
+  state="$config_home/state-$(basename "$tape" .tape)"
+  LINEAR_TUI_STATE_DIR="$state" XDG_CONFIG_HOME="$config_home" PATH="$PWD/target/release:$PATH" vhs "$tape"
+  echo "Wrote $(grep -m1 '^Output' "$tape" | cut -d' ' -f2)"
+done
