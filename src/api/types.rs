@@ -1,5 +1,5 @@
 use ratatui::style::Color;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::ids::*;
 
@@ -546,6 +546,20 @@ pub struct Viewer {
     pub name: String,
     #[serde(default, rename = "displayName")]
     pub display_name: Option<String>,
+    /// The workspace the credentials were issued for. A token and an API key
+    /// both belong to exactly one.
+    #[serde(default)]
+    pub organization: Option<Organization>,
+}
+
+/// A Linear workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Organization {
+    pub id: OrganizationId,
+    pub name: String,
+    /// The slug in `linear.app/<urlKey>/…`.
+    #[serde(rename = "urlKey")]
+    pub url_key: String,
 }
 
 #[allow(dead_code)]
@@ -732,6 +746,16 @@ mod tests {
         }
         let resp: Resp = serde_json::from_str(&fixture("viewer.json")).unwrap();
         assert_eq!(resp.viewer.name, "Test User");
+        let org = resp.viewer.organization.unwrap();
+        assert_eq!(org.name, "Acme");
+        assert_eq!(org.url_key, "acme");
+    }
+
+    #[test]
+    fn deserialize_viewer_without_organization() {
+        let viewer: Viewer =
+            serde_json::from_str(r#"{ "id": "u1", "name": "Ada", "displayName": null }"#).unwrap();
+        assert!(viewer.organization.is_none());
     }
 
     #[test]
