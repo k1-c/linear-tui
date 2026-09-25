@@ -1,6 +1,6 @@
 ---
 name: linear-tui
-description: Resolve what the user is looking at in linear-tui and act on Linear through the linear-tui CLI. Use when the user refers to an issue or list on their screen without naming it ("this issue", "the one I have open", "the top three", "この issue", "今見てるやつ", "上の 3 つ"), asks to comment on, move, or file a Linear issue, or pastes notes that came from linear-tui.
+description: Resolve what the user is looking at in linear-tui, act on Linear through the linear-tui CLI, and work the running TUI itself. Use when the user refers to an issue or list on their screen without naming it ("this issue", "the one I have open", "the top three", "この issue", "今見てるやつ", "上の 3 つ"), asks to comment on, move, or file a Linear issue, or pastes notes that came from linear-tui.
 ---
 
 # linear-tui
@@ -35,6 +35,24 @@ the context starts with that issue. Use `--json` when you need exact fields.
 
 `<ID>` may be an identifier in any case or an issue URL. Errors go to stderr
 with a non-zero exit; an unknown state lists the team's states.
+
+## Work the TUI itself
+
+When the user wants to see something, or you want to check linear-tui by
+using it, drive the running instance the way a person does:
+
+| Task | Command |
+| --- | --- |
+| Read the screen: focus, what is open, keys and commands here | `linear-tui tui screen` |
+| Press keys | `linear-tui tui press "j <Enter>"` (`<Esc>`, `<C-k>`, `<S-Tab>`, …) |
+| Run a palette command | `linear-tui tui run "Change status"` |
+| Type into the focused field | `linear-tui tui type "In Review"` |
+| Show an issue | `linear-tui tui open ENG-42` |
+
+Each answers with the screen it leads to; read it before the next step. A
+chord is two keys (`g m`). With no linear-tui open, `linear-tui --headless`
+runs one only you can see. Keys and commands change issues exactly as the
+user's would, so the rules below hold here too.
 
 ## Rules
 
