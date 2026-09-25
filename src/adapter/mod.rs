@@ -13,7 +13,9 @@
 pub mod api;
 pub mod auth;
 pub mod cli;
+pub mod control;
 pub mod dispatch;
 pub mod herdr;
 pub mod private_file;
+pub mod runtime;
 pub mod snapshot;

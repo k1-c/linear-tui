@@ -12,6 +12,8 @@ pub struct Config {
     pub auth: AuthConfig,
     #[serde(default)]
     pub ui: UiConfig,
+    #[serde(default)]
+    pub agent: AgentConfig,
     /// Settings for one directory, keyed by its path (`~` allowed).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub workspaces: BTreeMap<String, WorkspaceConfig>,
@@ -24,7 +26,8 @@ pub struct Config {
 /// The keys each table of `config.toml` understands. A key outside these is
 /// almost always a typo, which serde would otherwise ignore without a word.
 const KNOWN_KEYS: &[(&str, &[&str])] = &[
-    ("", &["auth", "ui", "workspaces"]),
+    ("", &["auth", "ui", "agent", "workspaces"]),
+    ("agent", &["control"]),
     (
         "auth",
         &["api_key", "oauth_client_id", "oauth_client_secret"],
@@ -55,6 +58,21 @@ const WORKSPACE_KEYS: &[&str] = &["team"];
 pub struct WorkspaceConfig {
     /// The team to open on, by name or key.
     pub team: Option<String>,
+}
+
+/// How coding agents may work with linear-tui.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AgentConfig {
+    /// Whether a running instance takes commands from agents on its control
+    /// channel (`linear-tui tui …`). On unless turned off.
+    #[serde(default = "default_true")]
+    pub control: bool,
+}
+
+impl Default for AgentConfig {
+    fn default() -> Self {
+        Self { control: true }
+    }
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]

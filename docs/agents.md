@@ -48,7 +48,24 @@ linear-tui issue create --team ENG --title "Retry payment webhooks"
 Every command takes `--json`, prints Markdown otherwise, and fails on stderr
 with a non-zero exit. The contract is [cli.md](cli.md).
 
-## 3. The agent learns the commands
+## 3. The agent works linear-tui itself
+
+```sh
+linear-tui tui screen                  # the screen, what is open, the keys and commands here
+linear-tui tui press "j j <Enter>"     # keys, as you would press them
+linear-tui tui run "Change status"     # a command palette entry, by title
+linear-tui tui type "In Review"        # into the picker or field that has focus
+linear-tui tui open ENG-42             # an issue, over whatever is on screen
+```
+
+Each command answers with the screen it leads to, once Linear has answered,
+so the agent reads, acts, and reads again, as you would. Use it to show you
+something ("open ENG-42 for me"), to walk you through a change, or, while
+developing linear-tui, to check a change by working the real program. With
+no terminal to spare — in CI, or a sandbox — `linear-tui --headless` runs an
+instance that only agents see. The contract is [cli.md](cli.md#linear-tui-tui-command---json---workspace-path).
+
+## 4. The agent learns the commands
 
 Install the agent plugin once:
 
@@ -77,7 +94,7 @@ are looking at (open issue, list, cursor); `linear-tui issue show|comment|status
 act on Linear with their credentials. Only move an issue to Done when told to.
 ```
 
-## 4. You send notes as you read
+## 5. You send notes as you read
 
 While reading in linear-tui, `n` notes the issue under the cursor and
 `Shift+N` the whole view. `Ctrl+S` sends every note as one prompt, each naming
@@ -95,7 +112,7 @@ My notes on what I am looking at in linear-tui (Engineering › Issues):
 Outside herdr the prompt is copied to the clipboard, to paste into whichever
 agent you use. Inside herdr it goes to the agent in the same workspace.
 
-## 5. In herdr
+## 6. In herdr
 
 The [herdr plugin](herdr.md) puts linear-tui in a pane next to your agents, and
 adds what only a workspace manager can:

@@ -77,7 +77,10 @@ the entry point and the settings every layer is handed sit beside them.
     on issues, `g w`); `tests.rs` the state tests
   - `keys.rs` — keybindings (Controller): the `BINDINGS` table;
     `palette.rs` — the `Ctrl+K` command palette (Controller), with
-    `fuzzy.rs` its matcher; `event.rs` — terminal events, routed
+    `fuzzy.rs` its matcher; `event.rs` — terminal events, routed;
+    `notation.rs` — the key notation agents press keys in
+  - `screen.rs` — the screen as an agent reads it (`linear-tui tui screen`):
+    the frame as text, focus, what is open, the keys and commands here
   - `ui/` — rendering (View): `sidebar`, `issue_list`, `issue_detail`,
     `view_list`, `project_list`, `project_detail`, `cycle_list`,
     `cycle_detail`, `popup`, `palette`, `new_issue`, `note`, plus `markdown`
@@ -87,12 +90,17 @@ the entry point and the settings every layer is handed sit beside them.
   - `message.rs` — `Message`, the answers coming back to `app`, and how a
     failed request is worded
 - `src/adapter/` — the edges:
+  - `runtime.rs` — the main loop's work, step by step, against the
+    terminal or — `--headless` — an in-memory screen; `control.rs` — the
+    control channel agents drive a running instance through (a loopback
+    port, a token in `<pid>.control`)
   - `api/` — Linear GraphQL client (`decode_tests.rs` checks decoding
     against `tests/fixtures/`); `dispatch.rs` — `execute_request`: carries
     out one `usecase::Request`
   - `cli/` — the subcommands: `auth.rs` (`linear-tui auth …`), and the
     headless commands for agents (`docs/cli.md`) — `context.rs` renders the
-    view snapshot, `issue.rs` shows, creates, comments on, and moves issues
+    view snapshot, `tui.rs` works the running TUI (`linear-tui tui …`),
+    `issue.rs` shows, creates, comments on, and moves issues
     through `headless.rs`, which runs each request through
     `dispatch::execute_request`; `args.rs` parses their arguments
   - `auth/` — OAuth2 + PKCE, token storage, API key fallback;

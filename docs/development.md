@@ -27,6 +27,27 @@ inwards), the keybinding policy, and the commit and release flow. Behaviour
 is specified in the use case layer, below. API types
 follow [api-type-guide.md](api-type-guide.md).
 
+## Checking a change by using it
+
+After a change to what linear-tui shows or does, work the real program, not
+only the tests. An agent does this the way a person would, through the
+control channel:
+
+```sh
+cargo build
+LINEAR_TUI_STATE_DIR=$(mktemp -d) ./target/debug/linear-tui --headless &   # or `mise run dev` in another terminal
+./target/debug/linear-tui tui screen
+./target/debug/linear-tui tui press "g m"
+./target/debug/linear-tui tui run "Change status"
+./target/debug/linear-tui tui quit
+```
+
+Use the same `LINEAR_TUI_STATE_DIR` for every command, so they find the
+instance and it does not replace the view your own linear-tui reopens.
+The instance acts on the Linear account you are signed in to: keys and
+commands change issues for real, so change nothing you did not mean to.
+The commands are in [cli.md](cli.md#linear-tui-tui-command---json---workspace-path).
+
 ## The use case layer
 
 `src/usecase/` is the specification of linear-tui: what a person or an agent

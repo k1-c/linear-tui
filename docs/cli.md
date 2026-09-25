@@ -4,6 +4,8 @@
 a coding agent reads what you are looking at in linear-tui and acts on Linear
 itself, using the credentials `linear-tui auth` set up and the same request
 code as the TUI, so there is no second client and no second sign-in.
+`linear-tui tui …` goes further and works the running TUI itself, and
+`linear-tui --headless` runs one for agents alone.
 
 This document defines the contract. Output is meant for agents first:
 
@@ -22,6 +24,75 @@ given as `-` is read from stdin, so a multi-line body needs no quoting.
 Not headless: starts the TUI on that issue, over the team's issue list,
 instead of reopening the remembered view. The herdr plugin's link handler uses
 it.
+
+## `linear-tui tui <command> [--json] [--workspace <path>]`
+
+Works the linear-tui running in this repository (or in `--workspace`) the way
+a person does: read the screen, press keys, run a command. Each command waits
+until Linear has answered what it asked for — up to 15 seconds, after which
+the screen is reported still loading — and prints the screen it leads to.
+
+| Command | Does |
+| --- | --- |
+| `tui screen` | Nothing; reports the screen |
+| `tui press <keys>` | Presses keys: plain characters one by one (`gm` is `g`, `m`), named keys in brackets — `<Enter>` `<Esc>` `<Tab>` `<S-Tab>` `<C-k>` `<A-Enter>` `<F5>` `<Space>` `<Up>` … |
+| `tui type <text>` | Types into the field that has focus (`-` reads stdin) |
+| `tui run <title>` | Runs the command palette entry of that title, in any case, `…` optional; part of a title will do when it names one entry |
+| `tui open <ID>` | Opens an issue over whatever is on screen |
+| `tui quit` | Quits linear-tui; prints `linear-tui quit` |
+
+````markdown
+# linear-tui screen
+
+- Showing: Engineering › Issues
+- Focus: issue_list
+- Issue: ENG-42 Checkout fails on empty cart
+
+```text
+<the frame, one line per row>
+```
+
+Keys here: `Enter` open · `^K` commands · `s/p/a` status/priority/assignee · …
+
+## Commands here
+
+- Change status… (`s`)
+- Go to my issues (`g m`)
+- …
+````
+
+- `- Focus:` is where keys go: a screen (`issue_list`, `issue_detail`,
+  `project_list`, …), the `sidebar`, a text field (`comment field`,
+  `new issue: title`, …), or `go_to` while a `g` chord waits for its key.
+- `- Open:` names what is open over the screen: a picker (`status picker`),
+  the command palette, the help, or an error — which any key dismisses.
+- `- Issue:` is the issue under the cursor, or open.
+- `- Status:`, `- Error:`, `- Loading:`, and `- Notes:` appear when there is
+  something to say. `- Held:` lists what a headless instance did not do at
+  the desktop: a page it would have opened in a browser, text it would have
+  copied, a hand-off to herdr.
+- `## Commands here` lists the palette entries that apply, with the keys
+  that run them too.
+
+With `--json`: `{ showing, lines, width, height, focus, overlay, issue,
+status, error, loading, notes, keys: [{ keys, does }], commands: [{ title,
+keys }], held }`; fields are only ever added. A command that cannot be carried
+out — an unknown key, a title that names no single entry — fails on stderr
+and leaves the screen as it was.
+
+The instance listens on a loopback port, and writes where with a token to
+`<pid>.control` beside its view snapshot, readable only by you. Set
+`[agent] control = false` ([configuration.md](configuration.md#agent)) to
+turn it off.
+
+## `linear-tui --headless [--size <W>x<H>]`
+
+Runs linear-tui with no terminal — for an agent, a script, or CI to drive
+with `linear-tui tui` in the same repository. It draws a screen of the given
+size (120×40 by default) that only `tui screen` shows, records its view as a
+running instance does (so `linear-tui context` reads it), opens nothing in a
+browser and copies nothing (see `- Held:`), and runs until `tui quit` or an
+interrupt. It needs credentials already set up, and its control channel on.
 
 ## `linear-tui paths [--json]`
 

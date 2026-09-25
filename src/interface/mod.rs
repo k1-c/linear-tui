@@ -19,5 +19,7 @@ pub mod grouping;
 pub mod keys;
 pub mod look;
 pub mod message;
+pub mod notation;
 pub mod palette;
+pub mod screen;
 pub mod ui;

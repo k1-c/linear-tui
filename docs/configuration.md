@@ -21,6 +21,9 @@ sidebar = true
 sidebar_width = 26
 group_by = "status"
 
+[agent]
+control = true                          # let agents work a running linear-tui
+
 # Always open on a team in one directory, instead of where you left off there.
 [workspaces."~/dev/storefront"]
 team = "WEB"
@@ -47,6 +50,12 @@ team = "WEB"
 
 Workflow states, labels, and projects keep the colours your workspace gave them
 for each theme.
+
+## `[agent]`
+
+| Key | Default | |
+| --- | --- | --- |
+| `control` | `true` | Whether a running linear-tui takes commands from agents (`linear-tui tui …`, see [cli.md](cli.md)). It listens on a loopback port only, and a command must carry the token in a file only you can read. `linear-tui --headless` needs it on. |
 
 ## `[auth]`
 
