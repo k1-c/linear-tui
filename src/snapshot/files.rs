@@ -59,15 +59,18 @@ pub fn workspace_of(cwd: &Path) -> PathBuf {
         .filter(|out| out.status.success())
         .and_then(|out| String::from_utf8(out.stdout).ok())
         .map(|text| PathBuf::from(text.trim_end()));
-    match common {
+    let dir = match common {
         // A normal checkout keeps its repository in `<root>/.git`; a bare
         // repository is its own common dir.
         Some(dir) if dir.file_name().is_some_and(|n| n == ".git") => {
             dir.parent().map_or(dir.clone(), Path::to_path_buf)
         }
         Some(dir) => dir,
-        None => fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf()),
-    }
+        None => cwd.to_path_buf(),
+    };
+    // One spelling for one directory: git writes `C:/…` on Windows where the
+    // file system says `\\?\C:\…`, and either may go through a symlink.
+    fs::canonicalize(&dir).unwrap_or(dir)
 }
 
 /// Whether process `pid` still exists. A reused PID reads as running; the
