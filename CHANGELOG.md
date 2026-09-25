@@ -11,6 +11,7 @@ All notable changes to this project will be documented in this file.
 
 ### Features
 
+- **auth**: Let the login pick its workspace
 - **auth**: Keep one account per Linear workspace
 - **tui**: Switch workspace from the command palette
 
