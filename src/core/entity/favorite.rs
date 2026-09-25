@@ -64,3 +64,45 @@ impl Favorite {
             .unwrap_or_else(|| self.kind.clone())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn fav(json: &str) -> Favorite {
+        serde_json::from_str(json).unwrap()
+    }
+
+    /// The sidebar calls a favorite by its title; without one, by its
+    /// folder's name, then the project's or issue's, then its kind.
+    #[test]
+    fn a_favorite_is_called_by_its_title_then_what_it_holds() {
+        assert_eq!(
+            fav(r#"{"id":"f","type":"project","title":"T"}"#).label(),
+            "T"
+        );
+        assert_eq!(
+            fav(r#"{"id":"f","type":"folder","folderName":"Ops"}"#).label(),
+            "Ops"
+        );
+        assert_eq!(
+            fav(r#"{"id":"f","type":"project","project":{"id":"p","name":"P"}}"#).label(),
+            "P"
+        );
+        assert_eq!(
+            fav(
+                r#"{"id":"f","type":"issue","issue":{"id":"i","identifier":"X-1","title":"Crash"}}"#
+            )
+            .label(),
+            "Crash"
+        );
+        assert_eq!(fav(r#"{"id":"f","type":"document"}"#).label(), "document");
+    }
+
+    /// Only a folder folds.
+    #[test]
+    fn only_a_folder_folds() {
+        assert!(fav(r#"{"id":"f","type":"folder"}"#).is_folder());
+        assert!(!fav(r#"{"id":"f","type":"project"}"#).is_folder());
+    }
+}

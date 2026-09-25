@@ -245,4 +245,50 @@ mod tests {
             Target::Nowhere
         );
     }
+
+    /// Two targets are the same place when they lead to the same project,
+    /// cycle, or issue, whatever else the copies they hold say; targets of
+    /// different kinds never are.
+    #[test]
+    fn targets_to_one_project_cycle_or_issue_are_the_same_place() {
+        let project = |name: &str| {
+            target_of(&format!(
+                r#"{{"id":"f","type":"project","project":{{"id":"p","name":"{name}"}}}}"#
+            ))
+        };
+        assert_eq!(project("Old name"), project("New name"));
+        let cycle = |n: u32| {
+            target_of(&format!(
+                r#"{{"id":"f","type":"cycle","cycle":{{"id":"c","number":{n}}}}}"#
+            ))
+        };
+        assert_eq!(cycle(1), cycle(2));
+        let issue = |title: &str| {
+            target_of(&format!(
+                r#"{{"id":"f","type":"issue","issue":{{"id":"i","identifier":"COR-1","title":"{title}"}}}}"#
+            ))
+        };
+        assert_eq!(issue("Before"), issue("After"));
+        assert_ne!(project("P"), Target::Folder);
+    }
+
+    /// A team's projects open as its Projects page; a predefined page
+    /// linear-tui has no page for opens on linear.app.
+    #[test]
+    fn a_teams_projects_open_as_the_page_and_other_pages_in_the_browser() {
+        assert_eq!(
+            target_of(
+                r#"{"id":"f","type":"predefinedView","predefinedViewType":"projects",
+                    "predefinedViewTeam":{"id":"t1"}}"#
+            ),
+            Target::TeamPage("t1".into(), TeamPage::Projects)
+        );
+        assert_eq!(
+            target_of(
+                r#"{"id":"f","type":"predefinedView","predefinedViewType":"roadmap",
+                    "predefinedViewTeam":{"id":"t1"},"url":"https://linear.app/r"}"#
+            ),
+            Target::Browser("https://linear.app/r".into())
+        );
+    }
 }

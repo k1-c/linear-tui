@@ -117,3 +117,187 @@ pub fn failure(request: &Request) -> &'static str {
         | Request::Agent(agent::Request::Focus { .. }) => "Failed to reach herdr",
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::entity::{Handoff, TeamId};
+    use crate::core::usecase::{agent, cycle, favorite, issue, notes, project, team, user, view};
+
+    /// A failed load says what could not be loaded, a failed change what
+    /// could not be changed, and anything handed to herdr that herdr could
+    /// not be reached.
+    #[test]
+    fn a_failure_says_what_could_not_be_done() {
+        let team = || TeamId::from("t");
+        let cases: Vec<(Request, &str)> = vec![
+            (
+                issue::Request::TeamIssues {
+                    team_id: team(),
+                    preset: Default::default(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load issues",
+            ),
+            (
+                issue::Request::MyIssues {
+                    user_id: "u".into(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load my issues",
+            ),
+            (
+                issue::Request::ViewIssues {
+                    view_id: "v".into(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load view issues",
+            ),
+            (
+                issue::Request::ProjectIssues {
+                    project_id: "p".into(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load project issues",
+            ),
+            (
+                issue::Request::CycleIssues {
+                    cycle_id: "c".into(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load cycle issues",
+            ),
+            (
+                issue::Request::Detail {
+                    issue_id: "i".into(),
+                }
+                .into(),
+                "Failed to load detail",
+            ),
+            (
+                issue::Request::Search {
+                    term: "x".into(),
+                    team_id: None,
+                }
+                .into(),
+                "Search failed",
+            ),
+            (
+                issue::Request::QuickSearch {
+                    term: "x".into(),
+                    seq: 1,
+                }
+                .into(),
+                "Search failed",
+            ),
+            (
+                issue::Request::SetStatus {
+                    issue_id: "i".into(),
+                    state_id: "s".into(),
+                }
+                .into(),
+                "Failed to update status",
+            ),
+            (
+                issue::Request::SetPriority {
+                    issue_id: "i".into(),
+                    priority: Default::default(),
+                }
+                .into(),
+                "Failed to update priority",
+            ),
+            (
+                issue::Request::SetAssignee {
+                    issue_id: "i".into(),
+                    assignee_id: None,
+                }
+                .into(),
+                "Failed to update assignee",
+            ),
+            (
+                issue::Request::Comment {
+                    issue_id: "i".into(),
+                    body: "b".into(),
+                }
+                .into(),
+                "Failed to post comment",
+            ),
+            (
+                issue::Request::Create {
+                    team_id: team(),
+                    title: "t".into(),
+                    description: None,
+                    priority: Default::default(),
+                }
+                .into(),
+                "Failed to create issue",
+            ),
+            (
+                issue::Request::OpenInBrowser("u".into()).into(),
+                "Failed to open browser",
+            ),
+            (
+                project::Request::TeamProjects {
+                    team_id: team(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load projects",
+            ),
+            (
+                project::Request::ViewProjects {
+                    view_id: "v".into(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load view projects",
+            ),
+            (
+                project::Request::OpenInBrowser("u".into()).into(),
+                "Failed to open browser",
+            ),
+            (
+                cycle::Request::TeamCycles {
+                    team_id: team(),
+                    after: None,
+                }
+                .into(),
+                "Failed to load cycles",
+            ),
+            (team::Request::Teams.into(), "Failed to load teams"),
+            (
+                team::Request::Context { team_id: team() }.into(),
+                "Failed to load team context",
+            ),
+            (view::Request::Views.into(), "Failed to load views"),
+            (
+                favorite::Request::Favorites.into(),
+                "Failed to load favorites",
+            ),
+            (
+                favorite::Request::OpenInBrowser("u".into()).into(),
+                "Failed to open browser",
+            ),
+            (
+                user::Request::Viewer.into(),
+                "Failed to identify current user",
+            ),
+            (
+                notes::Request::Deliver(Handoff::Focus { pane: "p".into() }).into(),
+                "Failed to reach herdr",
+            ),
+            (
+                agent::Request::Focus { pane: "p".into() }.into(),
+                "Failed to reach herdr",
+            ),
+        ];
+        for (request, wording) in cases {
+            assert_eq!(failure(&request), wording, "{request:?}");
+        }
+    }
+}

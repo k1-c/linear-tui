@@ -176,4 +176,22 @@ mod tests {
         );
         assert_eq!(next_page(&mut store, Projects::View), None);
     }
+
+    /// A team's projects reload from their first page, and ask for no next
+    /// page before one has landed.
+    #[test]
+    fn a_teams_projects_reload_from_the_first_page() {
+        let mut store = Store::default();
+        open_team_projects(&mut store, TeamId::from("t"));
+        assert_eq!(
+            reload(&mut store, Projects::Team),
+            Some(crate::core::usecase::Request::Project(
+                Request::TeamProjects {
+                    team_id: "t".into(),
+                    after: None
+                }
+            ))
+        );
+        assert_eq!(next_page(&mut store, Projects::Team), None);
+    }
 }

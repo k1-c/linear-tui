@@ -1171,4 +1171,32 @@ mod tests {
             }
         );
     }
+
+    /// A status, priority, or assignee change shows before Linear confirms
+    /// it, so a refused one names the issue to read back; nothing else does.
+    #[test]
+    fn a_refused_change_names_the_issue_to_read_back() {
+        let issue_id = || IssueId::from("i");
+        for change in [
+            Request::SetStatus {
+                issue_id: issue_id(),
+                state_id: "s".into(),
+            },
+            Request::SetPriority {
+                issue_id: issue_id(),
+                priority: Priority::High,
+            },
+            Request::SetAssignee {
+                issue_id: issue_id(),
+                assignee_id: None,
+            },
+        ] {
+            assert_eq!(change.changed_issue(), Some(&issue_id()));
+        }
+        let comment = Request::Comment {
+            issue_id: issue_id(),
+            body: "b".into(),
+        };
+        assert_eq!(comment.changed_issue(), None);
+    }
 }

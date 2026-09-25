@@ -181,3 +181,45 @@ pub enum Refusal {
     #[error("No notes yet")]
     NoNotes,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::entity::{Preset, TeamId};
+
+    /// A request for a next page carries the cursor it continues from,
+    /// whichever list it pages; any other request carries none.
+    #[test]
+    fn a_next_page_request_carries_its_cursor() {
+        let lists = [
+            ListOf::TeamIssues {
+                team_id: TeamId::from("t"),
+                preset: Preset::All,
+            },
+            ListOf::MyIssues("u".into()),
+            ListOf::ViewIssues("v".into()),
+            ListOf::ProjectIssues("p".into()),
+            ListOf::CycleIssues("c".into()),
+            ListOf::TeamProjects(TeamId::from("t")),
+            ListOf::ViewProjects("v".into()),
+            ListOf::TeamCycles(TeamId::from("t")),
+        ];
+        for of in lists {
+            let request = Request::page(PageAsk {
+                of,
+                after: Some("next".into()),
+            });
+            assert_eq!(request.cursor(), Some("next"), "{request:?}");
+        }
+        for other in [
+            Request::from(team::Request::Teams),
+            issue::Request::Detail {
+                issue_id: "i".into(),
+            }
+            .into(),
+            project::Request::OpenInBrowser("u".into()).into(),
+        ] {
+            assert_eq!(other.cursor(), None, "{other:?}");
+        }
+    }
+}

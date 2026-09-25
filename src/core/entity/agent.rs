@@ -85,3 +85,54 @@ impl Handoff {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Of several agents on one issue, the one waiting for the user shows
+    /// first, then the one at work; an unknown status shows last.
+    #[test]
+    fn an_agent_waiting_for_you_shows_before_one_at_work() {
+        let order = [
+            AgentStatus::Blocked,
+            AgentStatus::Working,
+            AgentStatus::Done,
+            AgentStatus::Idle,
+            AgentStatus::Unknown,
+        ];
+        assert!(order.windows(2).all(|w| w[0].rank() < w[1].rank()));
+    }
+
+    /// Each status reads as a person would say it: a blocked agent is
+    /// waiting for you.
+    #[test]
+    fn each_status_reads_as_a_person_would_say_it() {
+        let labels = [
+            AgentStatus::Working,
+            AgentStatus::Blocked,
+            AgentStatus::Idle,
+            AgentStatus::Done,
+            AgentStatus::Unknown,
+        ]
+        .map(AgentStatus::label);
+        assert_eq!(
+            labels,
+            ["working", "waiting for you", "idle", "done", "unknown"]
+        );
+    }
+
+    /// A hand-off says what it did once herdr took it.
+    #[test]
+    fn a_handoff_says_what_it_did() {
+        let prompt = Handoff::Prompt {
+            text: String::new(),
+            notes: String::new(),
+            view: String::new(),
+            hint: String::new(),
+        };
+        assert_eq!(prompt.done(), "Notes handed to herdr for your agent");
+        let focus = Handoff::Focus { pane: "p".into() };
+        assert_eq!(focus.done(), "Switched to the agent");
+    }
+}

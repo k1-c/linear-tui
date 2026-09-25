@@ -55,3 +55,27 @@ impl Instance {
         self.view.closed_at.is_some()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An instance is known by its workspace and its process, wherever in
+    /// the workspace it was started.
+    #[test]
+    fn an_instance_is_its_workspace_and_process() {
+        let origin = Origin {
+            workspace: PathBuf::from("/repo"),
+            cwd: PathBuf::from("/repo/sub"),
+            pid: 42,
+            herdr_pane: Some("p".into()),
+        };
+        assert_eq!(
+            origin.id(),
+            InstanceId {
+                workspace: PathBuf::from("/repo"),
+                pid: 42,
+            }
+        );
+    }
+}

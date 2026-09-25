@@ -307,3 +307,56 @@ impl IssueFilter {
         *self = Self::default();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Each priority sits at its own place in the priority menu, and that
+    /// place gives it back; a place past the end is no priority.
+    #[test]
+    fn a_priority_and_its_place_in_the_menu_map_both_ways() {
+        for (index, priority) in Priority::ALL.into_iter().enumerate() {
+            assert_eq!(priority.as_index(), index);
+            assert_eq!(Priority::from_index(index), priority);
+        }
+        assert_eq!(Priority::from_index(9), Priority::None);
+    }
+
+    /// The name of each category is Linear's own, and reads back as the
+    /// same category.
+    #[test]
+    fn each_category_reads_back_from_its_name() {
+        for kind in [
+            StateType::Triage,
+            StateType::Backlog,
+            StateType::Unstarted,
+            StateType::Started,
+            StateType::Completed,
+            StateType::Cancelled,
+            StateType::Duplicate,
+            StateType::Unknown,
+        ] {
+            let read: StateType =
+                serde_json::from_value(serde_json::Value::from(kind.as_str())).unwrap();
+            assert_eq!(read, kind);
+        }
+    }
+
+    /// Lists group triage first, then the workflow from what is under way
+    /// to what is done, and anything unknown last.
+    #[test]
+    fn lists_group_triage_first_and_unknown_last() {
+        let order = [
+            StateType::Triage,
+            StateType::Started,
+            StateType::Unstarted,
+            StateType::Backlog,
+            StateType::Completed,
+            StateType::Cancelled,
+            StateType::Unknown,
+        ];
+        assert!(order.windows(2).all(|w| w[0].rank() < w[1].rank()));
+        assert_eq!(StateType::Duplicate.rank(), StateType::Cancelled.rank());
+    }
+}
