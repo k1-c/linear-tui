@@ -50,7 +50,7 @@ The commands are in [cli.md](cli.md#linear-tui-tui-command---json---workspace-pa
 
 ## The use case layer
 
-`src/usecase/` is the specification of linear-tui: what a person or an agent
+`src/core/usecase/` is the specification of linear-tui: what a person or an agent
 can do, and the rules each thing follows. It is written to be read as such,
 by people and by agents working on the code.
 
@@ -103,12 +103,15 @@ words say the right thing is for review.
 
 Around the use cases:
 
-- `entity/` holds what they act on; `store/` keeps what Linear has told us
-  consistent (including how every paginated list pages, in `lists.rs` —
-  mechanism, not a use case).
-- `interface/app/` resolves intents ("the issue under the cursor") and calls
-  a use case; it keeps no rule of its own beyond what the screen needs.
-- An adapter (`dispatch`) carries out the returned request.
+- In `src/core/`, `entity/` holds what they act on; `store/` keeps what
+  Linear has told us consistent (including how every paginated list pages,
+  in `lists.rs` — mechanism, not a use case).
+- In `src/interface/`, the ways in call them: `tui/app/` resolves intents
+  ("the issue under the cursor") and calls a use case, keeping no rule of
+  its own beyond what the screen needs; `cli/` does the same for a
+  subcommand, and `control/` drives `tui/` for an agent.
+- In `src/infra/`, `dispatch` carries out the returned request against
+  Linear or herdr.
 
 ## Tests
 
@@ -116,10 +119,10 @@ Around the use cases:
 
 | Layer | What is tested | Where |
 | --- | --- | --- |
-| use cases | every rule of every use case: the specification | `src/usecase/*.rs` |
-| store, entity | consistency (every copy patched, pages merged, stale pages dropped), value rules | `src/store/`, `src/entity/` |
-| interface | intents and state transitions, rendering against ratatui's `TestBackend`, key and palette dispatch | `src/interface/` |
-| adapters | API decoding against `tests/fixtures/`, requests against a `wiremock` server, the CLI's output, snapshot files | `src/adapter/` |
+| use cases | every rule of every use case: the specification | `src/core/usecase/*.rs` |
+| store, entity | consistency (every copy patched, pages merged, stale pages dropped), value rules | `src/core/store/`, `src/core/entity/` |
+| interface | intents and state transitions, rendering against ratatui's `TestBackend`, key and palette dispatch, the screen an agent reads, the CLI's output | `src/interface/` |
+| infra | API decoding against `tests/fixtures/`, requests against a `wiremock` server, snapshot files | `src/infra/` |
 | architecture | the layers depend inwards | `tests/architecture.rs` |
 | specification | the use case layer's shape, and that every use case has an end-to-end scenario | `tests/usecase_spec.rs` |
 | end to end | the real binary against real Linear workspaces, one scenario per use case at least | `tests/e2e/`, see below |
@@ -131,7 +134,7 @@ mise run coverage        # line coverage by file, the use case layer first
 mise run coverage:html   # a browsable report in target/llvm-cov/html
 ```
 
-Keep `src/usecase/` near full coverage; a line no test reaches is a rule
+Keep `src/core/usecase/` near full coverage; a line no test reaches is a rule
 nobody wrote down.
 
 herdr-only bindings follow `App::herdr`, which `main` sets from
@@ -214,8 +217,8 @@ scenarios are `#[ignore]`d.
 
 | When you change | Update |
 | --- | --- |
-| what a user or an agent can do | the use case in `src/usecase/<aggregate>.rs`: its doc comment and its tests (see [The use case layer](#the-use-case-layer)) |
-| a keybinding | the `BINDINGS` row in `src/interface/keys.rs`, and [keybindings.md](keybindings.md) (with the "Differences from Linear" table if it departs from Linear) |
+| what a user or an agent can do | the use case in `src/core/usecase/<aggregate>.rs`: its doc comment and its tests (see [The use case layer](#the-use-case-layer)) |
+| a keybinding | the `BINDINGS` row in `src/interface/tui/keys.rs`, and [keybindings.md](keybindings.md) (with the "Differences from Linear" table if it departs from Linear) |
 | a `config.toml` key | `KNOWN_KEYS` in `src/config.rs`, and [configuration.md](configuration.md) |
 | a subcommand or its output | [cli.md](cli.md), a contract for agents and scripts |
 | the view snapshot | [view-snapshot.md](view-snapshot.md), `snapshot::VERSION` for a breaking change |

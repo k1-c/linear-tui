@@ -1,13 +1,17 @@
-mod adapter;
 mod config;
-mod entity;
+mod core;
+mod infra;
 mod interface;
 mod logging;
-mod store;
-mod usecase;
+mod private_file;
+mod runtime;
 
-use adapter::{api, auth, cli, control, herdr, snapshot};
-use interface::{app, event};
+use crate::core::{entity, usecase};
+use infra::disk::snapshot;
+use infra::herdr;
+use infra::linear::auth;
+use interface::tui::{app, event};
+use interface::{cli, control};
 
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -32,12 +36,12 @@ use ratatui::{
 
 use base64::Engine;
 
-use adapter::runtime::Runtime;
-use api::client::LinearClient;
 use app::App;
 use auth::token::TokenStore;
 use config::Config;
 use entity::OrganizationId;
+use infra::linear::client::LinearClient;
+use runtime::Runtime;
 
 /// The size of the screen a headless instance draws, unless told otherwise.
 const HEADLESS_SIZE: (u16, u16) = (120, 40);

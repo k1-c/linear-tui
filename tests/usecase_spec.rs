@@ -1,5 +1,5 @@
 //! The use case layer reads as the specification, checked against the source
-//! under `src/usecase/`. The rules are in `docs/development.md` ("The use
+//! under `src/core/usecase/`. The rules are in `docs/development.md` ("The use
 //! case layer"); in short:
 //!
 //! - `mod.rs` lists every aggregate module in its table.
@@ -38,7 +38,7 @@ impl Module {
 }
 
 fn modules() -> Vec<Module> {
-    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/usecase");
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/core/usecase");
     let mut modules: Vec<Module> = std::fs::read_dir(dir)
         .unwrap()
         .flatten()
@@ -114,7 +114,7 @@ fn the_layers_table_lists_every_module() {
         .collect();
     assert!(
         missing.is_empty(),
-        "modules missing from the table in src/usecase/mod.rs: {missing:?}"
+        "modules missing from the table in src/core/usecase/mod.rs: {missing:?}"
     );
 }
 

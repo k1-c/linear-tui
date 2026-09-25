@@ -1,25 +1,15 @@
-//! The interface: what the user sees and does, turned into use cases.
+//! The ways in: who works linear-tui, and how.
 //!
-//! - Controllers take input: [`keys`] (the binding table), [`palette`] (the
-//!   `Ctrl+K` command palette, with [`fuzzy`] its matcher), and [`event`]
-//!   (terminal events, routed).
-//! - [`app`] holds the session: where the user is, how the screen is
-//!   shaped, and every state transition — resolving the issue under the
-//!   cursor, then calling the use case.
-//! - Presenters draw: [`ui`] renders a frame from `app`, with [`look`]
-//!   (glyphs and colours) and [`grouping`] (how a list is grouped).
-//! - [`message`] is how the adapters' answers come back to `app`.
+//! - [`tui`]: a person, in the terminal.
+//! - [`control`]: an agent, working a running TUI the way a person does.
+//! - [`cli`]: an agent or a script, through the subcommands.
 //!
-//! It depends on `usecase`, `store`, and `entity`, never on `adapter`.
+//! Each turns what it was asked into use cases (`crate::core`). `control`
+//! reads the screen `tui` draws; nothing else here knows another way in.
+//! Only `cli` reaches into `crate::infra`: each subcommand runs on its own,
+//! so it assembles the Linear client and the files it needs, as `main` does
+//! for the TUI.
 
-pub mod app;
-pub mod event;
-pub mod fuzzy;
-pub mod grouping;
-pub mod keys;
-pub mod look;
-pub mod message;
-pub mod notation;
-pub mod palette;
-pub mod screen;
-pub mod ui;
+pub mod cli;
+pub mod control;
+pub mod tui;

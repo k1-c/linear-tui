@@ -6,7 +6,7 @@ commit/PR/release flow. This file only adds what is specific to Claude Code.
 
 ## Rules
 
-- To change what a user or an agent can do, start in `src/usecase/<aggregate>.rs`: write the rule into the use case's doc comment and a test per rule, as `docs/development.md` ("The use case layer") describes. `tests/usecase_spec.rs` and `tests/architecture.rs` must pass.
+- To change what a user or an agent can do, start in `src/core/usecase/<aggregate>.rs`: write the rule into the use case's doc comment and a test per rule, as `docs/development.md` ("The use case layer") describes. `tests/usecase_spec.rs` and `tests/architecture.rs` must pass.
 - After completing any implementation task, ALWAYS run `/verify` before marking it done.
 - When committing, ALWAYS use the `conventional-commit` skill. Never create commits manually with `git commit`.
 - Before preparing a release, use the `release` skill to check readiness. It does not publish — release-plz does, per AGENTS.md.
