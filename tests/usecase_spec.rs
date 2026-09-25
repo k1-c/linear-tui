@@ -177,6 +177,71 @@ fn each_use_case_has_a_test() {
     assert!(problems.is_empty(), "{}", problems.join("\n"));
 }
 
+/// Every `module::function` named in `text`.
+fn named_use_cases(text: &str) -> Vec<String> {
+    text.split(|c: char| !(c.is_alphanumeric() || c == '_' || c == ':'))
+        .filter(|word| {
+            let mut parts = word.split("::");
+            matches!((parts.next(), parts.next(), parts.next()), (Some(m), Some(f), None) if !m.is_empty() && !f.is_empty())
+        })
+        .map(String::from)
+        .collect()
+}
+
+/// Each use case is run end to end by at least one scenario in
+/// `tests/e2e/` (on its `Covers:` line), or is listed there under "Not end
+/// to end" with the reason.
+#[test]
+fn each_use_case_has_an_end_to_end_scenario() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/e2e");
+    let mut covered = Vec::new();
+    for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+        let text = std::fs::read_to_string(entry.path()).unwrap();
+        // A `Covers:` line and the doc lines continuing it.
+        let mut in_covers = false;
+        for line in text.lines() {
+            let doc = line
+                .trim_start()
+                .trim_start_matches("///")
+                .trim_start_matches("//!");
+            let is_doc =
+                line.trim_start().starts_with("///") || line.trim_start().starts_with("//!");
+            if let Some(rest) = doc.trim_start().strip_prefix("Covers:") {
+                in_covers = true;
+                covered.extend(named_use_cases(rest));
+            } else if in_covers && is_doc && !doc.trim().is_empty() {
+                covered.extend(named_use_cases(doc));
+            } else {
+                in_covers = false;
+            }
+        }
+        if entry.file_name() == "main.rs" {
+            let exempt = text
+                .split("Not end to end:")
+                .nth(1)
+                .expect("tests/e2e/main.rs lists what is not end to end");
+            covered.extend(named_use_cases(
+                exempt.split("\n\n").next().unwrap_or_default(),
+            ));
+        }
+    }
+    let mut missing = Vec::new();
+    for module in modules().iter().filter(|m| m.name != "mod") {
+        let (code, _) = module.split();
+        for (name, _) in use_cases(code) {
+            let full = format!("{}::{name}", module.name);
+            if !covered.contains(&full) {
+                missing.push(full);
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "use cases no end-to-end scenario covers (add one, or list the reason under \
+         \"Not end to end\" in tests/e2e/main.rs): {missing:?}"
+    );
+}
+
 /// Each test states one rule: a sentence above it, and a name that reads as
 /// that rule.
 #[test]

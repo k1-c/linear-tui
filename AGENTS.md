@@ -115,8 +115,12 @@ the entry point and the settings every layer is handed sit beside them.
     binding marked `.herdr_only()` neither answers nor is listed unless
     `App::herdr` is set
 - `tests/` — `architecture.rs` (the layers depend inwards),
-  `usecase_spec.rs` (the use case layer reads as the specification), and
-  `fixtures/` — API responses for the decoding tests
+  `usecase_spec.rs` (the use case layer reads as the specification, and
+  every use case has an end-to-end scenario), `e2e/` (the real binary,
+  headless, against two real Linear test workspaces it empties and seeds;
+  `#[ignore]`d — `mise run e2e`, and `.github/workflows/e2e.yml`; see
+  `docs/development.md`), and `fixtures/` — API responses for the decoding
+  tests
 - `agent-plugin/` — the Claude Code / Codex plugin (`docs/agent-plugin.md`):
   a SessionStart hook and a skill, listed by `.claude-plugin/marketplace.json`
   and `.agents/plugins/marketplace.json`. Bump its `version` in both

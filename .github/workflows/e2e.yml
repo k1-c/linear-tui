@@ -1,0 +1,63 @@
+name: E2E
+
+# The end-to-end tests run the real linear-tui against two Linear workspaces
+# kept for them (see docs/development.md, "End-to-end tests"). Each run
+# empties workspace A and B and seeds them again, so runs must never overlap:
+# one concurrency group for every trigger, and runs queue rather than cancel
+# (a cancelled run can leave a workspace half-seeded, which the next run
+# repairs, but two at once corrupt each other).
+
+on:
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-linear-workspaces
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  e2e:
+    name: End-to-end (real Linear)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      LINEAR_E2E_API_KEY_A: ${{ secrets.LINEAR_E2E_API_KEY_A }}
+      LINEAR_E2E_WORKSPACE_A: ${{ secrets.LINEAR_E2E_WORKSPACE_A }}
+      LINEAR_E2E_TEAM_A: ${{ secrets.LINEAR_E2E_TEAM_A }}
+      LINEAR_E2E_API_KEY_B: ${{ secrets.LINEAR_E2E_API_KEY_B }}
+      LINEAR_E2E_WORKSPACE_B: ${{ secrets.LINEAR_E2E_WORKSPACE_B }}
+      LINEAR_E2E_TEAM_B: ${{ secrets.LINEAR_E2E_TEAM_B }}
+    steps:
+      # Pull requests from forks get no secrets; neither does a fork's CI.
+      - name: Check for the workspaces
+        id: workspaces
+        run: |
+          if [ -n "$LINEAR_E2E_API_KEY_A" ] && [ -n "$LINEAR_E2E_WORKSPACE_A" ] \
+            && [ -n "$LINEAR_E2E_API_KEY_B" ] && [ -n "$LINEAR_E2E_WORKSPACE_B" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::The E2E workspace secrets are not set; skipping the end-to-end tests."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.workspaces.outputs.run == 'true'
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master
+        if: steps.workspaces.outputs.run == 'true'
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        if: steps.workspaces.outputs.run == 'true'
+      - run: cargo build --locked
+        if: steps.workspaces.outputs.run == 'true'
+      - run: cargo test --locked --test e2e -- --ignored --test-threads=1
+        if: steps.workspaces.outputs.run == 'true'

@@ -121,7 +121,8 @@ Around the use cases:
 | interface | intents and state transitions, rendering against ratatui's `TestBackend`, key and palette dispatch | `src/interface/` |
 | adapters | API decoding against `tests/fixtures/`, requests against a `wiremock` server, the CLI's output, snapshot files | `src/adapter/` |
 | architecture | the layers depend inwards | `tests/architecture.rs` |
-| specification | the use case layer's shape | `tests/usecase_spec.rs` |
+| specification | the use case layer's shape, and that every use case has an end-to-end scenario | `tests/usecase_spec.rs` |
+| end to end | the real binary against real Linear workspaces, one scenario per use case at least | `tests/e2e/`, see below |
 
 Spec coverage is measured on the use case layer:
 
@@ -141,6 +142,73 @@ The shell scripts of the plugins are checked with
 `shellcheck -x -P SCRIPTDIR herdr-plugin/*.sh agent-plugin/hooks/*.sh`, and the
 agent plugin with `claude plugin validate .` and
 `claude plugin validate agent-plugin`.
+
+## End-to-end tests
+
+`tests/e2e/` runs the real binary, headless, against two real Linear
+workspaces kept for it, and works it through `linear-tui tui …` exactly as an
+agent would. Each scenario checks what the screen shows and what Linear ends
+up holding (through `linear-tui issue show --json`). There is at least one
+scenario per use case: each names the use cases it runs on a `Covers:` line,
+and `tests/usecase_spec.rs` fails when a use case is neither covered nor
+listed, with its reason, under "Not end to end" in `tests/e2e/main.rs`. The
+rules themselves stay in the unit tests; a scenario only has to show the
+representative path works against Linear.
+
+**Every run empties both workspaces** — every issue, project, saved view,
+and favorite — and seeds them again. Never point it at a workspace with
+anything you want to keep; it refuses a workspace whose URL key is not the
+one named for it.
+
+### Setting up the workspaces
+
+1. Create two Linear workspaces for the tests alone (the free plan will do),
+   A and B.
+2. Leave them as Linear makes them: the scenarios expect its default
+   workflow states (Triage, Backlog, Todo, In Progress, In Review, Done,
+   Canceled). The seed does the rest in A: it makes a second team
+   (`E2E Second`, for the scenarios that switch team) when there is only
+   one, and turns cycles on for the team it tests in. So the key must be
+   an admin's — the workspace's creator's is.
+3. In each, create a personal API key (Settings › Security & access ›
+   Personal API keys).
+4. Add these repository secrets (Settings › Secrets and variables ›
+   Actions):
+
+   | Secret | Value |
+   | --- | --- |
+   | `LINEAR_E2E_API_KEY_A` | A's API key |
+   | `LINEAR_E2E_WORKSPACE_A` | A's URL key: the `acme` in `linear.app/acme/…` |
+   | `LINEAR_E2E_API_KEY_B` | B's API key |
+   | `LINEAR_E2E_WORKSPACE_B` | B's URL key |
+   | `LINEAR_E2E_TEAM_A`, `LINEAR_E2E_TEAM_B` | optional: the team key to test in, instead of the first team |
+
+`.github/workflows/e2e.yml` then runs them on pull requests into `main`,
+daily, and on demand, one run at a time. Without the secrets (a fork, or
+before setup) the job says so and passes.
+
+### Running them locally
+
+Put the same variables in `mise.local.toml` at the root of the checkout.
+It is git-ignored, and mise reads it for every task:
+
+```toml
+[env]
+LINEAR_E2E_API_KEY_A = "lin_api_…"
+LINEAR_E2E_WORKSPACE_A = "<A's URL key>"
+LINEAR_E2E_API_KEY_B = "lin_api_…"
+LINEAR_E2E_WORKSPACE_B = "<B's URL key>"
+```
+
+Then one command runs them, in about two minutes:
+
+```sh
+mise run e2e     # cargo test --test e2e -- --ignored --test-threads=1
+```
+
+Run them before merging a change to what linear-tui shows or does, rather
+than waiting for CI. A plain `cargo test` never touches Linear: the
+scenarios are `#[ignore]`d.
 
 ## Documentation
 
