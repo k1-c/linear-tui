@@ -1,0 +1,14 @@
+{
+  "name": "linear-tui",
+  "owner": {
+    "name": "k1-c"
+  },
+  "description": "linear-tui's plugin for coding agents",
+  "plugins": [
+    {
+      "name": "linear-tui",
+      "source": "./agent-plugin",
+      "description": "Lets a coding agent see what you are looking at in linear-tui and act on Linear with your credentials"
+    }
+  ]
+}

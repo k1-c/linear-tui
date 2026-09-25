@@ -1,0 +1,10 @@
+{
+  "name": "linear-tui",
+  "version": "0.1.0",
+  "description": "Lets a coding agent see what you are looking at in linear-tui and act on Linear with your credentials",
+  "author": {
+    "name": "k1-c"
+  },
+  "homepage": "https://github.com/k1-c/linear-tui",
+  "license": "MIT"
+}

@@ -1,0 +1,16 @@
+{
+  "name": "linear-tui",
+  "interface": {
+    "displayName": "linear-tui"
+  },
+  "plugins": [
+    {
+      "name": "linear-tui",
+      "description": "Lets a coding agent see what you are looking at in linear-tui and act on Linear with your credentials",
+      "source": {
+        "source": "local",
+        "path": "./agent-plugin"
+      }
+    }
+  ]
+}

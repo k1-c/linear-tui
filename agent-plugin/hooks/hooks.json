@@ -1,0 +1,12 @@
+{
+  "description": "Tell the agent about linear-tui when the repository has a linear-tui view",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "sh \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start.sh\"", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}
