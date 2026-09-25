@@ -39,75 +39,83 @@ the pins current, so never add one by tag or branch.
 
 ## Project Structure
 
-`src/` is one directory per layer (see [Architecture](#architecture)); only
-the entry point and the settings every layer is handed sit beside them.
+`src/` is three directories, one per layer (see [Architecture](#architecture)):
+`core/` (what linear-tui is), `interface/` (the ways in), and `infra/` (the
+systems it calls on). Beside them sit the entry point, the main loop that
+wires the two outer layers together, and what every outer layer is handed.
 
-- `src/main.rs` — entry point, terminal setup, TUI main loop;
-  `src/config.rs` — config file + theme (`~/.config/linear-tui/config.toml`);
-  `src/logging.rs`
-- `src/entity/` — what linear-tui is about: entities (with an id: `Issue`,
-  `Team`, `User`, `Project`, `Cycle`, `CustomView`, `Favorite`, `Instance`)
-  and value objects (`Preset`, `Priority`, `IssueFilter`, `Page`, `Note`,
-  `Handoff`, the view snapshot in `snapshot.rs`), one file per aggregate,
-  `ids.rs` the typed ids. They keep serde derives with Linear's field names,
-  so the API decodes straight into them (see `docs/api-type-guide.md`)
-- `src/store/` — `Store`: everything Linear has told us (teams, team
-  contexts, viewer, views, favorites, projects, cycles, each list's rows, the
-  open issue) and the rules that keep it consistent (`patch_issue`,
-  `refresh_issue`); `lists.rs` is how every paginated list is opened, paged,
-  reloaded, and kept clear of stale pages (`ListOf` says what a list lists)
-- `src/usecase/` — what the user can do, one module per aggregate (`issue`,
-  `project`, `cycle`, `team`, `view`, `favorite`, `user`, `notes`, `agent`,
-  `instance`), each holding its queries and its changes alike and its own
-  `Request`; `mod.rs` indexes them and combines the requests into
-  `usecase::Request`, the output port. **This layer is the specification** —
-  see `docs/development.md` ("The use case layer")
-- `src/interface/` — what the user sees and does:
-  - `app/` — session state and every state transition. `App` in `mod.rs`
-    is `store` + `nav` (`navigation.rs`: screen, destination, team, way
-    back) + `view` (`view.rs`: cursors, list shapes, popup, forms, sidebar,
-    status) + `frame` (`frame.rs`: what the last frame drew) + `outbox`
-    (`outbox.rs`: queued requests) + `notes`. Transitions live by concern:
-    `messages.rs` (`handle_message`), `navigation.rs`, `popups.rs`,
-    `actions.rs` (intents that resolve the target and call a use case),
-    `cursor.rs`, `lists.rs` (list shapes, grouping, prefetch margins),
-    `sidebar.rs`, `mouse.rs` (`App::click`), `input.rs`, `snapshot.rs`
-    (capture the view) and `restore.rs` (reopen it on launch, or open the
-    issue `linear-tui open` names), `notes.rs`, `agents.rs` (herdr agents
-    on issues, `g w`); `tests.rs` the state tests
-  - `keys.rs` — keybindings (Controller): the `BINDINGS` table;
-    `palette.rs` — the `Ctrl+K` command palette (Controller), with
-    `fuzzy.rs` its matcher; `event.rs` — terminal events, routed;
-    `notation.rs` — the key notation agents press keys in
-  - `screen.rs` — the screen as an agent reads it (`linear-tui tui screen`):
-    the frame as text, focus, what is open, the keys and commands here
-  - `ui/` — rendering (View): `sidebar`, `issue_list`, `issue_detail`,
-    `view_list`, `project_list`, `project_detail`, `cycle_list`,
-    `cycle_detail`, `popup`, `palette`, `new_issue`, `note`, plus `markdown`
-    (wrapping Markdown renderer) and `widgets` (chips, width-aware
-    truncation); `look.rs` — glyphs and colours; `grouping.rs` — grouping
-    of issue lists
-  - `message.rs` — `Message`, the answers coming back to `app`, and how a
+- `src/main.rs` — entry point, terminal setup, the modes (terminal,
+  headless) and workspace switching; `src/runtime.rs` — the main loop's
+  work, step by step, against the terminal or — `--headless` — an in-memory
+  screen; `src/config.rs` — config file + theme
+  (`~/.config/linear-tui/config.toml`); `src/logging.rs`;
+  `src/private_file.rs` — files only the user may read
+- `src/core/` — no terminal, no network, no files:
+  - `entity/` — what linear-tui is about: entities (with an id: `Issue`,
+    `Team`, `User`, `Project`, `Cycle`, `CustomView`, `Favorite`,
+    `Instance`) and value objects (`Preset`, `Priority`, `IssueFilter`,
+    `Page`, `Note`, `Handoff`, the view snapshot in `snapshot.rs`), one file
+    per aggregate, `ids.rs` the typed ids. They keep serde derives with
+    Linear's field names, so the API decodes straight into them (see
+    `docs/api-type-guide.md`)
+  - `store/` — `Store`: everything Linear has told us (teams, team
+    contexts, viewer, views, favorites, projects, cycles, each list's rows,
+    the open issue) and the rules that keep it consistent (`patch_issue`,
+    `refresh_issue`); `lists.rs` is how every paginated list is opened,
+    paged, reloaded, and kept clear of stale pages (`ListOf` says what a
+    list lists)
+  - `usecase/` — what the user can do, one module per aggregate (`issue`,
+    `project`, `cycle`, `team`, `view`, `favorite`, `user`, `notes`,
+    `agent`, `instance`), each holding its queries and its changes alike
+    and its own `Request`; `mod.rs` indexes them and combines the requests
+    into `usecase::Request`, the output port. **This layer is the
+    specification** — see `docs/development.md` ("The use case layer")
+  - `message.rs` — `Message`, Linear's answers coming back, and how a
     failed request is worded
-- `src/adapter/` — the edges:
-  - `runtime.rs` — the main loop's work, step by step, against the
-    terminal or — `--headless` — an in-memory screen; `control.rs` — the
-    control channel agents drive a running instance through (a loopback
-    port, a token in `<pid>.control`)
-  - `api/` — Linear GraphQL client (`decode_tests.rs` checks decoding
-    against `tests/fixtures/`); `dispatch.rs` — `execute_request`: carries
-    out one `usecase::Request`
+- `src/interface/` — the ways in:
+  - `tui/` — a person in the terminal:
+    - `app/` — session state and every state transition. `App` in
+      `mod.rs` is `store` + `nav` (`navigation.rs`: screen, destination,
+      team, way back) + `view` (`view.rs`: cursors, list shapes, popup,
+      forms, sidebar, status) + `frame` (`frame.rs`: what the last frame
+      drew) + `outbox` (`outbox.rs`: queued requests) + `notes`.
+      Transitions live by concern: `messages.rs` (`handle_message`),
+      `navigation.rs`, `popups.rs`, `actions.rs` (intents that resolve the
+      target and call a use case), `cursor.rs`, `lists.rs` (list shapes,
+      grouping, prefetch margins), `sidebar.rs`, `mouse.rs` (`App::click`),
+      `input.rs`, `snapshot.rs` (capture the view) and `restore.rs` (reopen
+      it on launch, or open the issue `linear-tui open` names), `notes.rs`,
+      `agents.rs` (herdr agents on issues, `g w`); `tests.rs` the state
+      tests
+    - `keys.rs` — keybindings (Controller): the `BINDINGS` table;
+      `palette.rs` — the `Ctrl+K` command palette (Controller), with
+      `fuzzy.rs` its matcher; `event.rs` — terminal events, routed
+    - `ui/` — rendering (View): `sidebar`, `issue_list`, `issue_detail`,
+      `view_list`, `project_list`, `project_detail`, `cycle_list`,
+      `cycle_detail`, `popup`, `palette`, `new_issue`, `note`, plus
+      `markdown` (wrapping Markdown renderer) and `widgets` (chips,
+      width-aware truncation); `look.rs` — glyphs and colours;
+      `grouping.rs` — grouping of issue lists
+  - `control/` — an agent working a running TUI: `mod.rs` the channel (a
+    loopback port, a token in `<pid>.control`); `screen.rs` — the screen as
+    an agent reads it (`linear-tui tui screen`): the frame as text, focus,
+    what is open, the keys and commands here; `notation.rs` — the key
+    notation agents press keys in
   - `cli/` — the subcommands: `auth.rs` (`linear-tui auth …`), and the
     headless commands for agents (`docs/cli.md`) — `context.rs` renders the
     view snapshot, `tui.rs` works the running TUI (`linear-tui tui …`),
-    `issue.rs` shows, creates, comments on, and moves issues
-    through `headless.rs`, which runs each request through
+    `issue.rs` shows, creates, comments on, and moves issues through
+    `headless.rs`, which runs each request through
     `dispatch::execute_request`; `args.rs` parses their arguments
-  - `auth/` — OAuth2 + PKCE, token storage, API key fallback;
-    `private_file.rs` — files only the user may read
-  - `snapshot/` — view snapshots on disk (`docs/view-snapshot.md`): the
-    per-workspace files under the state dir (`Shelf`, which reads them as
-    `Instance`s) and the debounced writer (`Recorder`) the main loop drives
+- `src/infra/` — the systems linear-tui calls on:
+  - `linear/` — Linear's GraphQL client (`client.rs`, `error.rs`;
+    `decode_tests.rs` checks decoding against `tests/fixtures/`) and
+    `auth/` — OAuth2 + PKCE, token storage, API key fallback
+  - `dispatch.rs` — `execute_request`: carries out one `usecase::Request`
+  - `disk/snapshot/` — view snapshots on disk (`docs/view-snapshot.md`):
+    the per-workspace files under the state dir (`Shelf`, which reads them
+    as `Instance`s) and the debounced writer (`Recorder`) the main loop
+    drives
   - `herdr.rs` — the hand-off to the herdr plugin: writes a request to the
     outbox and invokes the plugin's `deliver` action. The only place that
     runs `HERDR_BIN_PATH`; `main` sets `App::herdr` from it. Also reads the
@@ -144,30 +152,36 @@ App::handle_message(Message)  ←  mpsc channel  ←  execute_request
 ```
 
 Adding an API call means adding a variant to the aggregate's `Request` in
-`usecase/`, a `Message` variant, and an arm in `dispatch` — never an `.await`
-inside the main loop, `interface/`, or a use case. An inline await freezes
+`core/usecase/`, a `Message` variant, and an arm in `dispatch` — never an
+`.await` inside the main loop, `interface/tui/`, or a use case. An inline await freezes
 input and animation for the whole request.
 
 **The layers only depend inwards** (Clean Architecture). Each is a directory
-under `src/`, and `tests/architecture.rs` fails when one names a layer
-further out, or when an inner one uses a crate that draws, reads the
-terminal, or does I/O:
+under `src/`, and `tests/architecture.rs` fails when one names a layer it
+may not, or when the core uses a crate that draws, reads the terminal, or
+does I/O:
 
 ```
-adapter/     api · dispatch · cli · auth · herdr · snapshot    the edges
-interface/   keys · palette · app · ui · …                     what the user sees and does
-usecase/     one module per aggregate; usecase::Request        what the user can do
-entity/  store/                                                what it is all about
+interface/   tui · control · cli                   the ways in       ─┐ both depend on core,
+infra/       linear · herdr · disk · dispatch      what it calls on  ─┘ not on each other
+core/        usecase → store → entity; message     what linear-tui is: no I/O
+runtime.rs, main.rs                                wire the ways in to what it calls on
 ```
 
+- `interface/` and `infra/` do not know each other; `runtime.rs` and
+  `main.rs` connect them. The one exception is `interface/cli`: each
+  subcommand runs on its own and assembles the infra it needs, as `main`
+  does for the TUI. Inside `interface/`, `control` reads what `tui` draws.
+- The core is always named `crate::core::…`; a bare `core::` is Rust's own
+  crate.
 - A use case never reads a cursor, a popup row, or a screen. Resolving "the
   issue under the cursor" is an intent on `App` (`actions.rs`, `popups.rs`);
   the intent passes ids and values to `usecase::…`, so a key, a click, a
   palette entry and a subcommand run the same code.
 - A use case never performs I/O either: it returns its aggregate's
-  `Request`, which an adapter carries out.
+  `Request`, which `infra::dispatch` carries out.
 - Use cases are grouped by the aggregate they act on — finding, reading,
-  and changing an issue all live in `usecase/issue.rs` — never by kind of
+  and changing an issue all live in `core/usecase/issue.rs` — never by kind of
   operation.
 - `app` does not import `ui`. A cache only the renderer needs lives in
   `ui::Cache`, owned by the main loop.
@@ -204,7 +218,7 @@ Other invariants:
 Shortcuts mirror [Linear's own](https://linear.app/docs). Before adding or
 changing one, check what Linear binds that key to.
 
-A binding is one row of `BINDINGS` in `src/interface/keys.rs`: its keys, the contexts it
+A binding is one row of `BINDINGS` in `src/interface/tui/keys.rs`: its keys, the contexts it
 applies in, its action, its help-overlay row, its status-bar hint, and its
 command-palette entry (`.command(title, keywords)`). Dispatch, the status bar,
 the help overlay, and the palette all read that table, so a new binding, hint,
@@ -230,7 +244,7 @@ curl -s https://api.linear.app/graphql -H 'Content-Type: application/json' \
 ```
 
 - Fields shared by every issue query live in `ISSUE_FIELDS` in
-  `src/adapter/api/client.rs`. Extend that constant rather than one query's selection.
+  `src/infra/linear/client.rs`. Extend that constant rather than one query's selection.
 - Always add or update a fixture in `tests/fixtures/` plus a deserialization
   test, including a case where the new field is absent.
 

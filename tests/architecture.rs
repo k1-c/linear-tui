@@ -2,24 +2,28 @@
 //! where each layer is a directory:
 //!
 //! ```text
-//! src/adapter/     api · auth · cli · dispatch · herdr · snapshot   the edges
-//! src/interface/   app · ui · keys · palette · event · …            what the user sees and does
-//! src/usecase/     one module per aggregate; usecase::Request        what the user can do
-//! src/entity/      entities and value objects                        what it is all about
-//! src/store/       what Linear has told us, kept consistent
+//! src/core/         entity · store · usecase · message   what linear-tui is: no I/O
+//! src/interface/    tui · control · cli                  the ways in: a person, an agent, a script
+//! src/infra/        linear · herdr · disk · dispatch     the systems it calls on
+//! src/runtime.rs, src/main.rs                            wire the ways in to the systems
 //! ```
 //!
-//! A layer may name its own modules and those further in, never those
-//! further out; the inner layers also stay clear of the crates that draw,
-//! read the terminal, or do I/O. `config` (settings handed to every layer at
-//! startup) sits beside them. See AGENTS.md ("Architecture").
+//! Inside `core`, `entity` is innermost, then `store`, then `usecase`.
+//! `interface` and `infra` depend on `core` and not on each other — except
+//! `interface/cli`, whose subcommands each run on their own and assemble
+//! the infra they need, as `main` does for the TUI. `control` reads what
+//! `tui` draws. The core stays clear of the crates that draw, read the
+//! terminal, or do I/O. `config`, `logging`, and `private_file` sit at the
+//! root, beside `main`, for every layer outside the core. See AGENTS.md
+//! ("Architecture").
 
 use std::path::{Path, PathBuf};
 
-/// A layer: its directory under `src/`, the crate modules it may name, and
-/// the external crates it must not use.
+/// A layer: its directory (or file) under `src/`, the crate modules it may
+/// name — `core::entity` allows `crate::core::entity::…` — and the external
+/// crates it must not use.
 struct Layer {
-    name: &'static str,
+    path: &'static str,
     allowed: &'static [&'static str],
     forbidden_crates: &'static [&'static str],
 }
@@ -29,39 +33,85 @@ const OUTER_CRATES: &[&str] = &["ratatui", "crossterm", "reqwest", "tokio", "ope
 
 const LAYERS: &[Layer] = &[
     Layer {
-        name: "entity",
-        allowed: &["entity"],
+        path: "core/entity",
+        allowed: &["core::entity"],
         forbidden_crates: OUTER_CRATES,
     },
     Layer {
-        name: "store",
-        allowed: &["entity", "store"],
+        path: "core/store",
+        allowed: &["core::entity", "core::store"],
         forbidden_crates: OUTER_CRATES,
     },
     Layer {
-        name: "usecase",
-        allowed: &["entity", "store", "usecase"],
+        path: "core/usecase",
+        allowed: &["core::entity", "core::store", "core::usecase"],
         forbidden_crates: OUTER_CRATES,
     },
     Layer {
-        name: "interface",
-        allowed: &["entity", "store", "usecase", "interface", "config"],
+        path: "core/message.rs",
+        allowed: &["core::entity", "core::usecase", "core::message"],
+        forbidden_crates: OUTER_CRATES,
+    },
+    Layer {
+        path: "interface/tui",
+        allowed: &["core", "interface::tui", "config"],
         forbidden_crates: &["reqwest", "tokio", "open"],
+    },
+    Layer {
+        path: "interface/control",
+        allowed: &[
+            "core",
+            "interface::tui",
+            "interface::control",
+            "config",
+            "private_file",
+        ],
+        forbidden_crates: &["reqwest"],
+    },
+    Layer {
+        path: "interface/cli",
+        allowed: &["core", "interface", "infra", "config", "private_file"],
+        forbidden_crates: &[],
+    },
+    Layer {
+        path: "infra",
+        allowed: &["core", "infra", "config", "private_file"],
+        forbidden_crates: &["ratatui", "crossterm"],
     },
 ];
 
-/// Every `crate::<module>` a line names, outside comments.
-fn crate_modules(line: &str) -> Vec<&str> {
+/// Every module path a line names through `crate::`, outside comments, with
+/// a `{…}` group spread into one path per item: `crate::core::{entity,
+/// store}` names `core::entity` and `core::store`.
+fn crate_paths(line: &str) -> Vec<String> {
     let code = line.split("//").next().unwrap_or_default();
-    code.match_indices("crate::")
-        .map(|(at, _)| {
-            let rest = &code[at + "crate::".len()..];
-            let end = rest
-                .find(|c: char| !(c.is_alphanumeric() || c == '_'))
-                .unwrap_or(rest.len());
-            &rest[..end]
-        })
-        .collect()
+    let is_path = |c: char| c.is_alphanumeric() || c == '_' || c == ':';
+    let mut paths = Vec::new();
+    for (at, _) in code.match_indices("crate::") {
+        let rest = &code[at + "crate::".len()..];
+        let end = rest.find(|c: char| !is_path(c)).unwrap_or(rest.len());
+        let path = &rest[..end];
+        if rest[end..].starts_with('{') && path.ends_with("::") {
+            let group = &rest[end + 1..];
+            let group = &group[..group.find('}').unwrap_or(group.len())];
+            for item in group.split(',') {
+                let item = item.trim();
+                let item_end = item.find(|c: char| !is_path(c)).unwrap_or(item.len());
+                paths.push(format!("{path}{}", &item[..item_end]));
+            }
+        } else {
+            paths.push(path.trim_end_matches(':').to_string());
+        }
+    }
+    paths
+}
+
+/// Whether `path` is `module` or inside it.
+fn within(path: &str, module: &str) -> bool {
+    path == module
+        || path
+            .strip_prefix(module)
+            .is_some_and(|rest| rest.starts_with("::"))
 }
 
 /// Whether a line uses the external crate `name`, outside comments.
@@ -87,69 +137,125 @@ fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
     }
 }
 
-fn layer_files(layer: &Layer) -> Vec<PathBuf> {
+fn src() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+}
+
+fn files_under(path: &str) -> Vec<PathBuf> {
     let mut files = Vec::new();
-    rust_files(
-        &Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("src")
-            .join(layer.name),
-        &mut files,
-    );
-    assert!(!files.is_empty(), "no sources for layer {}", layer.name);
+    rust_files(&src().join(path), &mut files);
+    assert!(!files.is_empty(), "no sources under src/{path}");
     files
 }
 
-/// Each layer names only itself and the layers further in, and uses none of
-/// the crates it is kept clear of.
+/// Each line of every file under `path`, with where it is.
+fn lines_under(path: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for file in files_under(path) {
+        let text = std::fs::read_to_string(&file).unwrap();
+        let shown = file
+            .strip_prefix(env!("CARGO_MANIFEST_DIR"))
+            .unwrap_or(&file)
+            .display()
+            .to_string();
+        for (n, line) in text.lines().enumerate() {
+            out.push((format!("{shown}:{}", n + 1), line.to_string()));
+        }
+    }
+    out
+}
+
+/// Each layer names only what it is allowed to, and uses none of the crates
+/// it is kept clear of.
 #[test]
 fn every_layer_depends_only_inwards() {
     let mut violations = Vec::new();
     for layer in LAYERS {
-        for file in layer_files(layer) {
-            let text = std::fs::read_to_string(&file).unwrap();
-            let shown = file
-                .strip_prefix(env!("CARGO_MANIFEST_DIR"))
-                .unwrap_or(&file)
-                .display()
-                .to_string();
-            for (n, line) in text.lines().enumerate() {
-                for module in crate_modules(line) {
-                    if !layer.allowed.contains(&module) {
-                        violations.push(format!(
-                            "{shown}:{}: {} names crate::{module}",
-                            n + 1,
-                            layer.name
-                        ));
-                    }
+        for (at, line) in lines_under(layer.path) {
+            for path in crate_paths(&line) {
+                if !layer.allowed.iter().any(|module| within(&path, module)) {
+                    violations.push(format!("{at}: {} names crate::{path}", layer.path));
                 }
-                for name in layer.forbidden_crates {
-                    if uses_crate(line, name) {
-                        violations.push(format!(
-                            "{shown}:{}: {} uses the {name} crate",
-                            n + 1,
-                            layer.name
-                        ));
-                    }
+            }
+            for name in layer.forbidden_crates {
+                if uses_crate(&line, name) {
+                    violations.push(format!("{at}: {} uses the {name} crate", layer.path));
                 }
             }
         }
     }
     assert!(
         violations.is_empty(),
-        "dependencies pointing outwards:\n{}",
+        "dependencies pointing the wrong way:\n{}",
         violations.join("\n")
     );
 }
 
-/// The checker itself: it sees a module path and a crate path, and not ones
-/// in comments.
+/// The core is always `crate::core`: a bare `core::` is Rust's own crate,
+/// and reads as if it were ours.
+#[test]
+fn the_core_is_always_named_through_crate() {
+    let bare: Vec<String> = lines_under("")
+        .into_iter()
+        .filter(|(_, line)| uses_crate(line, "core"))
+        .map(|(at, line)| format!("{at}: {}", line.trim()))
+        .collect();
+    assert!(bare.is_empty(), "bare core:: paths:\n{}", bare.join("\n"));
+}
+
+/// The layers table covers every directory under `src/`, so a new one is
+/// placed on purpose.
+#[test]
+fn every_source_directory_is_in_a_layer() {
+    let mut dirs = Vec::new();
+    for top in ["core", "interface", "infra"] {
+        for entry in std::fs::read_dir(src().join(top)).unwrap().flatten() {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name != "mod.rs" {
+                dirs.push(format!("{top}/{name}"));
+            }
+        }
+    }
+    let unplaced: Vec<&String> = dirs
+        .iter()
+        .filter(|dir| {
+            !LAYERS
+                .iter()
+                .any(|layer| dir.as_str() == layer.path || within_dir(dir, layer.path))
+        })
+        .collect();
+    assert!(unplaced.is_empty(), "not in any layer: {unplaced:?}");
+    for entry in std::fs::read_dir(src()).unwrap().flatten() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(
+            ["core", "interface", "infra"].contains(&name.as_str()) || name.ends_with(".rs"),
+            "src/{name} is a directory outside the layers"
+        );
+    }
+}
+
+/// Whether `dir` lies inside the layer directory `layer`.
+fn within_dir(dir: &str, layer: &str) -> bool {
+    dir.strip_prefix(layer)
+        .is_some_and(|rest| rest.starts_with('/'))
+}
+
+/// The checker itself: it sees module paths, groups, and crate paths, and
+/// not ones in comments.
 #[test]
 fn the_checker_reads_paths_and_skips_comments() {
     assert_eq!(
-        crate_modules("use crate::entity::Issue; // crate::ui"),
-        ["entity"]
+        crate_paths("use crate::core::entity::Issue; // crate::ui"),
+        ["core::entity::Issue"]
     );
+    assert_eq!(
+        crate_paths("use crate::core::{entity, store::Store};"),
+        ["core::entity", "core::store::Store"]
+    );
+    assert!(within("core::entity::Issue", "core::entity"));
+    assert!(!within("core::entityish", "core::entity"));
     assert!(uses_crate("use ratatui::style::Color;", "ratatui"));
     assert!(!uses_crate("// ratatui::style::Color", "ratatui"));
     assert!(!uses_crate("use crate::my_tokio::x;", "tokio"));
+    assert!(!uses_crate("use crate::core::entity;", "core"));
 }

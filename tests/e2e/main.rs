@@ -14,7 +14,7 @@
 //! cargo test --test e2e -- --ignored --test-threads=1
 //! ```
 //!
-//! Every use case in `src/usecase/` is covered by at least one scenario,
+//! Every use case in `src/core/usecase/` is covered by at least one scenario,
 //! named on its `Covers:` line; `tests/usecase_spec.rs` checks that. These
 //! are not, for the reason given:
 //!
