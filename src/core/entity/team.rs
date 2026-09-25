@@ -55,3 +55,11 @@ pub struct Organization {
     #[serde(rename = "urlKey")]
     pub url_key: String,
 }
+
+/// A workspace the user is signed in to, and whether linear-tui acts in it
+/// now. A value: the organization's id says which workspace it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Workspace {
+    pub organization: Organization,
+    pub current: bool,
+}

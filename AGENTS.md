@@ -68,9 +68,9 @@ wires the two outer layers together, and what every outer layer is handed.
     list lists)
   - `usecase/` — what the user can do, one module per aggregate (`issue`,
     `project`, `cycle`, `team`, `view`, `favorite`, `user`, `notes`,
-    `agent`, `instance`), each holding its queries and its changes alike
-    and its own `Request`; `mod.rs` indexes them and combines the requests
-    into `usecase::Request`, the output port. **This layer is the
+    `agent`, `instance`, `workspace`), each holding its queries and its
+    changes alike and its own `Request`; `mod.rs` indexes them and combines
+    the requests into `usecase::Request`, the output port. **This layer is the
     specification** — see `docs/development.md` ("The use case layer")
   - `message.rs` — `Message`, Linear's answers coming back, and how a
     failed request is worded

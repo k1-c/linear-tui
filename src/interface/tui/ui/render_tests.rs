@@ -254,10 +254,12 @@ fn every_screen_renders_at_every_size() {
             app.workspaces = ["Acme", "Globex"]
                 .iter()
                 .enumerate()
-                .map(|(i, name)| crate::interface::tui::app::WorkspaceEntry {
-                    id: (*name).into(),
-                    name: (*name).into(),
-                    url_key: name.to_lowercase(),
+                .map(|(i, name)| crate::core::entity::Workspace {
+                    organization: crate::core::entity::Organization {
+                        id: (*name).into(),
+                        name: (*name).into(),
+                        url_key: name.to_lowercase(),
+                    },
                     current: i == 0,
                 })
                 .collect();

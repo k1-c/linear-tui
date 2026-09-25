@@ -77,6 +77,40 @@ and `sidebar = false` in `config.toml` keeps it hidden at start
 
 See [agents.md](agents.md) and [agent-plugin.md](agent-plugin.md).
 
+## `linear-tui tui` cannot reach linear-tui
+
+**"No linear-tui is running for …"** `linear-tui tui …` works the linear-tui
+open for the repository it is run in: every worktree of one repository shares
+it, but another repository, or another directory outside git, has its own.
+Run it in the same repository, or pass `--workspace <path>`. Both must also
+use the same state directory: if linear-tui was started with
+`LINEAR_TUI_STATE_DIR` set, set the same value for `linear-tui tui`. With no
+linear-tui open, start one — `linear-tui --headless` needs no terminal. With
+several open in one repository, commands go to the one that moved last.
+
+**"linear-tui is not accepting commands here (… is missing)".** That instance
+does not listen for agents: `[agent] control = false` in `config.toml`
+([configuration.md](configuration.md#agent)), or its control channel could not
+start — the log says why (`control channel disabled`).
+
+**After a crash.** A linear-tui that did not quit cleanly leaves its
+`<pid>.control` file behind. It is ignored once the process is gone, so start
+linear-tui again. If another program has since been given the same process id,
+commands fail with "did not answer on its control port"; starting a new
+linear-tui there fixes that too.
+
+**The screen comes back still loading.** A command answers once Linear has
+answered what it asked for, but waits no longer than 15 seconds; after that it
+answers with the screen as it is. Run `linear-tui tui screen` again a moment
+later. "did not answer in time" means linear-tui gave no answer at all for a
+minute.
+
+**`--headless` exits at once** with "A headless linear-tui needs its control
+channel": it is only driven through `linear-tui tui …`, so it needs
+`[agent] control = true` (the default). With it on, the log says why the
+channel could not start. It also needs you signed in already
+([authentication.md](authentication.md)).
+
 ## herdr
 
 The plugin reports failures to herdr's plugin log:

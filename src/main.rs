@@ -248,25 +248,18 @@ fn new_app(
     app
 }
 
-/// The signed-in workspaces the switcher offers. One not yet identified has
-/// nothing to show, so it is left out until the next launch names it.
-fn workspace_entries(token_store: &TokenStore) -> Vec<app::WorkspaceEntry> {
+/// The signed-in workspaces the switcher offers: see
+/// `usecase::workspace::signed_in`.
+fn workspace_entries(token_store: &TokenStore) -> Vec<entity::Workspace> {
     let Ok(accounts) = token_store.load() else {
         return Vec::new();
     };
-    accounts
-        .accounts
-        .iter()
-        .filter_map(|account| {
-            let org = account.organization.as_ref()?;
-            Some(app::WorkspaceEntry {
-                id: org.id.clone(),
-                name: org.name.clone(),
-                url_key: org.url_key.clone(),
-                current: accounts.is_current(account),
-            })
-        })
-        .collect()
+    usecase::workspace::signed_in(
+        accounts
+            .accounts
+            .iter()
+            .map(|account| (account.organization.clone(), accounts.is_current(account))),
+    )
 }
 
 /// Moving between workspaces: switching ends one session and starts another
@@ -282,7 +275,7 @@ struct Switcher {
     /// The workspace the session in progress acts in.
     organization: Option<OrganizationId>,
     /// The view each workspace was left on this run, to come back to.
-    left: HashMap<OrganizationId, entity::snapshot::ViewSnapshot>,
+    left: usecase::workspace::LeftViews,
 }
 
 impl Switcher {
@@ -298,25 +291,25 @@ impl Switcher {
         match auth::switch_to(&self.token_store, api_key, &target).await {
             Ok(auth) => {
                 tracing::info!(organization = %target, "switched workspace");
-                if let (Some(org), Some(view)) = (
-                    self.organization.take(),
-                    runtime
+                if let Some(org) = self.organization.take() {
+                    let view = runtime
                         .app
-                        .snapshot(&self.origin, snapshot::timestamp_now()),
-                ) {
-                    self.left.insert(org, view);
+                        .snapshot(&self.origin, snapshot::timestamp_now());
+                    usecase::workspace::leave(&mut self.left, org, view);
                 }
                 self.organization = Some(target.clone());
                 let client = LinearClient::new(auth.into_credentials(self.token_store.clone()));
-                let restored = if self.pinned {
-                    None
-                } else {
-                    self.left.remove(&target).or_else(|| {
-                        self.shelf
+                let (shelf, origin) = (&self.shelf, &self.origin);
+                let restored = usecase::workspace::view_on_return(
+                    &mut self.left,
+                    &target,
+                    self.pinned,
+                    || {
+                        shelf
                             .as_ref()
-                            .and_then(|s| reopen(s, &self.origin, Some(&target)))
-                    })
-                };
+                            .and_then(|s| reopen(s, origin, Some(&target)))
+                    },
+                );
                 let app = new_app(&self.config, &self.token_store, restored, None);
                 runtime.restart(app, client);
             }

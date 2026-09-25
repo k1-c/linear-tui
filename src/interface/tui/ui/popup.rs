@@ -170,7 +170,7 @@ fn draw_workspace_select(f: &mut Frame, app: &mut App) {
             numbered_item(
                 num(i),
                 vec![],
-                &format!("{}  {}", w.name, w.url_key),
+                &format!("{}  {}", w.organization.name, w.organization.url_key),
                 w.current,
                 &th,
             )
