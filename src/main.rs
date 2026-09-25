@@ -1,22 +1,13 @@
-mod api;
-mod app;
-mod auth;
-mod cli;
+mod adapter;
 mod config;
-mod dispatch;
-mod event;
-mod fuzzy;
-mod grouping;
-mod herdr;
-mod keys;
+mod entity;
+mod interface;
 mod logging;
-mod message;
-mod palette;
-mod private_file;
-mod snapshot;
 mod store;
-mod ui;
 mod usecase;
+
+use adapter::{api, auth, cli, dispatch, herdr, snapshot};
+use interface::{app, event, message, ui};
 
 use std::collections::HashMap;
 use std::io::{self, Write};
@@ -41,10 +32,10 @@ use tokio::sync::mpsc;
 use base64::Engine;
 
 use api::client::LinearClient;
-use api::ids::OrganizationId;
 use app::App;
 use auth::token::TokenStore;
 use config::Config;
+use entity::OrganizationId;
 use message::Message;
 
 /// Spinner advance interval.
@@ -79,7 +70,7 @@ async fn main() -> Result<()> {
 
     // An entry for this directory in config.toml wins over the view
     // remembered for it.
-    let origin = snapshot::Origin::current(std::env::current_dir()?);
+    let origin = snapshot::this_process(std::env::current_dir()?);
     let pinned = config.workspace(&origin.workspace, &origin.cwd).cloned();
     let shelf = snapshot::state_dir()
         .map(|dir| snapshot::Shelf::new(&dir, &origin.workspace))
@@ -96,7 +87,7 @@ async fn main() -> Result<()> {
         None if open.is_some() => None,
         None => shelf
             .as_ref()
-            .and_then(|s| s.for_restore(origin.pid, organization.as_ref())),
+            .and_then(|s| reopen(s, &origin, organization.as_ref())),
     };
     let recorder = shelf.as_ref().map(|shelf| {
         shelf.prune();
@@ -122,8 +113,8 @@ async fn main() -> Result<()> {
 
 /// Where this instance runs, what it reopens, and where it records its view.
 struct Session {
-    origin: snapshot::Origin,
-    restored: Option<snapshot::ViewSnapshot>,
+    origin: entity::Origin,
+    restored: Option<entity::snapshot::ViewSnapshot>,
     /// The issue `linear-tui open` asked for.
     open: Option<String>,
     recorder: Option<snapshot::Recorder>,
@@ -220,7 +211,7 @@ async fn run_tui(
     // Only the herdr plugin writes the agents file.
     let mut agents = herdr::available().then(herdr::AgentWatch::new).flatten();
     // The view each workspace was left on this run, to come back to.
-    let mut left: HashMap<OrganizationId, snapshot::ViewSnapshot> = HashMap::new();
+    let mut left: HashMap<OrganizationId, entity::snapshot::ViewSnapshot> = HashMap::new();
     let mut organization = auth.organization().map(|org| org.id.clone());
     let mut client = Arc::new(LinearClient::new(
         auth.into_credentials(token_store.clone()),
@@ -244,7 +235,10 @@ async fn run_tui(
         match auth::switch_to(&token_store, config.auth.api_key.as_deref(), &target).await {
             Ok(auth) => {
                 tracing::info!(organization = %target, "switched workspace");
-                if let (Some(org), Some(view)) = (organization.take(), app.snapshot(&origin)) {
+                if let (Some(org), Some(view)) = (
+                    organization.take(),
+                    app.snapshot(&origin, snapshot::timestamp_now()),
+                ) {
                     left.insert(org, view);
                 }
                 organization = Some(target.clone());
@@ -257,7 +251,7 @@ async fn run_tui(
                     left.remove(&target).or_else(|| {
                         shelf
                             .as_ref()
-                            .and_then(|s| s.for_restore(origin.pid, Some(&target)))
+                            .and_then(|s| reopen(s, &origin, Some(&target)))
                     })
                 };
                 app = new_app(&config, &token_store, restored, None);
@@ -270,22 +264,35 @@ async fn run_tui(
     }
 
     if let Some(recorder) = &mut recorder
-        && let Some(snapshot) = app.snapshot(&origin)
+        && let Some(snapshot) = app.snapshot(&origin, snapshot::timestamp_now())
     {
         recorder.close(snapshot);
     }
     Ok(())
 }
 
+/// The view a launch in `origin`'s repository reopens, signed in to
+/// `organization`: see `usecase::instance::to_reopen`.
+fn reopen(
+    shelf: &snapshot::Shelf,
+    origin: &entity::Origin,
+    organization: Option<&OrganizationId>,
+) -> Option<entity::snapshot::ViewSnapshot> {
+    let instances = shelf.instances();
+    usecase::instance::to_reopen(&instances, &origin.id(), organization).map(|i| i.view.clone())
+}
+
 /// A fresh session's state, reopening `restored` or the issue `open` names.
 fn new_app(
     config: &Config,
     token_store: &TokenStore,
-    restored: Option<snapshot::ViewSnapshot>,
+    restored: Option<entity::snapshot::ViewSnapshot>,
     open: Option<&str>,
 ) -> App {
     // `App::new` seeds the initial Teams/Viewer requests.
     let mut app = App::new(config);
+    // Inside herdr, the actions that hand work to its plugin are offered.
+    app.herdr = herdr::available();
     app.workspaces = workspace_entries(token_store);
     if let Some(snapshot) = restored {
         tracing::info!(updated_at = %snapshot.updated_at, "restoring the last view");
@@ -323,7 +330,7 @@ fn run_session(
     terminal: &mut Term,
     app: &mut App,
     client: &Arc<LinearClient>,
-    origin: &snapshot::Origin,
+    origin: &entity::Origin,
     recorder: &mut Option<snapshot::Recorder>,
     agents: &mut Option<herdr::AgentWatch>,
 ) -> Result<()> {
@@ -383,7 +390,7 @@ fn run_session(
                 recorder.touch(now);
             }
             if recorder.is_due(now)
-                && let Some(snapshot) = app.snapshot(origin)
+                && let Some(snapshot) = app.snapshot(origin, snapshot::timestamp_now())
             {
                 recorder.record(snapshot);
             }

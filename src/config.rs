@@ -340,7 +340,7 @@ impl Config {
     /// it is written owner-only.
     pub fn save(&self) -> Result<()> {
         let contents = toml::to_string_pretty(self)?;
-        crate::private_file::write(&Self::config_path()?, contents.as_bytes())
+        crate::adapter::private_file::write(&Self::config_path()?, contents.as_bytes())
     }
 
     pub fn config_dir() -> Result<PathBuf> {

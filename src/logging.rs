@@ -19,7 +19,7 @@ pub fn init() -> WorkerGuard {
     // owner-only like the credentials beside it. Logging is best-effort: if
     // the file cannot be opened, the app runs without it.
     let (non_blocking, guard) =
-        match crate::private_file::open_append(&config_dir.join("debug.log")) {
+        match crate::adapter::private_file::open_append(&config_dir.join("debug.log")) {
             Ok(file) => tracing_appender::non_blocking(file),
             Err(_) => tracing_appender::non_blocking(std::io::sink()),
         };

@@ -1,5 +1,5 @@
 use super::*;
-use crate::api::types::Connection;
+use crate::entity::Connection;
 
 fn issue(id: &str, title: &str) -> Issue {
     serde_json::from_str(&format!(
