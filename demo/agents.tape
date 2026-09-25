@@ -1,80 +1,91 @@
-# Working with a coding agent: note what you see in linear-tui, then show what
-# an agent reads with `linear-tui context` and `linear-tui issue show`.
-# Record it through demo/record.sh:
+# Working with a coding agent: linear-tui on the left, the agent's shell on
+# the right. Note what you read, then see what the agent reads with
+# `linear-tui context` and `linear-tui issue show`. Record it through
+# demo/record.sh:
 #
 #   LINEAR_DEMO_TEAM=<team name> demo/record.sh demo/agents.tape
 #
-# Assumes the data from demo/seed.py, and changes nothing in the workspace:
-# the note goes to the clipboard, not to Linear. Needs jq.
+# Assumes the data from demo/seed.py, where the timezone crash is LIN-12, and
+# changes nothing in the workspace: the notes go to the clipboard, not to
+# Linear. Needs tmux.
 
 Output assets/agents.gif
 
 Require linear-tui
-Require jq
+Require tmux
 
 Set Shell "bash"
-Set FontSize 15
-Set Width 1440
-Set Height 820
-Set Padding 16
+Set FontSize 14
+Set Width 1780
+Set Height 860
+Set Padding 12
 Set Theme "Catppuccin Mocha"
-Set TypingSpeed 60ms
+Set TypingSpeed 55ms
 Set CursorBlink false
 
 Hide
+Type "tmux -f demo/tmux.conf -L lt-demo new-session \; split-window -h -l 72 \; select-pane -L"
+Enter
+Sleep 1s
 Type "clear && linear-tui"
 Enter
 Wait+Screen@20s /In Progress/
+Ctrl+B
+Type "o"
+Type "PS1='agent \$ ' && clear"
+Enter
+Ctrl+B
+Type "o"
 Sleep 500ms
 Show
 
-# Find an issue and open it.
+# In linear-tui: find an issue and open it.
 Sleep 1s
 Type "/"
 Sleep 300ms
 Type "timezone"
-Sleep 800ms
+Sleep 700ms
 Enter
+Sleep 300ms
+Enter
+Wait+Screen@20s /Activity/
+Sleep 1.2s
+
+# A note on the issue, one on the view, and Ctrl+S: outside herdr they are
+# copied as one prompt to paste into the agent; inside herdr they go to it.
+Type "n"
+Sleep 500ms
+Type "Reproduce with a location saved before we stored timezones"
+Sleep 600ms
+Alt+Enter
+Sleep 1s
+Escape
+Sleep 600ms
+Type "N"
+Sleep 500ms
+Type "Same root cause as the widget crash?"
+Sleep 600ms
+Alt+Enter
+Sleep 800ms
+Ctrl+S
+Sleep 2s
+Enter
+Wait+Screen@20s /Activity/
+Sleep 1s
+
+# In the agent's shell: what is the user looking at?
+Ctrl+B
+Type "o"
+Sleep 600ms
+Type "linear-tui context"
 Sleep 400ms
 Enter
-Wait+Screen@20s /Properties/
-Sleep 1.5s
-
-# A note for the agent on it, and one on the whole view.
-Type "n"
-Sleep 600ms
-Type "Reproduce with a location saved before we stored timezones"
-Sleep 800ms
-Alt+Enter
-Sleep 1.5s
-Escape
-Sleep 800ms
-Type "N"
-Sleep 600ms
-Type "Is this the same root cause as the widget crash?"
-Sleep 800ms
-Alt+Enter
-Sleep 1.5s
-
-# Outside herdr, Ctrl+S copies them as one prompt; in herdr it goes to the agent.
-Ctrl+S
-Sleep 2.5s
-
-# Leave linear-tui on the issue, and look at it the way an agent does.
-Enter
-Wait+Screen@20s /Properties/
-Sleep 1s
-Ctrl+C
-Sleep 600ms
-Type "clear"
-Enter
-Type "linear-tui context"
-Sleep 500ms
-Enter
 Sleep 4s
-Type "clear"
-Enter
-Type "linear-tui issue show $(linear-tui context --json | jq -r .snapshot.issue.identifier) | head -24"
-Sleep 500ms
+Type "clear && linear-tui issue show LIN-12 | head -18"
+Sleep 400ms
 Enter
 Sleep 5s
+
+Hide
+Type "tmux -L lt-demo kill-server"
+Enter

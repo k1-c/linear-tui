@@ -47,7 +47,11 @@ Each repository — and every worktree of it — reopens on the page, list
 settings, and issue you last had open there. Pages are remembered by Linear ID,
 so a reordered sidebar never reopens the wrong one.
 
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/resume.gif" alt="Opening an issue in a saved view grouped by priority, quitting, and launching linear-tui again straight back on that issue, with Esc returning to the view">
+
 ### Your agent sees what you see
+
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/agents.gif" alt="linear-tui on the left, an agent's shell on the right: two notes jotted on an issue and the view are copied with Ctrl+S, then linear-tui context shows the open issue with the cursor, and linear-tui issue show prints it">
 
 ```sh
 linear-tui context                       # the page, the open issue, the list with your cursor

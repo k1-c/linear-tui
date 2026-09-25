@@ -67,7 +67,7 @@ Linear workspace filled with made-up data — a weather app — never a real one
 | `demo/demo.tape` | `assets/demo.gif` | The tour: grouped lists, presets, an issue with Markdown and comments, a project, a cycle, a saved view, the sidebar |
 | `demo/palette.tape` | `assets/palette.gif` | The command palette: commands, issue search, pickers, places |
 | `demo/resume.tape` | `assets/resume.gif` | Quitting a few pages deep and relaunching where you left off |
-| `demo/agents.tape` | `assets/agents.gif` | Notes on what you read, and what an agent sees with `linear-tui context` and `issue show` |
+| `demo/agents.tape` | `assets/agents.gif` | linear-tui beside an agent's shell (tmux, `demo/tmux.conf`): notes on what you read, and what the agent sees with `linear-tui context` and `issue show` |
 
 Sign linear-tui in to the throwaway workspace (or use an API key for it), fill
 it with demo data once, then record:
@@ -79,10 +79,11 @@ LINEAR_DEMO_TEAM=<team name> demo/record.sh all         # every tape
 LINEAR_DEMO_API_KEY=lin_api_... demo/record.sh all      # with an API key instead
 ```
 
-`record.sh` needs `vhs`, `ttyd`, and `ffmpeg` (and `jq` for `agents.tape`), and
-runs on Linux. linear-tui runs with a throwaway config and a fresh state
+`record.sh` needs `vhs`, `ttyd`, and `ffmpeg` (and `tmux` for `agents.tape`),
+and runs on Linux. linear-tui runs with a throwaway config and a fresh state
 directory per tape, so neither your settings nor a remembered view leak into a
-recording, and no tape leaves one behind. The tapes change nothing in the
+recording, and no tape leaves one behind. It also drops herdr's environment,
+so a recording made inside herdr still shows linear-tui as it runs elsewhere. The tapes change nothing in the
 workspace: pickers are closed without choosing, and notes go to the clipboard.
 
 A new tape follows the same pattern: launch off camera (`Hide` … `Show`), wait

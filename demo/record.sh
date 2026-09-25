@@ -74,9 +74,14 @@ theme = "default"
 EOF
 
 # Each tape starts with no remembered view of its own, so one recording
-# cannot reopen where another left off.
+# cannot reopen where another left off. The recording is not inside herdr even
+# when this script is: without HERDR_* the notes go to the clipboard, as they
+# do for anyone watching, rather than to the herdr plugin.
 for tape in "${tapes[@]}"; do
   state="$config_home/state-$(basename "$tape" .tape)"
-  LINEAR_TUI_STATE_DIR="$state" XDG_CONFIG_HOME="$config_home" PATH="$PWD/target/release:$PATH" vhs "$tape"
+  env -u HERDR_BIN_PATH -u HERDR_SOCKET_PATH -u HERDR_ENV -u HERDR_PANE_ID \
+    -u HERDR_TAB_ID -u HERDR_WORKSPACE_ID \
+    LINEAR_TUI_STATE_DIR="$state" XDG_CONFIG_HOME="$config_home" \
+    PATH="$PWD/target/release:$PATH" vhs "$tape"
   echo "Wrote $(grep -m1 '^Output' "$tape" | cut -d' ' -f2)"
 done

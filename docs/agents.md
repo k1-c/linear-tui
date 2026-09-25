@@ -10,6 +10,8 @@ None of this needs a Linear MCP server or a second sign-in, and all of it works
 without [herdr](herdr.md) — herdr only adds the parts that need a workspace
 manager.
 
+<img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/agents.gif" alt="linear-tui on the left, an agent's shell on the right: notes copied with Ctrl+S, then linear-tui context and linear-tui issue show">
+
 ## 1. The agent sees your screen
 
 ```sh
