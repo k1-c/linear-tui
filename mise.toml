@@ -34,9 +34,9 @@ description = "Run the TUI from source"
 run = "cargo run"
 
 [tasks.coverage]
-description = "Line coverage of the unit tests, by file; the use case layer first"
+description = "Line coverage by file of the inner layers (use cases, store, entities), then in all"
 run = [
-    "cargo llvm-cov --summary-only 2>/dev/null | grep -E '^(Filename|usecase/)'",
+    "cargo llvm-cov --summary-only 2>/dev/null | grep -E '^(Filename|usecase/|store/|entity/)'",
     "cargo llvm-cov report --summary-only | grep -E '^(Filename|TOTAL)'",
 ]
 
