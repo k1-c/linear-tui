@@ -8,6 +8,7 @@
 //! names for it.
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde_json::{Value, json};
 
@@ -35,6 +36,26 @@ impl Account {
             url_key: var(&format!("LINEAR_E2E_WORKSPACE_{name}"))?,
         })
     }
+}
+
+/// Why a run stops when Linear limits the test keys: every scenario after
+/// would fail too, each for a reason that is not the real one.
+pub const RATE_LIMITED: &str = "Linear is rate limiting the test workspaces' API keys \
+     (too many runs within the hour). Wait for the limit to lift — about an hour — \
+     and run again; running at once only extends it.";
+
+static LIMITED: AtomicBool = AtomicBool::new(false);
+
+/// Stop here, and make every later scenario stop before it sends anything:
+/// retrying at once only prolongs the limit.
+pub fn rate_limited() -> ! {
+    LIMITED.store(true, Ordering::Relaxed);
+    panic!("{RATE_LIMITED}");
+}
+
+/// Stop before sending anything when an earlier scenario hit the limit.
+pub fn stop_if_rate_limited() {
+    assert!(!LIMITED.load(Ordering::Relaxed), "{RATE_LIMITED}");
 }
 
 /// A small blocking GraphQL client for the setup.
@@ -68,6 +89,12 @@ impl Linear {
             .block_on(async { request.send().await?.json().await })
             .map_err(|e| format!("{e}"))?;
         if let Some(errors) = body.get("errors") {
+            let limited = errors
+                .as_array()
+                .is_some_and(|all| all.iter().any(|e| e["extensions"]["code"] == "RATELIMITED"));
+            if limited {
+                rate_limited();
+            }
             let first_line = query.lines().next().unwrap_or_default();
             return Err(format!("{first_line}: {errors}"));
         }
