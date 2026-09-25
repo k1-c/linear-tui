@@ -21,6 +21,7 @@ mod preset;
 mod project;
 pub mod snapshot;
 mod team;
+pub mod timestamp;
 mod view;
 
 pub use agent::*;

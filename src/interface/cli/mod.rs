@@ -5,18 +5,55 @@
 //! credentials and the same request code as the TUI. Output is meant for
 //! agents first: plain, stable Markdown by default, JSON with `--json`, and
 //! errors on stderr with a non-zero exit. The contract is `docs/cli.md`.
+//!
+//! A subcommand never reaches for the infra: what it needs from outside —
+//! Linear, the recorded views, the clock — comes in through a [`Host`],
+//! which `crate::commands` assembles. `linear-tui auth …` is handled there
+//! too: signing in sets up the infra itself.
+
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::core::entity::{Instance, Organization};
+
 mod args;
-mod auth;
 mod context;
 mod headless;
 mod issue;
 mod paths;
 mod tui;
 
+pub use headless::Linear;
 pub use issue::issue_key;
+
+/// What the subcommands need from the world outside linear-tui.
+pub trait Host {
+    type Linear: Linear;
+
+    /// Linear, signed in the way `linear-tui auth` set up. Never prompts: a
+    /// subcommand is often run by an agent with nobody at the keyboard.
+    async fn linear(&self) -> Result<Self::Linear>;
+
+    /// The repository `cwd` is in: the workspace linear-tui files views under.
+    fn workspace_of(&self, cwd: &Path) -> PathBuf;
+
+    /// The linear-tui instances recorded for a workspace.
+    fn instances(&self, workspace: &Path) -> Result<Vec<Instance>>;
+
+    /// Where an instance records its view; its control file sits beside it.
+    fn snapshot_file(&self, workspace: &Path, pid: u32) -> Result<PathBuf>;
+
+    /// Where the view snapshots live.
+    fn state_dir(&self) -> Result<PathBuf>;
+
+    /// The workspace `linear-tui issue …` acts in, read without the network;
+    /// `None` when it cannot be told (an API key, or nothing stored).
+    fn acting_organization(&self) -> Option<Organization>;
+
+    /// Seconds since the Unix epoch, now.
+    fn now(&self) -> u64;
+}
 
 pub const USAGE: &str = "\
 linear-tui — a terminal UI for Linear
@@ -59,13 +96,14 @@ For agents and scripts (Markdown by default, --json for JSON):
 is read from stdin.
 ";
 
-pub async fn handle_subcommand(args: &[String]) -> Result<()> {
+/// Run the subcommand `args` names — all but `auth`, which
+/// `crate::commands` handles.
+pub async fn handle_subcommand(args: &[String], host: &impl Host) -> Result<()> {
     match args[0].as_str() {
-        "auth" => auth::run(&args[1..]).await,
-        "context" => context::run(&args[1..]),
-        "tui" => tui::run(&args[1..]).await,
-        "issue" => issue::run(&args[1..]).await,
-        "paths" => paths::run(&args[1..]),
+        "context" => context::run(&args[1..], host),
+        "tui" => tui::run(&args[1..], host).await,
+        "issue" => issue::run(&args[1..], host).await,
+        "paths" => paths::run(&args[1..], host),
         "help" | "--help" | "-h" => {
             print!("{USAGE}");
             Ok(())

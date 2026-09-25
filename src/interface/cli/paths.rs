@@ -4,15 +4,15 @@
 use anyhow::Result;
 use serde_json::json;
 
+use super::Host;
 use super::args::Args;
 use crate::config::Config;
-use crate::infra::disk::snapshot;
 
-pub fn run(args: &[String]) -> Result<()> {
+pub fn run(args: &[String], host: &impl Host) -> Result<()> {
     let args = Args::parse(args, &["json"], &[])?;
     args.positionals::<0>("linear-tui paths [--json]")?;
     let config = Config::config_dir()?;
-    let state = snapshot::state_dir()?;
+    let state = host.state_dir()?;
     if args.flag("json") {
         let value = json!({ "config": config, "state": state });
         println!("{}", serde_json::to_string_pretty(&value)?);

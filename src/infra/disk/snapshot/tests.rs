@@ -49,14 +49,6 @@ fn put(shelf: &Shelf, snapshot: &ViewSnapshot) {
 }
 
 #[test]
-fn timestamps_are_rfc3339_utc_to_the_second() {
-    assert_eq!(format_timestamp(0), "1970-01-01T00:00:00Z");
-    assert_eq!(format_timestamp(951_782_400), "2000-02-29T00:00:00Z");
-    assert_eq!(format_timestamp(1_790_316_062), "2026-09-25T06:01:02Z");
-    assert_eq!(format_timestamp(4_102_444_799), "2099-12-31T23:59:59Z");
-}
-
-#[test]
 fn the_documented_example_parses() {
     let text = fs::read_to_string("tests/fixtures/view_snapshot.json").unwrap();
     let snapshot: ViewSnapshot = serde_json::from_str(&text).unwrap();

@@ -1,14 +1,101 @@
-//! `linear-tui auth …`: signing in, and seeing which credentials are used.
+//! The subcommands, assembled: `main` hands them here, and they run against
+//! the infra — each on its own, so each builds what it needs, as `main` does
+//! for the TUI.
+//!
+//! [`Infra`] is the [`Host`] the subcommands in `crate::interface::cli` run
+//! against. `linear-tui auth …` is handled here in full: signing in sets up
+//! the infra itself, so there is nothing for a subcommand to ask of it.
 
-use anyhow::Result;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Result, bail};
 
 use crate::config::Config;
+use crate::core::entity::{Instance, Organization};
+use crate::core::message::Message;
+use crate::core::usecase::Request;
+use crate::infra::disk::snapshot::{self, Shelf};
+use crate::infra::dispatch;
 use crate::infra::linear::auth;
 use crate::infra::linear::auth::token::TokenStore;
+use crate::infra::linear::client::LinearClient;
+use crate::interface::cli::{self, Host, Linear, USAGE};
 
-use super::USAGE;
-
+/// Run the subcommand `args` names.
 pub async fn run(args: &[String]) -> Result<()> {
+    match args[0].as_str() {
+        "auth" => auth(&args[1..]).await,
+        _ => cli::handle_subcommand(args, &Infra).await,
+    }
+}
+
+/// What the subcommands run against: the credentials `linear-tui auth` set
+/// up, and the view snapshots on disk.
+struct Infra;
+
+impl Host for Infra {
+    type Linear = SignedIn;
+
+    async fn linear(&self) -> Result<SignedIn> {
+        let config = Config::load()?;
+        let token_store = TokenStore::new()?;
+        if !auth::has_credentials(&token_store, &config)? {
+            bail!(
+                "Not signed in. Run `linear-tui auth login` (or `linear-tui auth token <key>`) first."
+            );
+        }
+        let method = auth::resolve_auth(&token_store, config.auth.api_key.as_deref()).await?;
+        Ok(SignedIn {
+            client: LinearClient::new(method.into_credentials(token_store)),
+            per_page: config.ui.items_per_page,
+        })
+    }
+
+    fn workspace_of(&self, cwd: &Path) -> PathBuf {
+        snapshot::workspace_of(cwd)
+    }
+
+    fn instances(&self, workspace: &Path) -> Result<Vec<Instance>> {
+        Ok(Shelf::new(&snapshot::state_dir()?, workspace).instances())
+    }
+
+    fn snapshot_file(&self, workspace: &Path, pid: u32) -> Result<PathBuf> {
+        Ok(Shelf::new(&snapshot::state_dir()?, workspace).path_for(pid))
+    }
+
+    fn state_dir(&self) -> Result<PathBuf> {
+        snapshot::state_dir()
+    }
+
+    fn acting_organization(&self) -> Option<Organization> {
+        TokenStore::new()
+            .ok()?
+            .load()
+            .ok()?
+            .current_account()?
+            .organization
+            .clone()
+    }
+
+    fn now(&self) -> u64 {
+        snapshot::unix_now()
+    }
+}
+
+/// Linear, through the client the TUI uses and its request code.
+struct SignedIn {
+    client: LinearClient,
+    per_page: u32,
+}
+
+impl Linear for SignedIn {
+    async fn execute(&self, request: Request) -> Message {
+        dispatch::execute_request(&self.client, request, self.per_page).await
+    }
+}
+
+/// `linear-tui auth …`: signing in, and seeing which credentials are used.
+async fn auth(args: &[String]) -> Result<()> {
     let token_store = TokenStore::new()?;
 
     match args.first().map(String::as_str) {
@@ -136,7 +223,7 @@ fn list(token_store: &TokenStore) -> Result<()> {
 }
 
 /// Make the workspace `name` names the current one.
-pub fn switch(token_store: &TokenStore, name: &str) -> Result<auth::token::Account> {
+fn switch(token_store: &TokenStore, name: &str) -> Result<auth::token::Account> {
     token_store
         .update(|accounts| {
             let account = accounts.find(name).cloned()?;

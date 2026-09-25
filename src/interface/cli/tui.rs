@@ -9,14 +9,14 @@ use std::path::PathBuf;
 
 use anyhow::{Result, bail};
 
+use super::Host;
 use super::args::{Args, text_or_stdin};
-use crate::infra::disk::snapshot::{self, Shelf};
 use crate::interface::control::screen::ScreenReport;
 use crate::interface::control::{self, Command};
 
 const USAGE: &str = "linear-tui tui <screen|press <keys>|type <text>|run <title>|open <ID>|quit> [--json] [--workspace <path>]";
 
-pub async fn run(args: &[String]) -> Result<()> {
+pub async fn run(args: &[String], host: &impl Host) -> Result<()> {
     let args = Args::parse(args, &["json"], &["workspace"])?;
     let command = command(&args.positional)?;
     let cwd = match args.value("workspace") {
@@ -24,7 +24,7 @@ pub async fn run(args: &[String]) -> Result<()> {
         None => std::env::current_dir()?,
     };
     let quitting = command == Command::Quit;
-    let reply = control::send(&control_file(&cwd)?, command).await?;
+    let reply = control::send(&control_file(host, &cwd)?, command).await?;
     if let Some(error) = reply.error {
         bail!("{error}");
     }
@@ -67,12 +67,13 @@ fn command(positional: &[String]) -> Result<Command> {
 }
 
 /// The control file of the linear-tui running for `cwd`'s repository.
-fn control_file(cwd: &std::path::Path) -> Result<PathBuf> {
-    let workspace = snapshot::workspace_of(cwd);
-    let shelf = Shelf::new(&snapshot::state_dir()?, &workspace);
-    let instances = shelf.instances();
+fn control_file(host: &impl Host, cwd: &std::path::Path) -> Result<PathBuf> {
+    let workspace = host.workspace_of(cwd);
+    let instances = host.instances(&workspace)?;
     match crate::core::usecase::instance::to_report(&instances) {
-        Some((instance, true)) => Ok(control::endpoint_path(&shelf.path_for(instance.id.pid))),
+        Some((instance, true)) => Ok(control::endpoint_path(
+            &host.snapshot_file(&workspace, instance.id.pid)?,
+        )),
         _ => bail!(
             "No linear-tui is running for {} — start one there (`linear-tui`, or `linear-tui --headless`).",
             workspace.display()
