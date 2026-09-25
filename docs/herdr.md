@@ -144,20 +144,28 @@ lines:
 ## How agents learn about linear-tui
 
 An agent has to know `linear-tui context` exists before you say "fix this
-one". The plugin offers two ways, and you can add a third:
+one". In order of preference:
 
-- **`NOTIFY_AGENTS=1`** — when an agent has started and is waiting for its first
-  message, the plugin sends it `herdr-plugin/notice.md` once per agent session.
-  It is off by default: the notice takes the agent's first turn, and Claude Code
-  names the session after it.
-- **Your agent's instructions** — add a line like this to `AGENTS.md` or
-  `CLAUDE.md`, which works with or without herdr:
+- **The agent plugin** ([agent-plugin.md](agent-plugin.md)) — for Claude Code
+  and Codex. A SessionStart hook adds a few lines to the session's context in
+  repositories where you use linear-tui. No prompt is sent, so nothing below
+  applies to it. Works with or without herdr.
+- **Your agent's instructions** — for agents without hooks, a line like this in
+  `AGENTS.md` or `CLAUDE.md`:
 
   ```markdown
   The user browses Linear in linear-tui. `linear-tui context` shows what they
   are looking at (open issue, list, cursor); `linear-tui issue show|comment|status|create`
   act on Linear with their credentials. Only move an issue to Done when told to.
   ```
+
+- **`NOTIFY_AGENTS=1`** — the last resort: when an agent has started and is
+  waiting for its first message, this plugin sends it `herdr-plugin/notice.md`
+  once per agent session. It is off by default, because a prompt is a message
+  from the user: it takes the agent's first turn (tokens, and history that stays
+  for the whole session), Claude Code names the session after it, it can land
+  while you are typing your first message, it reaches every agent in every
+  repository, and the agent reads it as something you said.
 
 ### Why this design (#47)
 
@@ -177,10 +185,16 @@ Checked against herdr 0.9.1 and Claude Code 2.1:
 - A prompt sent then arrives before the user's first message and is answered
   in a few seconds. It is not free: it is the agent's first turn, and Claude
   Code titles the session after it. Hence opt-in.
-- The other options were dropped: an MCP server needs registering per agent
-  and contradicts "no dependency on Linear MCP"; a note inside each prompt
-  linear-tui sends covers only the human-to-agent direction (it is still done:
-  every prompt of notes ends with the `{{hint}}` line).
+- Revisited in #71: the "instructions" option was first set aside as needing
+  per-agent setup, but Claude Code and Codex both load plugins with
+  SessionStart hooks whose output becomes session context — how linear-flow
+  and herdr's own integrations reach agents. Packaged as a plugin it is one
+  install and has none of the prompt's costs, so it is now the default way; the
+  prompt notice stays as a fallback.
+- An MCP server needs registering per agent and contradicts "no dependency on
+  Linear MCP". A note inside each prompt linear-tui sends covers only the
+  human-to-agent direction (it is still done: every prompt of notes ends with
+  the `{{hint}}` line).
 
 ## Files
 

@@ -87,6 +87,10 @@ the pins current, so never add one by tag or branch.
   place that runs `HERDR_BIN_PATH`; `App::herdr` says whether it is set. Also
   reads the plugin's `agents.json` (`AgentWatch`, polled by the main loop). A
   binding marked `.herdr_only()` neither answers nor is listed outside herdr
+- `agent-plugin/` — the Claude Code / Codex plugin (`docs/agent-plugin.md`):
+  a SessionStart hook and a skill, listed by `.claude-plugin/marketplace.json`
+  and `.agents/plugins/marketplace.json`. Bump its `version` in both
+  `plugin.json` files when it changes; release-plz does not
 - `herdr-plugin/` — the herdr plugin (`docs/herdr.md`): a manifest and shell
   scripts; every herdr call lives here, never in the Rust code
 - `demo/` — the README GIF: `seed.py` fills a throwaway workspace, `demo.tape`

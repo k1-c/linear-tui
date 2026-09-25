@@ -143,6 +143,26 @@ linear-tui open ENG-42                   # the TUI, on that issue (an issue URL 
 Every command takes `--json`. The output formats are specified in
 [docs/cli.md](docs/cli.md).
 
+### Teaching your agent about it
+
+Install the agent plugin once, and every new Claude Code or Codex session in a
+repository where you use linear-tui is told how to run the commands above —
+through a SessionStart hook, so no prompt is sent and no turn is spent.
+Elsewhere it adds nothing.
+
+```sh
+# Claude Code
+claude plugin marketplace add k1-c/linear-tui
+claude plugin install linear-tui@linear-tui
+
+# Codex
+codex plugin marketplace add k1-c/linear-tui
+codex plugin add linear-tui@linear-tui
+```
+
+It also brings a `linear-tui` skill for "this issue" / "the top three". See
+[docs/agent-plugin.md](docs/agent-plugin.md).
+
 ### In herdr
 
 With [herdr](https://herdr.dev/), the plugin in `herdr-plugin/` opens
