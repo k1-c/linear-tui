@@ -186,9 +186,11 @@ one named for it.
    | `LINEAR_E2E_WORKSPACE_B` | B's URL key |
    | `LINEAR_E2E_TEAM_A`, `LINEAR_E2E_TEAM_B` | optional: the team key to test in, instead of the first team |
 
-`.github/workflows/e2e.yml` then runs them on pull requests into `main`,
-daily, and on demand, one run at a time. Without the secrets (a fork, or
-before setup) the job says so and passes.
+`.github/workflows/e2e.yml` then runs them daily, on demand, on
+release-plz's release PR, and on a pull request labelled `e2e` — one run at
+a time. Not on every pull request: a run takes minutes, waits behind every
+other, and resets the workspaces under anyone running them locally. Without
+the secrets (a fork, or before setup) the job says so and passes.
 
 ### Running them locally
 
@@ -209,8 +211,10 @@ Then one command runs them, in about two minutes:
 mise run e2e     # cargo test --test e2e -- --ignored --test-threads=1
 ```
 
-Run them before merging a change to what linear-tui shows or does, rather
-than waiting for CI. A plain `cargo test` never touches Linear: the
+Run them before merging a change to what linear-tui shows or does; CI does
+not run them on the pull request unless it is labelled `e2e`. Only one run
+may use the workspaces at a time, so do not run them while a CI run is in
+progress (`gh run list --workflow e2e.yml`), nor two locally. A plain `cargo test` never touches Linear: the
 scenarios are `#[ignore]`d.
 
 ## Documentation
