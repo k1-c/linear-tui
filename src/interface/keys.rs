@@ -950,6 +950,14 @@ impl Binding {
             .filter(plain)
             .chain(self.keys.iter().find(|k| !plain(k)))
             .map(Key::label)
+            // The second key of a `g …` chord does something else alone.
+            .map(|label| {
+                if self.context == [GoTo] {
+                    format!("g {label}")
+                } else {
+                    label
+                }
+            })
             .collect();
         labels.join(" / ")
     }
@@ -1596,6 +1604,21 @@ mod table_tests {
                 help.keys
             );
         }
+    }
+
+    /// A chord's second key is shown with its `g`: alone, `a` assigns.
+    #[test]
+    fn a_chord_command_shows_both_keys() {
+        let active = commands(IssueList, false)
+            .into_iter()
+            .find(|b| b.command.is_some_and(|c| c.title == "Go to active issues"))
+            .unwrap();
+        assert_eq!(active.keys_label(), "g a");
+        let assign = commands(IssueList, false)
+            .into_iter()
+            .find(|b| b.command.is_some_and(|c| c.title == "Assign to me"))
+            .unwrap();
+        assert_eq!(assign.keys_label(), "i");
     }
 
     /// Two entries with one title in one place could not be told apart.
