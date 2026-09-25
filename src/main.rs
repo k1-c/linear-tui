@@ -9,6 +9,7 @@ mod usecase;
 use adapter::{api, auth, cli, control, herdr, snapshot};
 use interface::{app, event};
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::time::{Duration, Instant};
 
@@ -26,7 +27,7 @@ use crossterm::{
 };
 use ratatui::{
     Terminal,
-    backend::{CrosstermBackend, TestBackend},
+    backend::{Backend, CrosstermBackend, TestBackend},
 };
 
 use base64::Engine;
@@ -36,11 +37,13 @@ use api::client::LinearClient;
 use app::App;
 use auth::token::TokenStore;
 use config::Config;
+use entity::OrganizationId;
 
 /// The size of the screen a headless instance draws, unless told otherwise.
 const HEADLESS_SIZE: (u16, u16) = (120, 40);
 
 /// How a launch runs the TUI.
+#[derive(Clone, Copy)]
 enum Mode {
     /// In this terminal.
     Terminal,
@@ -88,7 +91,7 @@ async fn main() -> Result<()> {
         }
     };
     tracing::info!(method = auth.label(), "authenticated successfully");
-    let client = LinearClient::new(auth.into_credentials(token_store));
+    let organization = auth.organization().map(|org| org.id.clone());
 
     // An entry for this directory in config.toml wins over the view
     // remembered for it.
@@ -107,36 +110,26 @@ async fn main() -> Result<()> {
         }
         // Asked for an issue, the remembered view is not reopened.
         None if open.is_some() => None,
-        None => shelf.as_ref().and_then(|s| {
-            let instances = s.instances();
-            usecase::instance::to_reopen(&instances, &origin.id()).map(|i| i.view.clone())
-        }),
+        None => shelf
+            .as_ref()
+            .and_then(|s| reopen(s, &origin, organization.as_ref())),
     };
     let control_file = shelf
         .as_ref()
         .filter(|_| config.agent.control)
         .map(|s| control::endpoint_path(&s.path_for(origin.pid)));
-    let recorder = shelf.map(|shelf| {
+    let recorder = shelf.as_ref().map(|shelf| {
         shelf.prune();
-        snapshot::Recorder::new(&shelf, origin.pid)
+        snapshot::Recorder::new(shelf, origin.pid)
     });
 
-    // `App::new` seeds the initial Teams/Viewer requests.
-    let mut app = App::new(&config);
-    // Inside herdr, the actions that hand work to its plugin are offered.
-    app.herdr = herdr::available();
-    if let Some(snapshot) = restored {
-        tracing::info!(updated_at = %snapshot.updated_at, "restoring the last view");
-        app.restore(snapshot);
-    }
-    if let Some(identifier) = &open {
-        app.open_on_launch(identifier);
-    }
+    let client = LinearClient::new(auth.into_credentials(token_store.clone()));
+    let app = new_app(&config, &token_store, restored, open.as_deref());
     let workspace = origin.workspace.clone();
-    let mut runtime = Runtime::new(app, client, origin, recorder);
+    let mut runtime = Runtime::new(app, client, origin.clone(), recorder);
 
     // Agents drive this instance through the control channel.
-    let _endpoint = match control_file {
+    let endpoint = match control_file {
         Some(path) => match control::listen(path).await {
             Ok((commands, file)) => {
                 runtime.accept_control(commands);
@@ -150,10 +143,19 @@ async fn main() -> Result<()> {
         None => None,
     };
 
-    match mode {
-        Mode::Terminal => run_in_terminal(&mut runtime),
+    let mut switcher = Switcher {
+        config,
+        token_store,
+        origin,
+        shelf,
+        pinned: pinned.is_some(),
+        organization,
+        left: HashMap::new(),
+    };
+    let result = match mode {
+        Mode::Terminal => run_in_terminal(&mut runtime, &mut switcher).await,
         Mode::Headless { size } => {
-            if _endpoint.is_none() {
+            if endpoint.is_none() {
                 anyhow::bail!(
                     "A headless linear-tui needs its control channel: set `[agent] control = true`."
                 );
@@ -163,9 +165,12 @@ async fn main() -> Result<()> {
                 std::process::id(),
                 workspace.display()
             );
-            run_headless(&mut runtime, size).await
+            run_headless(&mut runtime, size, &mut switcher).await
         }
-    }
+    };
+    // The control file goes once the instance stops.
+    drop(endpoint);
+    result
 }
 
 /// `--headless [--size <W>x<H>]`.
@@ -205,6 +210,122 @@ async fn authenticate(
         .map(Some)
 }
 
+/// The view a launch in `origin`'s repository reopens, signed in to
+/// `organization`: see `usecase::instance::to_reopen`.
+fn reopen(
+    shelf: &snapshot::Shelf,
+    origin: &entity::Origin,
+    organization: Option<&OrganizationId>,
+) -> Option<entity::snapshot::ViewSnapshot> {
+    let instances = shelf.instances();
+    usecase::instance::to_reopen(&instances, &origin.id(), organization).map(|i| i.view.clone())
+}
+
+/// A fresh session's state, reopening `restored` or the issue `open` names.
+fn new_app(
+    config: &Config,
+    token_store: &TokenStore,
+    restored: Option<entity::snapshot::ViewSnapshot>,
+    open: Option<&str>,
+) -> App {
+    // `App::new` seeds the initial Teams/Viewer requests.
+    let mut app = App::new(config);
+    // Inside herdr, the actions that hand work to its plugin are offered.
+    app.herdr = herdr::available();
+    app.workspaces = workspace_entries(token_store);
+    if let Some(snapshot) = restored {
+        tracing::info!(updated_at = %snapshot.updated_at, "restoring the last view");
+        app.restore(snapshot);
+    }
+    if let Some(identifier) = open {
+        app.open_on_launch(identifier);
+    }
+    app
+}
+
+/// The signed-in workspaces the switcher offers. One not yet identified has
+/// nothing to show, so it is left out until the next launch names it.
+fn workspace_entries(token_store: &TokenStore) -> Vec<app::WorkspaceEntry> {
+    let Ok(accounts) = token_store.load() else {
+        return Vec::new();
+    };
+    accounts
+        .accounts
+        .iter()
+        .filter_map(|account| {
+            let org = account.organization.as_ref()?;
+            Some(app::WorkspaceEntry {
+                id: org.id.clone(),
+                name: org.name.clone(),
+                url_key: org.url_key.clone(),
+                current: accounts.is_current(account),
+            })
+        })
+        .collect()
+}
+
+/// Moving between workspaces: switching ends one session and starts another
+/// on the same screen, with that workspace's credentials and a fresh app.
+struct Switcher {
+    config: Config,
+    token_store: TokenStore,
+    origin: entity::Origin,
+    /// Where a view to reopen is looked for after switching workspace.
+    shelf: Option<snapshot::Shelf>,
+    /// Whether config.toml pins this directory, which reopens no view.
+    pinned: bool,
+    /// The workspace the session in progress acts in.
+    organization: Option<OrganizationId>,
+    /// The view each workspace was left on this run, to come back to.
+    left: HashMap<OrganizationId, entity::snapshot::ViewSnapshot>,
+}
+
+impl Switcher {
+    /// Start the session the user asked for, if they picked a workspace.
+    /// Returns whether linear-tui keeps running: false once they quit.
+    async fn switch(&mut self, runtime: &mut Runtime) -> bool {
+        let Some(target) = runtime.app.switch_to.take() else {
+            return false;
+        };
+        // The one await on the UI's path: a token past its expiry is renewed
+        // before the new session can send anything. The status line says so.
+        let api_key = self.config.auth.api_key.as_deref();
+        match auth::switch_to(&self.token_store, api_key, &target).await {
+            Ok(auth) => {
+                tracing::info!(organization = %target, "switched workspace");
+                if let (Some(org), Some(view)) = (
+                    self.organization.take(),
+                    runtime
+                        .app
+                        .snapshot(&self.origin, snapshot::timestamp_now()),
+                ) {
+                    self.left.insert(org, view);
+                }
+                self.organization = Some(target.clone());
+                let client = LinearClient::new(auth.into_credentials(self.token_store.clone()));
+                let restored = if self.pinned {
+                    None
+                } else {
+                    self.left.remove(&target).or_else(|| {
+                        self.shelf
+                            .as_ref()
+                            .and_then(|s| reopen(s, &self.origin, Some(&target)))
+                    })
+                };
+                let app = new_app(&self.config, &self.token_store, restored, None);
+                runtime.restart(app, client);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "could not switch workspace");
+                runtime
+                    .app
+                    .set_error(format!("Could not switch workspace: {e:#}"));
+            }
+        }
+        true
+    }
+}
+
 /// RAII guard so the terminal is restored even if the loop returns an error.
 struct TerminalGuard {
     /// Whether the kitty keyboard protocol was successfully enabled.
@@ -242,29 +363,50 @@ impl Drop for TerminalGuard {
     }
 }
 
+/// Whether a session is over: the user quit, or picked another workspace.
+/// A switch is drawn first, so "Switching to …" shows while the next session
+/// is prepared.
+fn session_over<B>(runtime: &mut Runtime, terminal: &mut Terminal<B>) -> Result<bool>
+where
+    B: Backend,
+    B::Error: Send + Sync + 'static,
+{
+    if runtime.app.switch_to.is_some() {
+        runtime.touch();
+        runtime.draw(terminal)?;
+        return Ok(true);
+    }
+    Ok(runtime.app.should_quit)
+}
+
 /// The TUI in this terminal, until the user quits.
-fn run_in_terminal(runtime: &mut Runtime) -> Result<()> {
+async fn run_in_terminal(runtime: &mut Runtime, switcher: &mut Switcher) -> Result<()> {
     let _guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.hide_cursor()?;
 
     loop {
-        runtime.send_queued(Instant::now());
-        runtime.draw(&mut terminal)?;
-        runtime.answer_waiting(Instant::now());
+        loop {
+            runtime.send_queued(Instant::now());
+            runtime.draw(&mut terminal)?;
+            runtime.answer_waiting(Instant::now());
 
-        // Drain completed requests without blocking.
-        let mut moved = runtime.receive();
+            // Drain completed requests without blocking.
+            let mut moved = runtime.receive();
 
-        if let Some(text) = runtime.app.outbox.clipboard.take() {
-            copy_to_clipboard(&text)?;
+            if let Some(text) = runtime.app.outbox.clipboard.take() {
+                copy_to_clipboard(&text)?;
+            }
+
+            moved |= event::poll_and_handle(&mut runtime.app)?;
+            moved |= runtime.serve_control();
+            runtime.settle(moved, Instant::now());
+
+            if session_over(runtime, &mut terminal)? {
+                break;
+            }
         }
-
-        moved |= event::poll_and_handle(&mut runtime.app)?;
-        moved |= runtime.serve_control();
-        runtime.settle(moved, Instant::now());
-
-        if runtime.app.should_quit {
+        if !switcher.switch(runtime).await {
             break;
         }
     }
@@ -278,30 +420,41 @@ const HEADLESS_IDLE: Duration = Duration::from_millis(20);
 
 /// The TUI with no terminal, until an agent quits it or the process is
 /// interrupted.
-async fn run_headless(runtime: &mut Runtime, size: (u16, u16)) -> Result<()> {
+async fn run_headless(
+    runtime: &mut Runtime,
+    size: (u16, u16),
+    switcher: &mut Switcher,
+) -> Result<()> {
     runtime.hold_external();
     let mut terminal = Terminal::new(TestBackend::new(size.0, size.1))?;
     let interrupted = tokio::signal::ctrl_c();
     tokio::pin!(interrupted);
 
-    loop {
-        runtime.send_queued(Instant::now());
-        runtime.draw(&mut terminal)?;
-        runtime.answer_waiting(Instant::now());
+    'run: loop {
+        loop {
+            runtime.send_queued(Instant::now());
+            runtime.draw(&mut terminal)?;
+            runtime.answer_waiting(Instant::now());
 
-        let mut moved = runtime.receive();
-        if let Some(text) = runtime.app.outbox.clipboard.take() {
-            runtime.note_held(format!("would copy {text:?} to the clipboard"));
+            let mut moved = runtime.receive();
+            moved |= runtime.serve_control();
+            // Noted in the same pass as the key that copied, so the answer to
+            // that key already says so.
+            if let Some(text) = runtime.app.outbox.clipboard.take() {
+                runtime.note_held(format!("would copy {text:?} to the clipboard"));
+            }
+            runtime.settle(moved, Instant::now());
+
+            if session_over(runtime, &mut terminal)? {
+                break;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(HEADLESS_IDLE) => {}
+                _ = &mut interrupted => break 'run,
+            }
         }
-        moved |= runtime.serve_control();
-        runtime.settle(moved, Instant::now());
-
-        if runtime.app.should_quit {
+        if !switcher.switch(runtime).await {
             break;
-        }
-        tokio::select! {
-            _ = tokio::time::sleep(HEADLESS_IDLE) => {}
-            _ = &mut interrupted => break,
         }
     }
 

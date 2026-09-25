@@ -13,13 +13,28 @@ pub async fn run(args: &[String]) -> Result<()> {
 
     match args.first().map(String::as_str) {
         Some("login") => {
-            auth::oauth::login(&token_store).await?;
-            let method = auth::resolve_auth(&token_store, None).await?;
-            println!("Signed in as {}.", auth::identify(&method).await?.name);
+            let tokens = auth::oauth::login().await?;
+            let viewer = auth::add_account(&token_store, tokens).await?;
+            println!("{}", auth::signed_in(&viewer));
             Ok(())
         }
 
         Some("status") => auth_status(&token_store).await,
+
+        Some("list") => {
+            list(&token_store)?;
+            Ok(())
+        }
+
+        Some("switch") => {
+            let Some(name) = args.get(1) else {
+                list(&token_store)?;
+                anyhow::bail!("Usage: linear-tui auth switch <workspace>");
+            };
+            let account = switch(&token_store, name)?;
+            println!("Switched to {}.", account.label());
+            Ok(())
+        }
 
         Some("token") => {
             let Some(key) = args.get(1) else {
@@ -27,8 +42,8 @@ pub async fn run(args: &[String]) -> Result<()> {
             };
             // Verified before it is written, so a typo fails here and not at
             // the next launch.
-            let name = auth::setup::save_api_key(key).await?;
-            println!("API key saved. Signed in as {name}.");
+            let viewer = auth::setup::save_api_key(key).await?;
+            println!("API key saved. {}", auth::signed_in(&viewer));
             Ok(())
         }
 
@@ -51,20 +66,43 @@ pub async fn run(args: &[String]) -> Result<()> {
 
         Some("logout") => {
             let clear_key = args.iter().any(|arg| arg == "--all");
-            token_store.clear()?;
-
+            let name = args[1..].iter().find(|arg| !arg.starts_with("--"));
             let mut config = Config::load()?;
+
             if clear_key {
+                token_store.clear()?;
                 config.auth.api_key = None;
                 config.save()?;
-                println!("Logged out. Stored token and API key removed.");
-            } else if config.auth.api_key.is_some() {
+                println!("Logged out of every workspace. Stored tokens and API key removed.");
+                return Ok(());
+            }
+
+            let removed = token_store.update(|accounts| {
+                let key = match name {
+                    Some(name) => accounts.find(name).map(|a| a.key().cloned()),
+                    None => accounts.current_account().map(|a| a.key().cloned()),
+                };
+                let removed = key.and_then(|key| accounts.remove(key.as_ref()));
+                let next = accounts.current_account().map(|a| a.label());
+                (removed, next)
+            })?;
+            match removed {
+                (Some(account), next) => {
+                    println!("Logged out of {}.", account.label());
+                    if let Some(next) = next {
+                        println!("Now using {next}.");
+                    }
+                }
+                (None, _) => match name {
+                    Some(name) => anyhow::bail!("No workspace named '{name}' is signed in."),
+                    None => println!("No OAuth token was stored."),
+                },
+            }
+            if config.auth.api_key.is_some() && token_store.load()?.is_empty() {
                 println!(
-                    "Signed out of OAuth. An API key is still set in config.toml — \
+                    "An API key is still set in config.toml — \
                      `linear-tui auth logout --all` removes that too."
                 );
-            } else {
-                println!("Logged out.");
             }
             Ok(())
         }
@@ -76,19 +114,64 @@ pub async fn run(args: &[String]) -> Result<()> {
     }
 }
 
+/// Print every signed-in workspace, the current one marked.
+fn list(token_store: &TokenStore) -> Result<()> {
+    let accounts = token_store.load()?;
+    if accounts.is_empty() {
+        println!("No workspace is signed in through the browser. Run `linear-tui auth login`.");
+        return Ok(());
+    }
+    for account in &accounts.accounts {
+        let mark = if accounts.is_current(account) {
+            "*"
+        } else {
+            " "
+        };
+        match &account.user {
+            Some(user) => println!("{mark} {}  as {user}", account.label()),
+            None => println!("{mark} {}", account.label()),
+        }
+    }
+    Ok(())
+}
+
+/// Make the workspace `name` names the current one.
+pub fn switch(token_store: &TokenStore, name: &str) -> Result<auth::token::Account> {
+    token_store
+        .update(|accounts| {
+            let account = accounts.find(name).cloned()?;
+            accounts.current = account.key().cloned();
+            Some(account)
+        })?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "No workspace named '{name}' is signed in. \
+                 `linear-tui auth list` shows them; `linear-tui auth login` adds one."
+            )
+        })
+}
+
 async fn auth_status(token_store: &TokenStore) -> Result<()> {
     let config = Config::load()?;
+    let accounts = token_store.load()?;
 
     println!("Application  {}", auth::oauth::application_summary()?);
-    match token_store.load()? {
-        Some(tokens) => {
-            let remaining = tokens.seconds_until_expiry();
+    match accounts.current_account() {
+        Some(account) => {
+            println!("Workspace    {}", account.label());
+            let remaining = account.tokens.seconds_until_expiry();
             if remaining > 0 {
                 println!("OAuth token  valid for {}", format_duration(remaining));
             } else {
                 println!(
                     "OAuth token  expired {} ago, refreshes on next use",
                     format_duration(-remaining)
+                );
+            }
+            if accounts.accounts.len() > 1 {
+                println!(
+                    "Workspaces   {} signed in (`linear-tui auth list`)",
+                    accounts.accounts.len()
                 );
             }
             println!("Stored in    {}", token_store.path().display());
@@ -106,7 +189,7 @@ async fn auth_status(token_store: &TokenStore) -> Result<()> {
     println!();
     match auth::resolve_auth(token_store, config.auth.api_key.as_deref()).await {
         Ok(method) => match auth::identify(&method).await {
-            Ok(viewer) => println!("Signed in as {} via {}.", viewer.name, method.label()),
+            Ok(viewer) => println!("{} Via {}.", auth::signed_in(&viewer), method.label()),
             Err(e) => println!("Stored credentials were rejected by the API: {e}"),
         },
         Err(e) => println!("{e}"),

@@ -84,6 +84,21 @@ impl Runtime {
         }
     }
 
+    /// Start a new session in place: another workspace's `client`, and a
+    /// fresh `app`, since nothing loaded from one workspace means anything in
+    /// the next. Answers still on their way from the last session have
+    /// nowhere to land. The view recorder, the control channel, and the
+    /// commands waiting on it carry over.
+    pub fn restart(&mut self, app: App, client: LinearClient) {
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.app = app;
+        self.client = Arc::new(client);
+        self.tx = tx;
+        self.rx = rx;
+        self.cache = ui::Cache::default();
+        self.dirty = true;
+    }
+
     /// Take commands from agents.
     pub fn accept_control(&mut self, commands: mpsc::UnboundedReceiver<Asked>) {
         self.control = Some(commands);
@@ -277,6 +292,11 @@ impl Runtime {
             self.last_tick = Instant::now();
             self.dirty = true;
         }
+    }
+
+    /// Draw the next frame even if nothing seems to have changed.
+    pub fn touch(&mut self) {
+        self.dirty = true;
     }
 
     /// The instance is quitting: write the view one last time.

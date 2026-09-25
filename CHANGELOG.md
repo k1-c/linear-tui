@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-09-25
+
+### Documentation
+
+- **readme**: Plainer wording, no em-dash punctuation
+- Plainer wording, no em-dash punctuation, across docs/
+
+### Features
+
+- **auth**: Let the login pick its workspace
+- **auth**: Keep one account per Linear workspace
+- **tui**: Switch workspace from the command palette
+
+
+
 ## [0.8.1] - 2026-09-25
 
 ### Documentation

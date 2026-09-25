@@ -46,8 +46,8 @@ impl App {
                 let open = usecase::issue::open_team_issues(&mut self.store, team_id, preset);
                 self.open_issues(IssueSource::Team, open);
             }
-            Message::Viewer(id) => {
-                usecase::user::take_viewer(&mut self.store, id);
+            Message::Viewer { id, organization } => {
+                usecase::user::take_viewer(&mut self.store, id, organization);
                 if self.nav.dest == Nav::MyIssues {
                     self.reload_current_tab();
                 }

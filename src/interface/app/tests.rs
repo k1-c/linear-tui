@@ -728,6 +728,52 @@ fn the_team_switcher_goes_to_the_picked_team() {
     assert_eq!(app.nav.team, 1);
 }
 
+fn workspace(id: &str, name: &str, current: bool) -> WorkspaceEntry {
+    WorkspaceEntry {
+        id: id.into(),
+        name: name.into(),
+        url_key: name.to_lowercase(),
+        current,
+    }
+}
+
+#[test]
+fn the_workspace_switcher_asks_the_main_loop_to_switch() {
+    let mut app = app_with(vec![]);
+    app.workspaces = vec![
+        workspace("o1", "Acme", false),
+        workspace("o2", "Globex", true),
+    ];
+    app.open_workspace_select();
+    assert_eq!(app.view.popup, Popup::WorkspaceSelect);
+    assert_eq!(app.view.popup_index, 1, "starts on the current workspace");
+
+    // Picking the current one changes nothing.
+    app.select_workspace();
+    assert_eq!(app.switch_to, None);
+
+    app.open_workspace_select();
+    app.popup_type('a');
+    app.popup_type('c');
+    app.apply_popup();
+    assert_eq!(app.view.popup, Popup::None);
+    assert_eq!(app.switch_to, Some("o1".into()));
+}
+
+#[test]
+fn with_one_workspace_the_switcher_says_how_to_add_another() {
+    let mut app = app_with(vec![]);
+    app.workspaces = vec![workspace("o1", "Acme", true)];
+    app.open_workspace_select();
+    assert_eq!(app.view.popup, Popup::None);
+    assert!(
+        app.view
+            .status_message
+            .as_deref()
+            .is_some_and(|m| m.contains("linear-tui auth login"))
+    );
+}
+
 #[test]
 fn switching_team_keeps_the_page() {
     let mut app = app_with(vec![]);

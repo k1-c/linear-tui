@@ -25,6 +25,27 @@ Approving it hands a token back to a local callback on port 53681, 53682, or
 `~/.config/linear-tui/tokens.json`, readable only by you, and refreshed
 automatically.
 
+## Several workspaces
+
+A token belongs to one workspace. Running `linear-tui auth login` again and
+approving another workspace adds it next to the first, and makes it the one in
+use; logging in to a workspace already signed in replaces its token.
+
+```sh
+linear-tui auth list             # the signed-in workspaces, * marks the one in use
+linear-tui auth switch globex    # use another one, by URL key or name
+linear-tui auth logout globex    # forget one
+```
+
+Inside the TUI, *Switch workspace…* in the command palette (`Ctrl+K`) does the
+same as `auth switch`. The screen is rebuilt for the other workspace, and
+switching back returns to the page you left there.
+
+The workspace in use is shared by everything: the TUI opens it, and the
+headless commands for agents ([cli.md](cli.md)) act in it, so switching in the
+TUI switches them too. A remembered view is only reopened in the workspace it
+was recorded in.
+
 No client secret is involved: Linear's PKCE flow makes one optional, so
 linear-tui ships as a public OAuth client.
 
@@ -47,9 +68,10 @@ When both are present, the OAuth token is used.
 ## Checking and clearing credentials
 
 ```sh
-linear-tui auth status        # which credentials are in use, and who they belong to
-linear-tui auth logout        # forget the OAuth token
-linear-tui auth logout --all  # forget the API key in config.toml as well
+linear-tui auth status              # which credentials are in use, and who they belong to
+linear-tui auth logout              # forget the token of the workspace in use
+linear-tui auth logout <workspace>  # forget another workspace's token
+linear-tui auth logout --all        # forget every token, and the API key in config.toml
 ```
 
 ## Using your own Linear application
@@ -72,7 +94,7 @@ linear-tui auth login
 
 | File | Holds |
 | --- | --- |
-| `~/.config/linear-tui/tokens.json` | The OAuth access and refresh tokens |
+| `~/.config/linear-tui/tokens.json` | Each signed-in workspace's OAuth access and refresh tokens, and which one is in use |
 | `~/.config/linear-tui/config.toml` | An API key or your own application's client id and secret, if you set them |
 
 Both are written owner-only (`0600`), atomically. The headless commands for

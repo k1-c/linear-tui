@@ -1,6 +1,6 @@
 //! A team, and the people in the workspace.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::ids::*;
 
@@ -40,4 +40,18 @@ pub struct Viewer {
     pub name: String,
     #[serde(default, rename = "displayName")]
     pub display_name: Option<String>,
+    /// The workspace the credentials were issued for. A token and an API key
+    /// both belong to exactly one.
+    #[serde(default)]
+    pub organization: Option<Organization>,
+}
+
+/// A Linear workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Organization {
+    pub id: OrganizationId,
+    pub name: String,
+    /// The slug in `linear.app/<urlKey>/…`.
+    #[serde(rename = "urlKey")]
+    pub url_key: String,
 }
