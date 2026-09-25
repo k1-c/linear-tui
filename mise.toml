@@ -33,6 +33,10 @@ run = "cargo build"
 description = "Run the TUI from source"
 run = "cargo run"
 
+[tasks.e2e]
+description = "End-to-end tests against the Linear test workspaces (LINEAR_E2E_* must be set)"
+run = "cargo test --test e2e -- --ignored --test-threads=1"
+
 [tasks.coverage]
 description = "Line coverage by file of the inner layers (use cases, store, entities), then in all"
 run = [
