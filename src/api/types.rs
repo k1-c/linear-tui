@@ -157,6 +157,20 @@ impl<'de> Deserialize<'de> for StateType {
 }
 
 impl StateType {
+    /// The name Linear gives the category.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Triage => "triage",
+            Self::Backlog => "backlog",
+            Self::Unstarted => "unstarted",
+            Self::Started => "started",
+            Self::Completed => "completed",
+            Self::Cancelled => "canceled",
+            Self::Duplicate => "duplicate",
+            Self::Unknown => "unknown",
+        }
+    }
+
     /// Order Linear groups states in: triage first, then the workflow from
     /// backlog to done. Drives the order of grouped sections in a list.
     pub fn rank(&self) -> u8 {
