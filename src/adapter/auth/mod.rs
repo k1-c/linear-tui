@@ -7,14 +7,15 @@ pub mod token;
 use std::sync::Arc;
 
 use anyhow::Result;
-use token::{OAuthTokens, TokenStore};
+use token::{Account, OAuthTokens, TokenStore};
 
 use crate::adapter::api::client::{Credentials, LinearClient, StaticCredentials};
+use crate::entity::OrganizationId;
+use crate::entity::{Organization, Viewer};
 use crate::config::Config;
-use crate::entity::Viewer;
 
 pub enum AuthMethod {
-    OAuth(OAuthTokens),
+    OAuth(Account),
     ApiKey(String),
 }
 
@@ -23,7 +24,7 @@ impl AuthMethod {
     /// OAuth tokens use "Bearer <token>", API keys are sent directly.
     fn authorization_header(&self) -> String {
         match self {
-            AuthMethod::OAuth(tokens) => format!("Bearer {}", tokens.access_token),
+            AuthMethod::OAuth(account) => format!("Bearer {}", account.tokens.access_token),
             AuthMethod::ApiKey(key) => key.clone(),
         }
     }
@@ -35,11 +36,24 @@ impl AuthMethod {
         }
     }
 
+    /// The workspace these credentials act in, when it is known without
+    /// asking Linear. An API key only says so once the viewer is loaded.
+    pub fn organization(&self) -> Option<&Organization> {
+        match self {
+            AuthMethod::OAuth(account) => account.organization.as_ref(),
+            AuthMethod::ApiKey(_) => None,
+        }
+    }
+
     /// Credentials for a long-lived client. OAuth ones renew themselves and
     /// write the renewed pair back to `store`.
     pub fn into_credentials(self, store: TokenStore) -> Arc<dyn Credentials> {
         match self {
-            AuthMethod::OAuth(tokens) => Arc::new(session::OAuthSession::new(store, tokens)),
+            AuthMethod::OAuth(account) => Arc::new(session::OAuthSession::new(
+                store,
+                account.key().cloned(),
+                account.tokens,
+            )),
             AuthMethod::ApiKey(key) => Arc::new(StaticCredentials(key)),
         }
     }
@@ -47,24 +61,50 @@ impl AuthMethod {
 
 /// Whether anything is stored to authenticate with, without touching the network.
 pub fn has_credentials(token_store: &TokenStore, config: &Config) -> Result<bool> {
-    Ok(token_store.load()?.is_some() || config.auth.api_key.is_some())
+    Ok(!token_store.load()?.is_empty() || config.auth.api_key.is_some())
 }
 
-/// Resolve the auth method: stored OAuth token first, then the API key from config.
+/// Resolve the auth method: the current workspace's OAuth token first, then
+/// the API key from config.
 pub async fn resolve_auth(token_store: &TokenStore, api_key: Option<&str>) -> Result<AuthMethod> {
-    // Try OAuth token first
-    if let Some(mut tokens) = token_store.load()? {
-        if tokens.is_expired() {
-            if tokens.refresh_token.is_empty() {
+    if let Some(stored) = token_store.load()?.current_account() {
+        let previous = stored.key().cloned();
+        let mut account = stored.clone();
+        let mut changed = false;
+        if account.tokens.is_expired() {
+            if account.tokens.refresh_token.is_empty() {
                 anyhow::bail!(
-                    "Your session expired and no refresh token was stored. \
-                     Run `linear-tui auth login` to sign in again."
+                    "Your session in {} expired and no refresh token was stored. \
+                     Run `linear-tui auth login` to sign in again.",
+                    account.label()
                 );
             }
-            tokens = oauth::refresh_token(&tokens.refresh_token).await?;
-            token_store.save(&tokens)?;
+            account.tokens = oauth::refresh_token(&account.tokens.refresh_token).await?;
+            changed = true;
         }
-        return Ok(AuthMethod::OAuth(tokens));
+        // A token stored before accounts existed learns its workspace once.
+        // Failing to ask only postpones that to the next launch.
+        if account.organization.is_none() {
+            match identify(&AuthMethod::OAuth(account.clone())).await {
+                Ok(viewer) => {
+                    account.organization = viewer.organization;
+                    account.user = Some(viewer.name);
+                    changed = account.organization.is_some() || changed;
+                }
+                Err(e) => tracing::warn!(error = %e, "could not identify the stored token"),
+            }
+        }
+        if changed {
+            let fresh = account.clone();
+            token_store.update(|accounts| {
+                if previous.is_none() && fresh.organization.is_some() {
+                    accounts.identify(fresh);
+                } else {
+                    accounts.set_tokens(previous.as_ref(), fresh.tokens);
+                }
+            })?;
+        }
+        return Ok(AuthMethod::OAuth(account));
     }
 
     // Fall back to API key
@@ -73,6 +113,61 @@ pub async fn resolve_auth(token_store: &TokenStore, api_key: Option<&str>) -> Re
     }
 
     anyhow::bail!("Not authenticated. Run `linear-tui auth login` to sign in.")
+}
+
+/// Make `target` the current workspace and resolve its credentials. When
+/// they cannot be resolved, the current workspace is left as it was.
+pub async fn switch_to(
+    token_store: &TokenStore,
+    api_key: Option<&str>,
+    target: &OrganizationId,
+) -> Result<AuthMethod> {
+    let previous = token_store.update(|accounts| {
+        if accounts.find(target.as_str()).is_none() {
+            return Err(anyhow::anyhow!("that workspace is no longer signed in"));
+        }
+        Ok(accounts.current.replace(target.clone()))
+    })??;
+    let resolved = resolve_auth(token_store, api_key).await;
+    if resolved.is_err() {
+        token_store.update(|accounts| accounts.current = previous)?;
+    }
+    resolved
+}
+
+/// Keep a freshly issued token as the account for its workspace, and make
+/// that workspace the current one. Returns who signed in, and where.
+pub async fn add_account(token_store: &TokenStore, tokens: OAuthTokens) -> Result<Viewer> {
+    let account = Account {
+        organization: None,
+        user: None,
+        tokens,
+    };
+    let viewer = identify(&AuthMethod::OAuth(account.clone())).await?;
+    let Some(organization) = viewer.organization.clone() else {
+        anyhow::bail!("Linear did not say which workspace the new token belongs to");
+    };
+    token_store.update(|accounts| {
+        accounts.current = Some(organization.id.clone());
+        accounts.add(Account {
+            organization: Some(organization),
+            user: Some(viewer.name.clone()),
+            ..account
+        });
+    })?;
+    Ok(viewer)
+}
+
+/// "Signed in as Ada in Acme (acme)." — which person and which workspace the
+/// credentials act as.
+pub fn signed_in(viewer: &Viewer) -> String {
+    match &viewer.organization {
+        Some(org) => format!(
+            "Signed in as {} in {} ({}).",
+            viewer.name, org.name, org.url_key
+        ),
+        None => format!("Signed in as {}.", viewer.name),
+    }
 }
 
 /// Ask the API who the credentials belong to — the only way to tell a live

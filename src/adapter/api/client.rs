@@ -377,7 +377,7 @@ impl LinearClient {
         }
         let resp: Resp = self
             .query(
-                "query Viewer { viewer { id name displayName } }",
+                "query Viewer { viewer { id name displayName organization { id name urlKey } } }",
                 Value::Null,
             )
             .await?;

@@ -9,6 +9,7 @@ mod usecase;
 use adapter::{api, auth, cli, dispatch, herdr, snapshot};
 use interface::{app, event, message, ui};
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -31,6 +32,7 @@ use tokio::sync::mpsc;
 use base64::Engine;
 
 use api::client::LinearClient;
+use entity::OrganizationId;
 use app::App;
 use auth::token::TokenStore;
 use config::Config;
@@ -64,7 +66,7 @@ async fn main() -> Result<()> {
         return Ok(());
     };
     tracing::info!(method = auth.label(), "authenticated successfully");
-    let client = LinearClient::new(auth.into_credentials(token_store));
+    let organization = auth.organization().map(|org| org.id.clone());
 
     // An entry for this directory in config.toml wins over the view
     // remembered for it.
@@ -83,25 +85,27 @@ async fn main() -> Result<()> {
         }
         // Asked for an issue, the remembered view is not reopened.
         None if open.is_some() => None,
-        None => shelf.as_ref().and_then(|s| {
-            let instances = s.instances();
-            usecase::instance::to_reopen(&instances, &origin.id()).map(|i| i.view.clone())
-        }),
+        None => shelf
+            .as_ref()
+            .and_then(|s| reopen(s, &origin, organization.as_ref())),
     };
-    let recorder = shelf.map(|shelf| {
+    let recorder = shelf.as_ref().map(|shelf| {
         shelf.prune();
-        snapshot::Recorder::new(&shelf, origin.pid)
+        snapshot::Recorder::new(shelf, origin.pid)
     });
 
     // Run TUI
     run_tui(
-        client,
         config,
+        token_store,
+        auth,
         Session {
             origin,
             restored,
             open,
             recorder,
+            shelf,
+            pinned: pinned.is_some(),
         },
     )
     .await
@@ -114,6 +118,10 @@ struct Session {
     /// The issue `linear-tui open` asked for.
     open: Option<String>,
     recorder: Option<snapshot::Recorder>,
+    /// Where a view to reopen is looked for after switching workspace.
+    shelf: Option<snapshot::Shelf>,
+    /// Whether config.toml pins this directory, which reopens no view.
+    pinned: bool,
 }
 
 /// Resolve stored credentials, running first-run setup when there are none.
@@ -176,34 +184,156 @@ impl Drop for TerminalGuard {
     }
 }
 
-async fn run_tui(client: LinearClient, config: Config, session: Session) -> Result<()> {
+type Term = Terminal<CrosstermBackend<io::Stdout>>;
+
+/// Run the TUI until it quits. Switching workspace ends one session and
+/// starts another on the same terminal: a new client, and a new `App`, since
+/// nothing loaded from one workspace means anything in the next.
+async fn run_tui(
+    config: Config,
+    token_store: TokenStore,
+    auth: auth::AuthMethod,
+    session: Session,
+) -> Result<()> {
     let Session {
         origin,
         restored,
         open,
         mut recorder,
+        shelf,
+        pinned,
     } = session;
     let _guard = TerminalGuard::enter()?;
     let backend = CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend)?;
     terminal.hide_cursor()?;
 
-    let client = Arc::new(client);
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
+    // Only the herdr plugin writes the agents file.
+    let mut agents = herdr::available().then(herdr::AgentWatch::new).flatten();
+    // The view each workspace was left on this run, to come back to.
+    let mut left: HashMap<OrganizationId, entity::snapshot::ViewSnapshot> = HashMap::new();
+    let mut organization = auth.organization().map(|org| org.id.clone());
+    let mut client = Arc::new(LinearClient::new(
+        auth.into_credentials(token_store.clone()),
+    ));
+    let mut app = new_app(&config, &token_store, restored, open.as_deref());
 
+    loop {
+        run_session(
+            &mut terminal,
+            &mut app,
+            &client,
+            &origin,
+            &mut recorder,
+            &mut agents,
+        )?;
+        let Some(target) = app.switch_to.take() else {
+            break;
+        };
+        // The one await on the UI's path: a token past its expiry is renewed
+        // before the new session can send anything. The status line says so.
+        match auth::switch_to(&token_store, config.auth.api_key.as_deref(), &target).await {
+            Ok(auth) => {
+                tracing::info!(organization = %target, "switched workspace");
+                if let (Some(org), Some(view)) = (organization.take(), app.snapshot(&origin, snapshot::timestamp_now())) {
+                    left.insert(org, view);
+                }
+                organization = Some(target.clone());
+                client = Arc::new(LinearClient::new(
+                    auth.into_credentials(token_store.clone()),
+                ));
+                let restored = if pinned {
+                    None
+                } else {
+                    left.remove(&target).or_else(|| {
+                        shelf
+                            .as_ref()
+                            .and_then(|s| reopen(s, &origin, Some(&target)))
+                    })
+                };
+                app = new_app(&config, &token_store, restored, None);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "could not switch workspace");
+                app.set_error(format!("Could not switch workspace: {e:#}"));
+            }
+        }
+    }
+
+    if let Some(recorder) = &mut recorder
+        && let Some(snapshot) = app.snapshot(&origin, snapshot::timestamp_now())
+    {
+        recorder.close(snapshot);
+    }
+    Ok(())
+}
+
+/// The view a launch in `origin`'s repository reopens, signed in to
+/// `organization`: see `usecase::instance::to_reopen`.
+fn reopen(
+    shelf: &snapshot::Shelf,
+    origin: &entity::Origin,
+    organization: Option<&OrganizationId>,
+) -> Option<entity::snapshot::ViewSnapshot> {
+    let instances = shelf.instances();
+    usecase::instance::to_reopen(&instances, &origin.id(), organization).map(|i| i.view.clone())
+}
+
+/// A fresh session's state, reopening `restored` or the issue `open` names.
+fn new_app(
+    config: &Config,
+    token_store: &TokenStore,
+    restored: Option<entity::snapshot::ViewSnapshot>,
+    open: Option<&str>,
+) -> App {
     // `App::new` seeds the initial Teams/Viewer requests.
-    let mut app = App::new(&config);
+    let mut app = App::new(config);
     // Inside herdr, the actions that hand work to its plugin are offered.
     app.herdr = herdr::available();
-    // Only the herdr plugin writes the agents file.
-    let mut agents = app.herdr.then(herdr::AgentWatch::new).flatten();
+    app.workspaces = workspace_entries(token_store);
     if let Some(snapshot) = restored {
         tracing::info!(updated_at = %snapshot.updated_at, "restoring the last view");
         app.restore(snapshot);
     }
-    if let Some(identifier) = &open {
+    if let Some(identifier) = open {
         app.open_on_launch(identifier);
     }
+    app
+}
+
+/// The signed-in workspaces the switcher offers. One not yet identified has
+/// nothing to show, so it is left out until the next launch names it.
+fn workspace_entries(token_store: &TokenStore) -> Vec<app::WorkspaceEntry> {
+    let Ok(accounts) = token_store.load() else {
+        return Vec::new();
+    };
+    accounts
+        .accounts
+        .iter()
+        .filter_map(|account| {
+            let org = account.organization.as_ref()?;
+            Some(app::WorkspaceEntry {
+                id: org.id.clone(),
+                name: org.name.clone(),
+                url_key: org.url_key.clone(),
+                current: accounts.is_current(account),
+            })
+        })
+        .collect()
+}
+
+/// Drive one session until the user quits or picks another workspace.
+fn run_session(
+    terminal: &mut Term,
+    app: &mut App,
+    client: &Arc<LinearClient>,
+    origin: &entity::Origin,
+    recorder: &mut Option<snapshot::Recorder>,
+    agents: &mut Option<herdr::AgentWatch>,
+) -> Result<()> {
+    // A channel per session: answers still on their way from the last one
+    // have nowhere to land.
+    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
     let mut cache = ui::Cache::default();
     let mut last_tick = Instant::now();
     let mut dirty = true;
@@ -218,7 +348,7 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
         // runs on the tokio runtime, so the UI never blocks on the network.
         while let Some(req) = app.outbox.requests.pop_front() {
             app.outbox.inflight += 1;
-            let client = Arc::clone(&client);
+            let client = Arc::clone(client);
             let tx = tx.clone();
             let per_page = app.items_per_page;
             tokio::spawn(async move {
@@ -229,7 +359,7 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
         }
 
         if dirty {
-            terminal.draw(|f| ui::draw(f, &mut app, &mut cache))?;
+            terminal.draw(|f| ui::draw(f, app, &mut cache))?;
             dirty = false;
         }
 
@@ -245,19 +375,19 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
             copy_to_clipboard(&text)?;
         }
 
-        if event::poll_and_handle(&mut app)? {
+        if event::poll_and_handle(app)? {
             moved = true;
         }
 
         // Record where the user is once the view has rested. This is the
         // only place a snapshot is written — never from rendering.
         let now = Instant::now();
-        if let Some(recorder) = &mut recorder {
+        if let Some(recorder) = recorder {
             if moved {
                 recorder.touch(now);
             }
             if recorder.is_due(now)
-                && let Some(snapshot) = app.snapshot(&origin, snapshot::timestamp_now())
+                && let Some(snapshot) = app.snapshot(origin, snapshot::timestamp_now())
             {
                 recorder.record(snapshot);
             }
@@ -265,7 +395,7 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
         dirty |= moved;
 
         // What the herdr plugin says its agents are working on.
-        if let Some(watch) = &mut agents
+        if let Some(watch) = agents
             && let Some(list) = watch.poll(now)
         {
             app.set_agents(list);
@@ -279,16 +409,14 @@ async fn run_tui(client: LinearClient, config: Config, session: Session) -> Resu
         }
 
         if app.should_quit {
-            break;
+            return Ok(());
+        }
+        if app.switch_to.is_some() {
+            // Show "Switching to …" while the next session is prepared.
+            terminal.draw(|f| ui::draw(f, app, &mut cache))?;
+            return Ok(());
         }
     }
-
-    if let Some(recorder) = &mut recorder
-        && let Some(snapshot) = app.snapshot(&origin, snapshot::timestamp_now())
-    {
-        recorder.close(snapshot);
-    }
-    Ok(())
 }
 
 /// Push `text` to the system clipboard with an OSC 52 escape sequence.

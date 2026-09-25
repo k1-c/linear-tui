@@ -6,7 +6,7 @@ use rand::Rng;
 use sha2::{Digest, Sha256};
 
 use super::server::{CALLBACK_PORTS, start_callback_server};
-use super::token::{OAuthTokens, TokenStore};
+use super::token::OAuthTokens;
 
 const AUTHORIZE_URL: &str = "https://linear.app/oauth/authorize";
 const TOKEN_URL: &str = "https://api.linear.app/oauth/token";
@@ -20,6 +20,11 @@ const TOKEN_URL: &str = "https://api.linear.app/oauth/token";
 const DEFAULT_CLIENT_ID: &str = "10a4dc40b91ad9015b7b95cf703a54e3";
 
 const SCOPES: &str = "read,write";
+
+/// Show the consent screen every time. Without it, Linear skips the screen
+/// once the application has been approved and authorizes whichever workspace
+/// the browser happens to have open, leaving no chance to pick another.
+const PROMPT: &str = "consent";
 
 /// How long `auth login` waits for the browser before giving up. Without a
 /// limit, a tab closed without answering would leave the command hanging.
@@ -79,8 +84,22 @@ fn percent_encode(value: &str) -> String {
     out
 }
 
-/// Run the full OAuth2 + PKCE login flow.
-pub async fn login(token_store: &TokenStore) -> Result<()> {
+fn authorize_url(client_id: &str, redirect_uri: &str, state: &str, code_challenge: &str) -> String {
+    format!(
+        "{AUTHORIZE_URL}?client_id={}&response_type=code&redirect_uri={}&scope={}&prompt={}&state={}&code_challenge={}&code_challenge_method=S256",
+        percent_encode(client_id),
+        percent_encode(redirect_uri),
+        percent_encode(SCOPES),
+        percent_encode(PROMPT),
+        percent_encode(state),
+        percent_encode(code_challenge),
+    )
+}
+
+/// Run the full OAuth2 + PKCE login flow, returning the token Linear issued.
+/// Which workspace it belongs to is only known by asking the API with it
+/// ([`super::add_account`]).
+pub async fn login() -> Result<OAuthTokens> {
     let client_id = client_id()?;
     let code_verifier = generate_code_verifier();
     let code_challenge = generate_code_challenge(&code_verifier);
@@ -91,18 +110,14 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
     let (port, code_rx) = start_callback_server(state.clone()).await?;
     let redirect_uri = format!("http://localhost:{port}/callback");
 
-    let auth_url = format!(
-        "{AUTHORIZE_URL}?client_id={}&response_type=code&redirect_uri={}&scope={}&state={}&code_challenge={}&code_challenge_method=S256",
-        percent_encode(&client_id),
-        percent_encode(&redirect_uri),
-        percent_encode(SCOPES),
-        percent_encode(&state),
-        percent_encode(&code_challenge),
-    );
+    let auth_url = authorize_url(&client_id, &redirect_uri, &state, &code_challenge);
 
     tracing::info!(redirect_uri = %redirect_uri, "starting OAuth login flow");
     match open::that(&auth_url) {
-        Ok(()) => println!("Opening your browser to authorize linear-tui..."),
+        Ok(()) => {
+            println!("Opening your browser to authorize linear-tui...");
+            println!("Check the workspace on the consent screen before you approve.");
+        }
         Err(e) => {
             tracing::warn!(error = %e, "could not open a browser");
             println!("Could not open a browser. Visit this URL to authorize:\n\n{auth_url}\n");
@@ -123,10 +138,8 @@ pub async fn login(token_store: &TokenStore) -> Result<()> {
 
     tracing::debug!("exchanging authorization code for tokens");
     let tokens = exchange_code(&code, &code_verifier, &redirect_uri).await?;
-    token_store.save(&tokens)?;
-
     tracing::info!("OAuth login successful");
-    Ok(())
+    Ok(tokens)
 }
 
 async fn exchange_code(code: &str, code_verifier: &str, redirect_uri: &str) -> Result<OAuthTokens> {
@@ -225,6 +238,14 @@ mod tests {
             percent_encode("http://localhost:53681/callback"),
             "http%3A%2F%2Flocalhost%3A53681%2Fcallback"
         );
+    }
+
+    #[test]
+    fn the_authorize_url_always_asks_for_consent() {
+        // Without the consent screen there is no chance to pick the workspace.
+        let url = authorize_url("id", "http://localhost:1/callback", "st", "ch");
+        assert!(url.contains("&prompt=consent&"), "{url}");
+        assert!(url.contains("&code_challenge=ch&code_challenge_method=S256"));
     }
 
     #[test]
