@@ -1,6 +1,6 @@
 # Configuration
 
-linear-tui works without any configuration. Settings live in
+linear-tui works without configuration. Settings live in
 `~/.config/linear-tui/config.toml` (on macOS,
 `~/Library/Application Support/linear-tui/config.toml`); `linear-tui paths`
 prints where. A key the file does not understand, or a value out of range, is
@@ -46,7 +46,7 @@ team = "WEB"
 | `ocean` | Dark blue, with soft colours |
 
 Workflow states, labels, and projects keep the colours your workspace gave them
-in every theme.
+for each theme.
 
 ## `[auth]`
 
@@ -57,7 +57,7 @@ Written by the `linear-tui auth` commands; see
 
 Settings for one directory. The path may start with `~/`; it matches the
 directory linear-tui is started in, or the repository that directory belongs
-to — so one entry covers every worktree.
+to, so one entry covers each worktree.
 
 | Key | |
 | --- | --- |
@@ -65,10 +65,10 @@ to — so one entry covers every worktree.
 
 An entry here wins over the view remembered for that repository.
 
-## Where you left off
+## Remembered view
 
-linear-tui remembers what it is showing — the page, the list's preset, filters
-and grouping, and the issue under the cursor — separately for each repository,
+linear-tui remembers what it is showing: the page, the list's preset, filters
+and grouping, and the issue under the cursor, separately for each repository,
 and reopens it on the next launch there. Worktrees of one repository share it;
 outside git, the directory itself is the key.
 

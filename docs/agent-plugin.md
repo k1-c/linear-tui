@@ -1,8 +1,8 @@
 # Agent plugin
 
 `agent-plugin/` is a plugin for Claude Code and Codex. It tells a coding agent
-that you use linear-tui, so "fix this issue" or "comment on the top three"
-works without spelling out IDs: the agent runs `linear-tui context` to see what
+that you use linear-tui, so "fix this issue" or "comment on the top three" can
+work without spelling out IDs: the agent runs `linear-tui context` to see what
 is on your screen and `linear-tui issue …` to act (see [cli.md](cli.md)).
 
 It needs linear-tui 0.7.0 or newer on the agent's `PATH`, and works with or
@@ -30,15 +30,15 @@ agent receives as context: when to run `linear-tui context`, the `issue`
 commands, and the rule that an issue is only moved when you ask. Inside a
 worktree whose branch names an issue it adds `This worktree is for ENG-42`.
 
-It prints nothing — and the session gets no extra context — unless linear-tui
-is installed and `linear-tui context` has something for the repository: a
-recorded view (you have opened linear-tui there) or a worktree issue. In other
-repositories the plugin costs nothing.
+It prints only when linear-tui is installed and `linear-tui context` has
+something for the repository: a recorded view (you have opened linear-tui there)
+or a worktree issue. In other repositories the plugin does not add extra
+context.
 
-No prompt is sent. That is the difference from the herdr plugin's
-`NOTIFY_AGENTS` notice ([herdr.md](herdr.md)): a prompt spends the agent's first
-turn, renames a Claude Code session, can collide with what you are typing, and
-reads as something you said. Context from a hook does none of that.
+No prompt is sent. This differs from the herdr plugin's `NOTIFY_AGENTS` notice
+([herdr.md](herdr.md)): a prompt spends the agent's first turn, renames a Claude
+Code session, can collide with what you are typing, and reads as something you
+said. Context from a hook does none of that.
 
 **A `linear-tui` skill** (`skills/linear-tui/SKILL.md`), which the agent loads
 when you refer to something on your screen without naming it, or ask it to

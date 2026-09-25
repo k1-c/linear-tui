@@ -14,12 +14,12 @@ mise run verify    # format, lint, test, build
 ```
 
 `mise run fmt`, `lint`, `test`, and `build` run the steps individually. Without
-mise, any stable rustup toolchain works — `cargo run`, `cargo test`, and the
+mise, any stable rustup toolchain works; `cargo run`, `cargo test`, and the
 rest behave the same. The minimum supported Rust version is in `Cargo.toml`
 (`rust-version`) and checked in CI.
 
-There is nothing else to install: TLS goes through rustls, so no system OpenSSL
-or `pkg-config` is involved.
+No separate TLS dependencies are needed: TLS goes through rustls, so no system
+OpenSSL or `pkg-config` is involved.
 
 Before changing code, read [AGENTS.md](../AGENTS.md): the project map, the
 architecture invariants (the UI thread never awaits; the layers only depend
@@ -50,7 +50,7 @@ agent plugin with `claude plugin validate .` and
 | --- | --- |
 | a keybinding | the `BINDINGS` row in `src/keys.rs`, and [keybindings.md](keybindings.md) (with the "Differences from Linear" table if it departs from Linear) |
 | a `config.toml` key | `KNOWN_KEYS` in `src/config.rs`, and [configuration.md](configuration.md) |
-| a subcommand or its output | [cli.md](cli.md) — a contract for agents and scripts |
+| a subcommand or its output | [cli.md](cli.md), a contract for agents and scripts |
 | the view snapshot | [view-snapshot.md](view-snapshot.md), `snapshot::VERSION` for a breaking change |
 | the herdr plugin | [herdr.md](herdr.md), and `version` in `herdr-plugin/herdr-plugin.toml` |
 | the agent plugin | [agent-plugin.md](agent-plugin.md), and `version` in both of its `plugin.json` |
@@ -60,7 +60,7 @@ agent plugin with `claude plugin validate .` and
 
 The GIFs in `assets/` are scripted with [VHS](https://github.com/charmbracelet/vhs),
 so they can be re-recorded after a UI change. They run against a throwaway
-Linear workspace filled with made-up data — a weather app — never a real one.
+Linear workspace filled with made-up data for a weather app, not a real one.
 
 | Tape | GIF | Shows |
 | --- | --- | --- |
@@ -88,7 +88,7 @@ workspace: pickers are closed without choosing, and notes go to the clipboard.
 
 A new tape follows the same pattern: launch off camera (`Hide` … `Show`), wait
 for text only the loaded page shows (`Wait+Screen /…/`) rather than sleeping on
-API latency, and keep it under 30 seconds — one feature per GIF.
+API latency, and keep it under 30 seconds with one feature per GIF.
 
 ## Releases
 

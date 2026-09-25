@@ -4,7 +4,7 @@ This document describes how to define, verify, and maintain Rust types that map 
 
 ## Verifying the Linear GraphQL Schema
 
-Before defining or modifying types, always check the actual API schema.
+Before defining or modifying types, check the actual API schema.
 
 ### Introspection query
 
@@ -41,11 +41,11 @@ settle questions against the live endpoint rather than a mirrored file.
 When adding or modifying types in `src/api/types.rs`:
 
 - [ ] **Schema verification**: Run introspection query to confirm field names, types, and nullability
-- [ ] **Open value sets**: A field the schema types as `String` (like `WorkflowState.type`) can gain values at any time. Map it with a custom `Deserialize` that accepts every spelling seen (`canceled` and `cancelled`) and falls back to an `Unknown` variant — failing on an unseen value would fail the whole query
-- [ ] **Ids**: An entity id is its own newtype from `src/api/ids.rs` (`IssueId`, `TeamId`, …), never a bare `String`; see [Ids](#ids)
+- [ ] **Open value sets**: A field the schema types as `String` (like `WorkflowState.type`) can gain values at any time. Map it with a custom `Deserialize` that accepts every spelling seen (`canceled` and `cancelled`) and falls back to an `Unknown` variant, because failing on an unseen value would fail the whole query
+- [ ] **Ids**: An entity id is its own newtype from `src/api/ids.rs` (`IssueId`, `TeamId`, …), not a bare `String`; see [Ids](#ids)
 - [ ] **Optional fields**: Fields that may be `null` in the API must be `Option<T>` with `#[serde(default)]`
 - [ ] **Numeric types**: Linear returns `priority` as a float (e.g., `0.0` not `0`). Use custom `Deserialize` for type coercion
-- [ ] **Nested types**: Verify nested object structure matches — `{ nodes { ... } }` maps to `Connection<T>`
+- [ ] **Nested types**: Verify nested object structure matches: `{ nodes { ... } }` maps to `Connection<T>`
 - [ ] **Fixture test**: Add or update a JSON fixture in `tests/fixtures/` and a corresponding deserialization test
 
 ## Serde Attribute Reference
@@ -73,7 +73,7 @@ Linear's GraphQL schema uses different scalar types depending on context:
 
 ## Workflow: Adding a New API Type
 
-1. **Introspect**: Query the schema to get the exact field names, types, and nullability
+1. **Introspect**: Query the schema to get the field names, types, and nullability
 2. **Fetch sample**: Use curl to get a real response and save it (anonymize sensitive data)
 3. **Define type**: Add struct/enum in `src/api/types.rs` with appropriate serde attributes
 4. **Add fixture**: Save the sample response to `tests/fixtures/<query_name>.json`
@@ -110,19 +110,19 @@ adds its name to the macro call. `Ref<I>` covers a reference that selects only
 Only ids are wrapped. Keep as `String`:
 
 - names, titles, and human-readable keys like the `ENG-123` identifier;
-- values a workspace defines for itself — state names, `Project.state`,
-  `Favorite.type` — which are data to display, not handles to pass back;
-- page cursors, which are opaque and never compared.
+- values a workspace defines for itself, such as state names, `Project.state`,
+  `Favorite.type`, which are data to display, not handles to pass back;
+- page cursors, which are opaque and not compared.
 
 ## Queries
 
-`LinearClient` methods return `Result<_, ApiError>`, never `anyhow`. The
-variants tell apart what a caller may want to react to: `Transport`,
+`LinearClient` methods return `Result<_, ApiError>`, not `anyhow`. The variants
+separate cases that a caller may handle differently: `Transport`,
 `Unauthorized`, `RateLimited`, `Http`, `GraphQL` (with each error's
 `extensions.code`), `Decode`, and `Rejected` for a mutation that answered
 `success: false`.
 
-- **Name every operation** — `query TeamIssues(…)`, `mutation UpdateIssue(…)`.
+- **Name every operation**: `query TeamIssues(…)`, `mutation UpdateIssue(…)`.
   The name is what the log records.
 - **Lists** go through `connection(query, variables, "/json/pointer")`, which
   pulls the `{ nodes pageInfo }` object at that pointer out of `data`.
@@ -131,4 +131,3 @@ variants tell apart what a caller may want to react to: `Transport`,
   than as an error, and the UI has already applied the change optimistically.
 - **Tests** point a client at a wiremock server with
   `LinearClient::with_endpoint`, and credentials with `StaticCredentials`.
-

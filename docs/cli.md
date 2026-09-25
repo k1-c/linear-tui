@@ -2,16 +2,16 @@
 
 `linear-tui context` and `linear-tui issue …` run without the TUI. They are how
 a coding agent reads what you are looking at in linear-tui and acts on Linear
-itself — with the credentials `linear-tui auth` set up and the same request
+itself, using the credentials `linear-tui auth` set up and the same request
 code as the TUI, so there is no second client and no second sign-in.
 
-This document is the contract. Output is meant for agents first:
+This document defines the contract. Output is meant for agents first:
 
-- **Markdown by default** — plain, stable, and short enough to paste into a
+- **Markdown by default**: plain, stable, and short enough to paste into a
   prompt. Headings and the `- Name: value` lines below stay as documented.
 - **`--json`** for scripts. Fields are only ever added.
 - **Errors** go to stderr, prefixed `Error:`, with exit status 1. Nothing
-  prompts: the commands never wait for a person at the keyboard.
+  prompts: the commands do not wait for a person at the keyboard.
 
 An `<ID>` is an identifier in any case (`ENG-123`, `eng-123`), an issue URL
 (`https://linear.app/<org>/issue/ENG-123/…`), or an issue UUID. An argument
@@ -38,8 +38,8 @@ reads the snapshot of a running instance first, and says when the only one
 left is from an instance that has quit.
 
 Inside a linked worktree whose branch names an issue (`me/eng-42-…`, as Linear
-suggests branch names), that issue is reported first — it is what the worktree
-is for.
+suggests branch names), that issue is reported first because it is what the
+worktree is for.
 
 ```markdown
 # linear-tui context
@@ -147,7 +147,7 @@ prints `{ "issue": "ENG-42", "commented": true }`.
 ## `linear-tui issue status <ID> <state> [--json]`
 
 Moves the issue to the workflow state named `<state>`, in any case. The state
-is looked up in the **issue's own team** — two teams can both have a "Done",
+is looked up in the **issue's own team**: two teams can both have a "Done",
 and only the issue's is valid for it. An unknown name fails and lists the
 team's states. Prints `ENG-42: Todo → Done`; `--json` prints
 `{ "issue": "ENG-42", "from": "Todo", "to": "Done" }`.

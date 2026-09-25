@@ -5,7 +5,7 @@ The plugin in `herdr-plugin/` puts linear-tui in a herdr pane and connects it
 to the agents running next to it.
 
 linear-tui does not depend on herdr: it builds, runs, and passes its tests
-without it. Everything herdr-specific lives in the plugin's scripts.
+without it. The herdr-specific pieces live in the plugin's scripts.
 
 ## Install
 
@@ -14,8 +14,8 @@ herdr plugin install k1-c/linear-tui/herdr-plugin
 ```
 
 It needs herdr 0.9.1 or newer, `jq`, and a `linear-tui` that has
-`linear-tui paths` (the release that ships this plugin, or newer) on your `PATH`
-— or set `LINEAR_TUI_BIN`, below. For a local checkout, link it instead:
+`linear-tui paths` (the release that ships this plugin, or newer) on your `PATH`,
+or set `LINEAR_TUI_BIN`, below. For a local checkout, link it instead:
 `herdr plugin link ./herdr-plugin`.
 
 Bind the action to a key in herdr's `config.toml`:
@@ -38,24 +38,24 @@ description = "linear-tui"
 
 linear-tui opens where it was last left in that repository (see
 [view-snapshot.md](view-snapshot.md)), so an agent in the same workspace can run
-`linear-tui context` and see what you see.
+`linear-tui context` and see the same view.
 
 **Links.** Ctrl+click on `https://linear.app/<org>/issue/ENG-42/…` in any pane
 opens a linear-tui pane on ENG-42 (`linear-tui open <URL>`) instead of the
 browser.
 
 **Restarts.** After the herdr server restarts, a startup hook runs linear-tui
-again in each pane it was running in — found from the view snapshots that name
-a herdr pane, were never closed, and belong to a process that is gone. The pane
-must have come back as a plain shell in the same directory; linear-tui then
-reopens its own view.
+again in each pane it was running in. It finds those panes from view snapshots
+that name a herdr pane, were not closed, and belong to a process that is gone.
+The pane must have come back as a plain shell in the same directory; linear-tui
+then reopens its own view.
 
 ## Agents on issues
 
 The plugin keeps a list of herdr's agents in `$STATE/herdr/agents.json`,
 refreshed on every agent state change, when panes, tabs, workspaces and
-worktrees open or close, and at startup. Each agent is tied to the issue its
-checkout's branch names — `me/eng-42-checkout-fails` is ENG-42, as Linear
+worktrees open or close, and at startup. Each agent is tied to the issue named
+by its checkout's branch. `me/eng-42-checkout-fails` is ENG-42, as Linear
 suggests branch names.
 
 linear-tui, inside herdr, reads the list once a second when it changes:
@@ -65,8 +65,8 @@ linear-tui, inside herdr, reads the list once a second when it changes:
 - the issue page's panel names the agent, its state, and its workspace;
 - `g w` brings that agent's pane to the front (only inside herdr).
 
-With several agents on one issue, the one waiting for you is shown, then the
-one at work.
+With several agents on one issue, linear-tui shows the one waiting for you,
+then the one at work.
 
 ```json
 {
@@ -87,7 +87,7 @@ one at work.
 
 In linear-tui, `n` notes the issue under the cursor and `Shift+N` the whole
 view; `Ctrl+S` sends every note as one prompt. Inside herdr the prompt goes to
-an agent in the same workspace — one in the same directory first, then one
+an agent in the same workspace: one in the same directory first, then one
 that is not busy, then the one that changed state last. Outside herdr it is
 copied to the clipboard.
 
@@ -95,7 +95,7 @@ If no agent takes it, the plugin shows a herdr notification and saves the
 prompt to `$STATE/herdr/outbox/undelivered/`.
 
 The prompt ends with a line on `linear-tui context` and `linear-tui issue …`,
-so an agent that has never heard of linear-tui can look closer. To word it
+so an agent that has not heard of linear-tui can look closer. To word it
 your own way, put a template in `$(herdr plugin config-dir k1-c.linear-tui)/prompt.md`
 (see `herdr-plugin/prompt.example.md`):
 
@@ -107,7 +107,7 @@ your own way, put a template in `$(herdr plugin config-dir k1-c.linear-tui)/prom
 
 ### The outbox
 
-linear-tui never runs herdr commands of its own beyond invoking `deliver`. It
+linear-tui runs no herdr commands of its own beyond invoking `deliver`. It
 leaves one file per request in `$STATE/herdr/outbox/<millis>-<pid>.json`
 (`$STATE` from `linear-tui paths`), owner-only:
 
@@ -132,7 +132,7 @@ is taken from `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`, and the working directory.
 ## Configuration
 
 `$(herdr plugin config-dir k1-c.linear-tui)/config.env`, plain `KEY=value`
-lines, read on every action — no reload needed. For example, linear-tui in the
+lines, read on every action, with no reload needed. For example, linear-tui in the
 right 40% of the pane you open it from:
 
 ```sh
@@ -155,11 +155,11 @@ SIZE=40
 An agent has to know `linear-tui context` exists before you say "fix this
 one". In order of preference:
 
-- **The agent plugin** ([agent-plugin.md](agent-plugin.md)) — for Claude Code
+- **The agent plugin** ([agent-plugin.md](agent-plugin.md)), for Claude Code
   and Codex. A SessionStart hook adds a few lines to the session's context in
   repositories where you use linear-tui. No prompt is sent, so nothing below
   applies to it. Works with or without herdr.
-- **Your agent's instructions** — for agents without hooks, a line like this in
+- **Your agent's instructions**, for agents without hooks, a line like this in
   `AGENTS.md` or `CLAUDE.md`:
 
   ```markdown
@@ -168,7 +168,7 @@ one". In order of preference:
   act on Linear with their credentials. Only move an issue to Done when told to.
   ```
 
-- **`NOTIFY_AGENTS=1`** — the last resort: when an agent has started and is
+- **`NOTIFY_AGENTS=1`**, the fallback: when an agent has started and is
   waiting for its first message, this plugin sends it `herdr-plugin/notice.md`
   once per agent session. It is off by default, because a prompt is a message
   from the user: it takes the agent's first turn (tokens, and history that stays
@@ -176,7 +176,7 @@ one". In order of preference:
   while you are typing your first message, it reaches every agent in every
   repository, and the agent reads it as something you said.
 
-### Why this design (#47)
+### Design notes (#47)
 
 Checked against herdr 0.9.1 and Claude Code 2.1:
 
@@ -186,19 +186,19 @@ Checked against herdr 0.9.1 and Claude Code 2.1:
   `HERDR_PLUGIN_EVENT_JSON` as `{ "event": "pane_agent_status_changed", "data":
   { "pane_id", "workspace_id", "agent", "agent_status" } }`. herdr-hunk-diff
   learns about agent states the same way, from `pane.agent_status_changed`.
-- `pane.agent_detected` fires as soon as the agent's process is recognised —
+- `pane.agent_detected` fires as soon as the agent's process is recognised,
   often while it still shows a startup dialog (a trust prompt), reported as
   `blocked`. `herdr agent prompt` refuses a blocked agent, and typing into the
   dialog would answer it. The right moment is the agent's first `idle`, before
   it has completed any turn (`completion_seq` absent in `herdr agent get`).
 - A prompt sent then arrives before the user's first message and is answered
-  in a few seconds. It is not free: it is the agent's first turn, and Claude
+  in a few seconds. It has a cost: it is the agent's first turn, and Claude
   Code titles the session after it. Hence opt-in.
 - Revisited in #71: the "instructions" option was first set aside as needing
   per-agent setup, but Claude Code and Codex both load plugins with
-  SessionStart hooks whose output becomes session context — how linear-flow
+  SessionStart hooks whose output becomes session context, the way linear-flow
   and herdr's own integrations reach agents. Packaged as a plugin it is one
-  install and has none of the prompt's costs, so it is now the default way; the
+  install and avoids the prompt's costs, so it is now the default way; the
   prompt notice stays as a fallback.
 - An MCP server needs registering per agent and contradicts "no dependency on
   Linear MCP". A note inside each prompt linear-tui sends covers only the
@@ -207,12 +207,12 @@ Checked against herdr 0.9.1 and Claude Code 2.1:
 
 ## Files
 
-- `herdr-plugin.toml` — the manifest.
-- `lib.sh` — shared helpers: config, `PATH`, the `linear-tui` binary.
-- `open.sh` — the `open` and `open-link` actions.
-- `deliver.sh`, `prompt.example.md` — the `deliver` action, and a prompt template to start from.
-- `restore.sh` — the startup hook that restarts linear-tui in its panes.
-- `agents.sh` — keeps `agents.json` current.
-- `event.sh`, `notice.md` — the opt-in agent notice.
+- `herdr-plugin.toml`, the manifest.
+- `lib.sh`, shared helpers: config, `PATH`, the `linear-tui` binary.
+- `open.sh`, the `open` and `open-link` actions.
+- `deliver.sh`, `prompt.example.md`, the `deliver` action, and a prompt template to start from.
+- `restore.sh`, the startup hook that restarts linear-tui in its panes.
+- `agents.sh`, keeps `agents.json` current.
+- `event.sh`, `notice.md`, the opt-in agent notice.
 
 Failures go to herdr's plugin log: `herdr plugin log list --plugin k1-c.linear-tui`.
