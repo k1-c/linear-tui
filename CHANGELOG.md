@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-09-25
+
+### Bug Fixes
+
+- **snapshot**: Spell a workspace one way on every platform
+- **keys**: Keep binding checks independent of whether herdr is running
+
+### Features
+
+- **snapshot**: Remember the view per repository and reopen it
+- **cli**: Add context and issue subcommands for agents
+- **herdr**: Add a herdr plugin that opens linear-tui in a pane
+- **herdr**: Send notes on the view to the agent, open links, restore panes
+- **herdr**: Show agent state on issues and jump to the agent
+
+
+
 ## [0.6.0] - 2026-09-24
 
 ### Documentation
