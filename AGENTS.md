@@ -254,6 +254,10 @@ curl -s https://api.linear.app/graphql -H 'Content-Type: application/json' \
 - Use [Conventional Commits](https://www.conventionalcommits.org/). PR titles are
   validated by `.github/workflows/pr-title.yml`, so the **PR title must be
   conventional too**.
+- **Squash-merge** every PR; the repository allows nothing else. The squash
+  commit takes the PR title, so each PR lands on `main` as one conventional
+  commit and one CHANGELOG entry. Merge commits made release-plz drop the
+  commits behind them when several PRs were merged in a row.
 - No AI attribution in commit messages or PR bodies — no `Co-Authored-By`
   trailer, no "Generated with ..." line.
 
