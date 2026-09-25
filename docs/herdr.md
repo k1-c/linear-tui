@@ -132,12 +132,21 @@ is taken from `HERDR_PANE_ID`, `HERDR_WORKSPACE_ID`, and the working directory.
 ## Configuration
 
 `$(herdr plugin config-dir k1-c.linear-tui)/config.env`, plain `KEY=value`
-lines:
+lines, read on every action — no reload needed. For example, linear-tui in the
+right 40% of the pane you open it from:
+
+```sh
+PLACEMENT=split
+DIRECTION=right
+SIZE=40
+```
+
 
 | Key | Default | |
 | --- | --- | --- |
 | `PLACEMENT` | `overlay` | How `open` places the pane: `overlay`, `split`, `tab`, or `zoomed`. |
 | `DIRECTION` | `right` | Where a `split` goes: `right` or `down`. |
+| `SIZE` | half | For a `split`, linear-tui's share of the pane it splits, in percent (`1`–`99`). |
 | `LINEAR_TUI_BIN` | `linear-tui` on `PATH` | The binary to run. herdr starts plugins with a short `PATH`; the plugin adds `~/.cargo/bin`, `~/.local/bin`, Nix and Homebrew locations. |
 | `NOTIFY_AGENTS` | `0` | `1` tells each newly started agent, once, how to use `linear-tui context` and `linear-tui issue …`. |
 

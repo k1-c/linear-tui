@@ -1,6 +1,6 @@
 id = "k1-c.linear-tui"
 name = "linear-tui"
-version = "0.3.0"
+version = "0.4.0"
 # Tested against 0.9.1: plugin panes with --env, and the pane.agent_status_changed event hook.
 min_herdr_version = "0.9.1"
 description = "Linear in a pane: open linear-tui over any workspace and let agents read what you are looking at."
