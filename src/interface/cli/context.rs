@@ -7,21 +7,22 @@ use std::process::Command;
 use anyhow::{Result, bail};
 use serde_json::json;
 
+use super::Host;
 use super::args::Args;
 use super::issue::is_identifier;
+use crate::core::entity::Organization;
 use crate::core::entity::snapshot::{self as snap, Destination, ViewSnapshot};
-use crate::infra::disk::snapshot::Shelf;
-use crate::infra::linear::auth::token::{Account, TokenStore};
+use crate::core::entity::timestamp;
 
-pub fn run(args: &[String]) -> Result<()> {
+pub fn run(args: &[String], host: &impl Host) -> Result<()> {
     let args = Args::parse(args, &["json"], &["workspace"])?;
     args.positionals::<0>("linear-tui context [--json] [--workspace <path>]")?;
     let cwd = match args.value("workspace") {
         Some(path) => PathBuf::from(path),
         None => std::env::current_dir()?,
     };
-    let workspace = crate::infra::disk::snapshot::workspace_of(&cwd);
-    let instances = Shelf::new(&crate::infra::disk::snapshot::state_dir()?, &workspace).instances();
+    let workspace = host.workspace_of(&cwd);
+    let instances = host.instances(&workspace)?;
     let found = crate::core::usecase::instance::to_report(&instances)
         .map(|(instance, open)| (instance.view.clone(), open));
     let worktree_issue = worktree_issue(&cwd);
@@ -31,7 +32,7 @@ pub fn run(args: &[String]) -> Result<()> {
             workspace.display()
         );
     }
-    let now = crate::infra::disk::snapshot::unix_now();
+    let now = host.now();
     let out = if args.flag("json") {
         let value = json!({
             "workspace": workspace,
@@ -44,7 +45,7 @@ pub fn run(args: &[String]) -> Result<()> {
         let mut out = render(found.as_ref(), worktree_issue.as_deref(), now);
         if let Some(warning) = found
             .as_ref()
-            .and_then(|(s, _)| other_workspace(s, current_account().as_ref()))
+            .and_then(|(s, _)| other_workspace(s, host.acting_organization().as_ref()))
         {
             out.push_str(&format!("\n{warning}\n"));
         }
@@ -54,22 +55,11 @@ pub fn run(args: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The account `linear-tui issue …` acts in. Read without the network, and
-/// `None` when it cannot be told — an API key, or nothing stored.
-fn current_account() -> Option<Account> {
-    TokenStore::new()
-        .ok()?
-        .load()
-        .ok()?
-        .current_account()
-        .cloned()
-}
-
 /// A warning when the view on screen is of another Linear workspace than the
 /// one the issue commands act in: its IDs would not be found there.
-fn other_workspace(s: &ViewSnapshot, current: Option<&Account>) -> Option<String> {
+fn other_workspace(s: &ViewSnapshot, acting: Option<&Organization>) -> Option<String> {
     let shown = s.organization.as_ref()?;
-    let acting = current?.organization.as_ref()?;
+    let acting = acting?;
     (shown.id != acting.id).then(|| {
         format!(
             "**This view is of {} ({}), but `linear-tui issue …` acts in {} ({}).** \
@@ -205,8 +195,7 @@ pub fn render(
     if let Some(term) = &s.search {
         out.push_str(&format!("- Search results for: {term}\n"));
     }
-    let ago = crate::infra::disk::snapshot::ago(&s.updated_at, now)
-        .unwrap_or_else(|| s.updated_at.clone());
+    let ago = timestamp::ago(&s.updated_at, now).unwrap_or_else(|| s.updated_at.clone());
     let state = if *running {
         format!("open (pid {})", s.pid)
     } else {
@@ -301,18 +290,10 @@ mod tests {
     #[test]
     fn a_view_of_another_workspace_than_the_issue_commands_is_flagged() {
         let snapshot = fixture();
-        let account = |id: &str| Account {
-            organization: Some(crate::core::entity::Organization {
-                id: id.into(),
-                name: "Other".into(),
-                url_key: "other".into(),
-            }),
-            user: None,
-            tokens: crate::infra::linear::auth::token::OAuthTokens {
-                access_token: String::new(),
-                refresh_token: String::new(),
-                expires_at: 0,
-            },
+        let account = |id: &str| Organization {
+            id: id.into(),
+            name: "Other".into(),
+            url_key: "other".into(),
         };
         let warning = other_workspace(&snapshot, Some(&account("elsewhere"))).unwrap();
         assert!(
@@ -341,8 +322,7 @@ mod tests {
     fn the_markdown_says_what_is_open_and_marks_the_cursor() {
         let snapshot = fixture();
         // Two minutes after the snapshot was written.
-        let now =
-            crate::infra::disk::snapshot::parse_timestamp(&snapshot.updated_at).unwrap() + 120;
+        let now = timestamp::parse_timestamp(&snapshot.updated_at).unwrap() + 120;
         let text = render(Some(&(snapshot, true)), Some("ENG-42"), now);
         assert!(text.contains("This worktree is for **ENG-42**"), "{text}");
         assert!(
@@ -370,8 +350,7 @@ mod tests {
     #[test]
     fn a_closed_instance_is_flagged_as_stale() {
         let snapshot = fixture();
-        let now =
-            crate::infra::disk::snapshot::parse_timestamp(&snapshot.updated_at).unwrap() + 7200;
+        let now = timestamp::parse_timestamp(&snapshot.updated_at).unwrap() + 7200;
         let text = render(Some(&(snapshot, false)), None, now);
         assert!(text.contains("may be stale"), "{text}");
         assert!(text.contains("2 hours ago"), "{text}");

@@ -1,3 +1,4 @@
+mod commands;
 mod config;
 mod core;
 mod infra;
@@ -72,7 +73,7 @@ async fn main() -> Result<()> {
             (Mode::Terminal, Some(cli::issue_key(key)?))
         }
         Some("--headless") => (headless_mode(&args[2..])?, None),
-        Some(_) => return cli::handle_subcommand(&args[1..]).await,
+        Some(_) => return commands::run(&args[1..]).await,
         None => (Mode::Terminal, None),
     };
 

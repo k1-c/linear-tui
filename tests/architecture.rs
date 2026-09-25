@@ -5,14 +5,14 @@
 //! src/core/         entity · store · usecase · message   what linear-tui is: no I/O
 //! src/interface/    tui · control · cli                  the ways in: a person, an agent, a script
 //! src/infra/        linear · herdr · disk · dispatch     the systems it calls on
-//! src/runtime.rs, src/main.rs                            wire the ways in to the systems
+//! src/main.rs, src/runtime.rs, src/commands.rs          wire the ways in to the systems
 //! ```
 //!
 //! Inside `core`, `entity` is innermost, then `store`, then `usecase`.
-//! `interface` and `infra` depend on `core` and not on each other — except
-//! `interface/cli`, whose subcommands each run on their own and assemble
-//! the infra they need, as `main` does for the TUI. `control` reads what
-//! `tui` draws. The core stays clear of the crates that draw, read the
+//! `interface` and `infra` depend on `core` and not on each other: what a
+//! way in needs from a system comes in through a port it declares (the
+//! subcommands' `Host`), filled at the root. `control` reads what `tui`
+//! draws. The core stays clear of the crates that draw, read the
 //! terminal, or do I/O. `config`, `logging`, and `private_file` sit at the
 //! root, beside `main`, for every layer outside the core. See AGENTS.md
 //! ("Architecture").
@@ -70,7 +70,7 @@ const LAYERS: &[Layer] = &[
     },
     Layer {
         path: "interface/cli",
-        allowed: &["core", "interface", "infra", "config", "private_file"],
+        allowed: &["core", "interface::cli", "interface::control", "config"],
         forbidden_crates: &[],
     },
     Layer {

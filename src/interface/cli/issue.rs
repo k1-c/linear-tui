@@ -4,22 +4,22 @@ use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
 
 use super::args::{Args, text_or_stdin};
-use super::headless::{self, Session};
+use super::{Host, Linear};
 use crate::core::entity::IssueId;
 use crate::core::entity::{Comment, Issue, Priority, Team, User, WorkflowState};
 use crate::core::message::Message;
 use crate::core::usecase;
 
-pub async fn run(args: &[String]) -> Result<()> {
+pub async fn run(args: &[String], host: &impl Host) -> Result<()> {
     let Some((command, rest)) = args.split_first() else {
         bail!("Usage: linear-tui issue <show|create|comment|status> …");
     };
-    let session = headless::client().await?;
+    let linear = host.linear().await?;
     let out = match command.as_str() {
-        "show" => show(&session, rest).await?,
-        "create" => create(&session, rest).await?,
-        "comment" => comment(&session, rest).await?,
-        "status" => status(&session, rest).await?,
+        "show" => show(&linear, rest).await?,
+        "create" => create(&linear, rest).await?,
+        "comment" => comment(&linear, rest).await?,
+        "status" => status(&linear, rest).await?,
         other => bail!("unknown command: issue {other}"),
     };
     println!("{}", out.trim_end());
@@ -35,14 +35,14 @@ fn output(args: &Args, markdown: String, value: Value) -> String {
     }
 }
 
-async fn show(session: &Session, args: &[String]) -> Result<String> {
+async fn show(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(args, &["json", "md"], &[])?;
     let [key] = args.positionals::<1>("linear-tui issue show <ID> [--json]")?;
-    let issue = fetch(session, key).await?;
+    let issue = fetch(linear, key).await?;
     Ok(output(&args, render_issue(&issue), issue_json(&issue)))
 }
 
-async fn create(session: &Session, args: &[String]) -> Result<String> {
+async fn create(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(
         args,
         &["json"],
@@ -57,7 +57,7 @@ async fn create(session: &Session, args: &[String]) -> Result<String> {
         Some(level) => parse_priority(level)?,
         None => Priority::None,
     };
-    let Message::Teams(teams) = session.run(usecase::team::load()).await? else {
+    let Message::Teams(teams) = linear.run(usecase::team::load()).await? else {
         bail!("unexpected answer to a teams request");
     };
     let team = find_team(&teams, team)?;
@@ -71,7 +71,7 @@ async fn create(session: &Session, args: &[String]) -> Result<String> {
         priority,
     };
     let request = usecase::issue::create(team.id.clone(), draft)?;
-    let Message::IssueCreated { issue, .. } = session.run(request).await? else {
+    let Message::IssueCreated { issue, .. } = linear.run(request).await? else {
         bail!("unexpected answer to an issue create");
     };
     let markdown = format!(
@@ -83,7 +83,7 @@ async fn create(session: &Session, args: &[String]) -> Result<String> {
     Ok(output(&args, markdown, issue_json(&issue)))
 }
 
-async fn comment(session: &Session, args: &[String]) -> Result<String> {
+async fn comment(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(args, &["json"], &[])?;
     let [key, body] = args.positionals::<2>("linear-tui issue comment <ID> <body|->")?;
     let body = text_or_stdin(body)?;
@@ -91,10 +91,10 @@ async fn comment(session: &Session, args: &[String]) -> Result<String> {
         bail!("The comment is empty");
     }
     // Resolved first, so a mistyped ID says so rather than failing the post.
-    let issue = fetch(session, key).await?;
+    let issue = fetch(linear, key).await?;
     let mut store = crate::core::store::Store::default();
     if let Some(request) = usecase::issue::comment(&mut store, &issue.id, body) {
-        session.run(request).await?;
+        linear.run(request).await?;
     }
     Ok(output(
         &args,
@@ -103,17 +103,17 @@ async fn comment(session: &Session, args: &[String]) -> Result<String> {
     ))
 }
 
-async fn status(session: &Session, args: &[String]) -> Result<String> {
+async fn status(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(args, &["json"], &[])?;
     let [key, name] = args.positionals::<2>("linear-tui issue status <ID> <state>")?;
-    let issue = fetch(session, key).await?;
+    let issue = fetch(linear, key).await?;
     // The state comes from the issue's own team, whichever team it is.
     let team_id = issue
         .team
         .as_ref()
         .map(|t| t.id.clone())
         .with_context(|| format!("Linear did not say which team {} is in", issue.identifier))?;
-    let Message::TeamContext { states, .. } = session
+    let Message::TeamContext { states, .. } = linear
         .run(usecase::team::Request::Context { team_id })
         .await?
     else {
@@ -127,7 +127,7 @@ async fn status(session: &Session, args: &[String]) -> Result<String> {
         .to_string();
     let mut store = crate::core::store::Store::default();
     let request = usecase::issue::set_status(&mut store, &issue.id, state.clone());
-    session.run(request).await?;
+    linear.run(request).await?;
     Ok(output(
         &args,
         format!("{}: {before} → {}", issue.identifier, state.name),
@@ -136,9 +136,9 @@ async fn status(session: &Session, args: &[String]) -> Result<String> {
 }
 
 /// An issue by identifier or URL, with its comments.
-async fn fetch(session: &Session, key: &str) -> Result<Issue> {
+async fn fetch(linear: &impl Linear, key: &str) -> Result<Issue> {
     let issue_id = IssueId::new(issue_key(key)?);
-    match session
+    match linear
         .run(usecase::issue::Request::Detail { issue_id })
         .await
     {
@@ -372,14 +372,12 @@ pub fn issue_json(issue: &Issue) -> Value {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::cell::RefCell;
 
     use serde_json::json;
-    use wiremock::matchers::{body_string_contains, method};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::*;
-    use crate::infra::linear::client::{LinearClient, StaticCredentials};
+    use crate::core::usecase::Request;
 
     fn fixture_issue() -> Issue {
         #[derive(serde::Deserialize)]
@@ -445,59 +443,74 @@ mod tests {
         );
     }
 
+    /// Linear as a test answers it: the issue WEB-7, in team `web`, and
+    /// that team's states; every request it was sent is kept.
+    #[derive(Default)]
+    struct FakeLinear {
+        sent: RefCell<Vec<Request>>,
+    }
+
+    impl Linear for FakeLinear {
+        async fn execute(&self, request: Request) -> Message {
+            self.sent.borrow_mut().push(request.clone());
+            match request {
+                Request::Issue(usecase::issue::Request::Detail { .. }) => {
+                    Message::IssueDetail(Box::new(
+                        serde_json::from_value(json!({
+                            "id": "i1", "identifier": "WEB-7", "title": "t", "priority": 0,
+                            "team": { "id": "web" },
+                            "state": { "id": "web-todo", "name": "Todo", "type": "unstarted" },
+                            "comments": { "nodes": [] }
+                        }))
+                        .unwrap(),
+                    ))
+                }
+                Request::Team(usecase::team::Request::Context { team_id }) if team_id == "web" => {
+                    Message::TeamContext {
+                        team_id,
+                        states: serde_json::from_value(json!([
+                            { "id": "web-todo", "name": "Todo", "type": "unstarted" },
+                            { "id": "web-done", "name": "Done", "type": "completed" }
+                        ]))
+                        .unwrap(),
+                        members: Vec::new(),
+                    }
+                }
+                Request::Issue(usecase::issue::Request::SetStatus { .. }) => {
+                    Message::Mutated("Status updated")
+                }
+                request => Message::Failed {
+                    request: Box::new(request),
+                    error: "not in this test".into(),
+                },
+            }
+        }
+    }
+
     /// The bug fixed in #31, from the command line: a state named like one of
     /// the current team's must still come from the issue's own team.
     #[tokio::test]
     async fn status_resolves_the_state_against_the_issues_own_team() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(body_string_contains("IssueDetail"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "data": { "issue": {
-                "id": "i1", "identifier": "WEB-7", "title": "t", "priority": 0,
-                "team": { "id": "web" },
-                "state": { "id": "web-todo", "name": "Todo", "type": "unstarted" },
-                "comments": { "nodes": [] }
-            } } })),
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(body_string_contains("WorkflowStates"))
-            .and(body_string_contains("\"teamId\":\"web\""))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": {
-                "workflowStates": { "nodes": [
-                    { "id": "web-todo", "name": "Todo", "type": "unstarted" },
-                    { "id": "web-done", "name": "Done", "type": "completed" }
-                ] }
-            } })))
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(body_string_contains("members"))
-            .respond_with(
-                ResponseTemplate::new(200).set_body_json(json!({ "data": { "team": {
-                "members": { "nodes": [] }
-            } } })),
-            )
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(body_string_contains("issueUpdate"))
-            .and(body_string_contains("web-done"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": {
-                "issueUpdate": { "success": true }
-            } })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let client =
-            LinearClient::with_endpoint(server.uri(), Arc::new(StaticCredentials("key".into())));
-        let session = Session::new(client);
-        let out = status(&session, &["web-7".into(), "done".into()])
+        let linear = FakeLinear::default();
+        let out = status(&linear, &["web-7".into(), "done".into()])
             .await
             .unwrap();
         assert_eq!(out, "WEB-7: Todo → Done");
+        assert!(linear.sent.borrow().contains(&Request::Issue(
+            usecase::issue::Request::SetStatus {
+                issue_id: IssueId::new("i1"),
+                state_id: "web-done".into(),
+            }
+        )));
+    }
+
+    /// A request Linear fails comes back as an error that says what failed.
+    #[tokio::test]
+    async fn a_failed_request_says_what_failed() {
+        let error = FakeLinear::default()
+            .run(usecase::team::Request::Teams)
+            .await
+            .unwrap_err();
+        assert_eq!(error.to_string(), "Failed to load teams: not in this test");
     }
 }

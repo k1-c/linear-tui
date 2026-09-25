@@ -1,6 +1,6 @@
 //! Keeping view snapshots on disk: one file per instance, under the state
 //! directory, filed by workspace — and the clock and process checks that
-//! go with them. The snapshot itself is `entity::snapshot`; which one to
+//! go with them. The timestamp shape is `entity::timestamp`. The snapshot itself is `entity::snapshot`; which one to
 //! reopen or report is `usecase::instance`.
 
 use std::path::PathBuf;

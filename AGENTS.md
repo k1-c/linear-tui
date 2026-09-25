@@ -47,7 +47,9 @@ wires the two outer layers together, and what every outer layer is handed.
 - `src/main.rs` — entry point, terminal setup, the modes (terminal,
   headless) and workspace switching; `src/runtime.rs` — the main loop's
   work, step by step, against the terminal or — `--headless` — an in-memory
-  screen; `src/config.rs` — config file + theme
+  screen; `src/commands.rs` — the subcommands, assembled: `Infra`, the
+  `cli::Host` they run against, and `linear-tui auth …` in full (signing in
+  sets up the infra itself); `src/config.rs` — config file + theme
   (`~/.config/linear-tui/config.toml`); `src/logging.rs`;
   `src/private_file.rs` — files only the user may read
 - `src/core/` — no terminal, no network, no files:
@@ -101,12 +103,12 @@ wires the two outer layers together, and what every outer layer is handed.
     an agent reads it (`linear-tui tui screen`): the frame as text, focus,
     what is open, the keys and commands here; `notation.rs` — the key
     notation agents press keys in
-  - `cli/` — the subcommands: `auth.rs` (`linear-tui auth …`), and the
-    headless commands for agents (`docs/cli.md`) — `context.rs` renders the
-    view snapshot, `tui.rs` works the running TUI (`linear-tui tui …`),
-    `issue.rs` shows, creates, comments on, and moves issues through
-    `headless.rs`, which runs each request through
-    `dispatch::execute_request`; `args.rs` parses their arguments
+  - `cli/` — the headless commands for agents (`docs/cli.md`), against
+    the `Host` port in `mod.rs` (Linear, the recorded views, the clock) —
+    `context.rs` renders the view snapshot, `tui.rs` works the running TUI
+    (`linear-tui tui …`), `issue.rs` shows, creates, comments on, and moves
+    issues through `headless.rs`'s `Linear` port, which `commands.rs` backs
+    with `dispatch::execute_request`; `args.rs` parses their arguments
 - `src/infra/` — the systems linear-tui calls on:
   - `linear/` — Linear's GraphQL client (`client.rs`, `error.rs`;
     `decode_tests.rs` checks decoding against `tests/fixtures/`) and
@@ -165,13 +167,14 @@ does I/O:
 interface/   tui · control · cli                   the ways in       ─┐ both depend on core,
 infra/       linear · herdr · disk · dispatch      what it calls on  ─┘ not on each other
 core/        usecase → store → entity; message     what linear-tui is: no I/O
-runtime.rs, main.rs                                wire the ways in to what it calls on
+main.rs, runtime.rs, commands.rs                  wire the ways in to what it calls on
 ```
 
-- `interface/` and `infra/` do not know each other; `runtime.rs` and
-  `main.rs` connect them. The one exception is `interface/cli`: each
-  subcommand runs on its own and assembles the infra it needs, as `main`
-  does for the TUI. Inside `interface/`, `control` reads what `tui` draws.
+- `interface/` and `infra/` do not know each other; `main.rs`,
+  `runtime.rs`, and `commands.rs` connect them. What a way in needs from a
+  system, it declares as a port — the subcommands' `cli::Host` and
+  `cli::Linear` — and the root fills it. Inside `interface/`, `control`
+  reads what `tui` draws.
 - The core is always named `crate::core::…`; a bare `core::` is Rust's own
   crate.
 - A use case never reads a cursor, a popup row, or a screen. Resolving "the
