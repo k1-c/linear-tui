@@ -4,7 +4,7 @@
 //! [`to_reopen`] picks the view a new instance reopens ("relaunch where I
 //! left off"); [`to_report`] picks the view `linear-tui context` shows an
 //! agent ("what am I looking at"). Reading the records from disk and asking
-//! the system which processes run is the adapter's (`crate::snapshot`).
+//! the system which processes run is the adapter's (`crate::adapter::snapshot`).
 
 use crate::entity::{Instance, InstanceId};
 

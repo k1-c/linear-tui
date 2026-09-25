@@ -1,5 +1,5 @@
 //! Coding agents beside linear-tui, as herdr's plugin reports them, and
-//! what linear-tui hands to one. Talking to herdr is `crate::herdr`'s job.
+//! what linear-tui hands to one. Talking to herdr is `crate::adapter::herdr`'s job.
 
 use std::path::PathBuf;
 

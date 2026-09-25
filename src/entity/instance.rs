@@ -14,6 +14,29 @@ pub struct InstanceId {
     pub pid: u32,
 }
 
+/// Where an instance runs: what it records its view under.
+#[derive(Debug, Clone)]
+pub struct Origin {
+    /// The repository root, shared by all of its worktrees — or the
+    /// directory itself outside git.
+    pub workspace: PathBuf,
+    /// Where it was started.
+    pub cwd: PathBuf,
+    pub pid: u32,
+    /// The herdr pane it runs in, when it runs inside herdr.
+    pub herdr_pane: Option<String>,
+}
+
+impl Origin {
+    /// The instance it is.
+    pub fn id(&self) -> InstanceId {
+        InstanceId {
+            workspace: self.workspace.clone(),
+            pid: self.pid,
+        }
+    }
+}
+
 /// An instance as its record on disk and the operating system describe it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Instance {

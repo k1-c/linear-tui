@@ -1,23 +1,25 @@
-//! The layers only depend inwards, checked against the source under `src/`.
+//! The layers only depend inwards, checked against the source under `src/`,
+//! where each layer is a directory:
 //!
 //! ```text
-//! adapters   keys · palette · event · cli · api · dispatch · herdr · snapshot · main
-//! interface  app · ui · look · grouping
-//! use cases  usecase (its output port is usecase::Request)
-//! entities   entity · store
+//! src/adapter/     api · auth · cli · dispatch · herdr · snapshot   the edges
+//! src/interface/   app · ui · keys · palette · event · …            what the user sees and does
+//! src/usecase/     one module per aggregate; usecase::Request        what the user can do
+//! src/entity/      entities and value objects                        what it is all about
+//! src/store/       what Linear has told us, kept consistent
 //! ```
 //!
 //! A layer may name its own modules and those further in, never those
 //! further out; the inner layers also stay clear of the crates that draw,
-//! read the terminal, or do I/O. See AGENTS.md ("Architecture").
+//! read the terminal, or do I/O. `config` (settings handed to every layer at
+//! startup) sits beside them. See AGENTS.md ("Architecture").
 
 use std::path::{Path, PathBuf};
 
-/// A layer: the directories or files it is made of, the crate modules it may
-/// name, and the external crates it must not use.
+/// A layer: its directory under `src/`, the crate modules it may name, and
+/// the external crates it must not use.
 struct Layer {
     name: &'static str,
-    sources: &'static [&'static str],
     allowed: &'static [&'static str],
     forbidden_crates: &'static [&'static str],
 }
@@ -28,29 +30,22 @@ const OUTER_CRATES: &[&str] = &["ratatui", "crossterm", "reqwest", "tokio", "ope
 const LAYERS: &[Layer] = &[
     Layer {
         name: "entity",
-        sources: &["entity"],
         allowed: &["entity"],
         forbidden_crates: OUTER_CRATES,
     },
     Layer {
         name: "store",
-        sources: &["store"],
         allowed: &["entity", "store"],
         forbidden_crates: OUTER_CRATES,
     },
     Layer {
         name: "usecase",
-        sources: &["usecase"],
         allowed: &["entity", "store", "usecase"],
         forbidden_crates: OUTER_CRATES,
     },
     Layer {
-        name: "app",
-        sources: &["app"],
-        allowed: &[
-            "entity", "store", "usecase", "app", "message", "config", "grouping", "look", "herdr",
-            "snapshot", "fuzzy",
-        ],
+        name: "interface",
+        allowed: &["entity", "store", "usecase", "interface", "config"],
         forbidden_crates: &["reqwest", "tokio", "open"],
     },
 ];
@@ -93,16 +88,14 @@ fn rust_files(path: &Path, out: &mut Vec<PathBuf>) {
 }
 
 fn layer_files(layer: &Layer) -> Vec<PathBuf> {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
     let mut files = Vec::new();
-    for source in layer.sources {
-        let dir = src.join(source);
-        if dir.is_dir() {
-            rust_files(&dir, &mut files);
-        } else {
-            files.push(src.join(format!("{source}.rs")));
-        }
-    }
+    rust_files(
+        &Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("src")
+            .join(layer.name),
+        &mut files,
+    );
+    assert!(!files.is_empty(), "no sources for layer {}", layer.name);
     files
 }
 
