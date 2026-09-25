@@ -412,12 +412,12 @@ impl Binding {
     }
 
     /// Whether it exists in this terminal.
-    fn shown(&self) -> bool {
+    pub(crate) fn shown(&self) -> bool {
         !self.herdr_only || crate::herdr::available()
     }
 
     fn applies_in(&self, ctx: Ctx) -> bool {
-        self.context.contains(&ctx) && self.shown()
+        self.context.contains(&ctx)
     }
 
     fn matches(&self, key: &KeyEvent) -> bool {
@@ -1023,7 +1023,7 @@ pub fn handle_key(app: &mut App, key: KeyEvent) {
     }
     if let Some(binding) = BINDINGS
         .iter()
-        .find(|b| b.applies_in(ctx) && b.matches(&key))
+        .find(|b| b.shown() && b.applies_in(ctx) && b.matches(&key))
     {
         (binding.action)(app);
         return;

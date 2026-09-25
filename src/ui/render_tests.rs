@@ -283,7 +283,8 @@ fn every_documented_binding_appears_in_the_help_overlay() {
     let mut app = app();
     app.open_help();
     let lines = render(&mut app, 100, 120);
-    for binding in crate::keys::BINDINGS {
+    // A herdr-only row is listed only inside herdr.
+    for binding in crate::keys::BINDINGS.iter().filter(|b| b.shown()) {
         let Some(help) = binding.help else { continue };
         let row = format!("  {:<9}  {}", help.keys, help.text);
         assert!(
