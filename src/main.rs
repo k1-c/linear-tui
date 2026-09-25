@@ -290,10 +290,12 @@ async fn run_headless(runtime: &mut Runtime, size: (u16, u16)) -> Result<()> {
         runtime.answer_waiting(Instant::now());
 
         let mut moved = runtime.receive();
+        moved |= runtime.serve_control();
+        // Noted in the same pass as the key that copied, so the answer to
+        // that key already says so.
         if let Some(text) = runtime.app.outbox.clipboard.take() {
             runtime.note_held(format!("would copy {text:?} to the clipboard"));
         }
-        moved |= runtime.serve_control();
         runtime.settle(moved, Instant::now());
 
         if runtime.app.should_quit {
