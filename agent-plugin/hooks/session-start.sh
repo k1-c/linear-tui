@@ -30,6 +30,10 @@ Act on Linear through linear-tui's CLI, which uses the user's own credentials:
 - `linear-tui issue create --team <key> --title <text> [--description <text>]`
 Add `--json` for JSON. Without an instruction to change an issue, only comment;
 move it (to Done or anywhere else) only when asked.
+
+To show the user something, or check linear-tui by using it, work the running
+TUI: `linear-tui tui screen` reads it, `tui press <keys>`, `tui run <command>`,
+`tui type <text>`, and `tui open <ID>` act, each answering with the new screen.
 TEXT
 if [ -n "$issue" ]; then
   printf '\nThis worktree is for %s (from its branch name).\n' "$issue"

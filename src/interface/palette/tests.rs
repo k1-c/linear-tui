@@ -580,6 +580,31 @@ fn a_leading_angle_bracket_asks_for_commands_only() {
 }
 
 #[test]
+fn a_command_runs_by_its_title_in_any_case_without_the_ellipsis() {
+    let mut app = app();
+    run_command(&mut app, "change STATUS").unwrap();
+    assert!(matches!(app.view.popup, Popup::StatusChange(_)));
+}
+
+#[test]
+fn a_part_of_a_title_runs_the_one_command_it_names() {
+    let mut app = app();
+    run_command(&mut app, "keyboard shortcuts").unwrap();
+    assert!(app.view.show_help);
+}
+
+#[test]
+fn an_unknown_or_ambiguous_title_lists_the_commands_here() {
+    let mut app = app();
+    let error = run_command(&mut app, "fly to the moon").unwrap_err();
+    assert!(error.contains("Change status"), "{error}");
+    let error = run_command(&mut app, "priority").unwrap_err();
+    assert!(error.contains("Set priority to Urgent"), "{error}");
+    assert!(!error.contains("Quit"), "only the matches: {error}");
+    assert_eq!(app.view.popup, Popup::None);
+}
+
+#[test]
 fn places_are_offered_only_once_something_is_typed() {
     let mut app = app();
     ctrl(&mut app, 'k');

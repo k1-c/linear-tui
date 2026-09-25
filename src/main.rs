@@ -6,15 +6,14 @@ mod logging;
 mod store;
 mod usecase;
 
-use adapter::{api, auth, cli, dispatch, herdr, snapshot};
-use interface::{app, event, message, ui};
+use adapter::{api, auth, cli, control, herdr, snapshot};
+use interface::{app, event};
 
 use std::collections::HashMap;
 use std::io::{self, Write};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use crossterm::{
     event::{
         DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
@@ -26,20 +25,32 @@ use crossterm::{
         supports_keyboard_enhancement,
     },
 };
-use ratatui::{Terminal, backend::CrosstermBackend};
-use tokio::sync::mpsc;
+use ratatui::{
+    Terminal,
+    backend::{Backend, CrosstermBackend, TestBackend},
+};
 
 use base64::Engine;
 
+use adapter::runtime::Runtime;
 use api::client::LinearClient;
 use app::App;
 use auth::token::TokenStore;
 use config::Config;
 use entity::OrganizationId;
-use message::Message;
 
-/// Spinner advance interval.
-const TICK: Duration = Duration::from_millis(80);
+/// The size of the screen a headless instance draws, unless told otherwise.
+const HEADLESS_SIZE: (u16, u16) = (120, 40);
+
+/// How a launch runs the TUI.
+#[derive(Clone, Copy)]
+enum Mode {
+    /// In this terminal.
+    Terminal,
+    /// With no terminal, for agents alone: they read and drive it through
+    /// the control channel (`linear-tui tui …`).
+    Headless { size: (u16, u16) },
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -47,23 +58,37 @@ async fn main() -> Result<()> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    // `open <ID>` runs the TUI; every other subcommand runs without it.
-    let open = match args.get(1).map(String::as_str) {
+    // `open <ID>` and `--headless` run the TUI; every other subcommand runs
+    // without it.
+    let (mode, open) = match args.get(1).map(String::as_str) {
         Some("open") => {
             let [_, _, key] = args.as_slice() else {
                 anyhow::bail!("Usage: linear-tui open <ID>");
             };
-            Some(cli::issue_key(key)?)
+            (Mode::Terminal, Some(cli::issue_key(key)?))
         }
+        Some("--headless") => (headless_mode(&args[2..])?, None),
         Some(_) => return cli::handle_subcommand(&args[1..]).await,
-        None => None,
+        None => (Mode::Terminal, None),
     };
 
     // Load config and authenticate
     let mut config = Config::load()?;
     let token_store = TokenStore::new()?;
-    let Some(auth) = authenticate(&token_store, &config).await? else {
-        return Ok(());
+    let auth = match mode {
+        Mode::Terminal => match authenticate(&token_store, &config).await? {
+            Some(auth) => auth,
+            None => return Ok(()),
+        },
+        // Nobody is there to answer the first-run questions.
+        Mode::Headless { .. } => {
+            if !auth::has_credentials(&token_store, &config)? {
+                anyhow::bail!(
+                    "Not signed in. Run `linear-tui auth login` (or `linear-tui auth token <key>`) first."
+                );
+            }
+            auth::resolve_auth(&token_store, config.auth.api_key.as_deref()).await?
+        }
     };
     tracing::info!(method = auth.label(), "authenticated successfully");
     let organization = auth.organization().map(|org| org.id.clone());
@@ -89,39 +114,77 @@ async fn main() -> Result<()> {
             .as_ref()
             .and_then(|s| reopen(s, &origin, organization.as_ref())),
     };
+    let control_file = shelf
+        .as_ref()
+        .filter(|_| config.agent.control)
+        .map(|s| control::endpoint_path(&s.path_for(origin.pid)));
     let recorder = shelf.as_ref().map(|shelf| {
         shelf.prune();
         snapshot::Recorder::new(shelf, origin.pid)
     });
 
-    // Run TUI
-    run_tui(
+    let client = LinearClient::new(auth.into_credentials(token_store.clone()));
+    let app = new_app(&config, &token_store, restored, open.as_deref());
+    let workspace = origin.workspace.clone();
+    let mut runtime = Runtime::new(app, client, origin.clone(), recorder);
+
+    // Agents drive this instance through the control channel.
+    let endpoint = match control_file {
+        Some(path) => match control::listen(path).await {
+            Ok((commands, file)) => {
+                runtime.accept_control(commands);
+                Some(file)
+            }
+            Err(e) => {
+                tracing::warn!("control channel disabled: {e:#}");
+                None
+            }
+        },
+        None => None,
+    };
+
+    let mut switcher = Switcher {
         config,
         token_store,
-        auth,
-        Session {
-            origin,
-            restored,
-            open,
-            recorder,
-            shelf,
-            pinned: pinned.is_some(),
-        },
-    )
-    .await
+        origin,
+        shelf,
+        pinned: pinned.is_some(),
+        organization,
+        left: HashMap::new(),
+    };
+    let result = match mode {
+        Mode::Terminal => run_in_terminal(&mut runtime, &mut switcher).await,
+        Mode::Headless { size } => {
+            if endpoint.is_none() {
+                anyhow::bail!(
+                    "A headless linear-tui needs its control channel: set `[agent] control = true`."
+                );
+            }
+            println!(
+                "linear-tui is running headless (pid {}) for {}; drive it with `linear-tui tui …` there.",
+                std::process::id(),
+                workspace.display()
+            );
+            run_headless(&mut runtime, size, &mut switcher).await
+        }
+    };
+    // The control file goes once the instance stops.
+    drop(endpoint);
+    result
 }
 
-/// Where this instance runs, what it reopens, and where it records its view.
-struct Session {
-    origin: entity::Origin,
-    restored: Option<entity::snapshot::ViewSnapshot>,
-    /// The issue `linear-tui open` asked for.
-    open: Option<String>,
-    recorder: Option<snapshot::Recorder>,
-    /// Where a view to reopen is looked for after switching workspace.
-    shelf: Option<snapshot::Shelf>,
-    /// Whether config.toml pins this directory, which reopens no view.
-    pinned: bool,
+/// `--headless [--size <W>x<H>]`.
+fn headless_mode(args: &[String]) -> Result<Mode> {
+    let usage = "Usage: linear-tui --headless [--size <width>x<height>]";
+    let size = match args {
+        [] => HEADLESS_SIZE,
+        [flag, size] if flag == "--size" => {
+            let (w, h) = size.split_once('x').context(usage)?;
+            (w.parse().context(usage)?, h.parse().context(usage)?)
+        }
+        _ => anyhow::bail!("{usage}"),
+    };
+    Ok(Mode::Headless { size })
 }
 
 /// Resolve stored credentials, running first-run setup when there are none.
@@ -145,130 +208,6 @@ async fn authenticate(
     auth::resolve_auth(token_store, config.auth.api_key.as_deref())
         .await
         .map(Some)
-}
-
-/// RAII guard so the terminal is restored even if the loop returns an error.
-struct TerminalGuard {
-    /// Whether the kitty keyboard protocol was successfully enabled.
-    enhanced_keys: bool,
-}
-
-impl TerminalGuard {
-    fn enter() -> Result<Self> {
-        enable_raw_mode()?;
-        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
-
-        // Linear binds actions to Ctrl+punctuation (copy ID, copy branch name)
-        // and to Ctrl+M, none of which a legacy terminal can distinguish. The
-        // kitty keyboard protocol reports them as distinct events; terminals
-        // without it fall back to the plain-key aliases in `keys.rs`.
-        let enhanced_keys = supports_keyboard_enhancement().unwrap_or(false);
-        if enhanced_keys {
-            execute!(
-                io::stdout(),
-                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
-            )?;
-        }
-
-        Ok(Self { enhanced_keys })
-    }
-}
-
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
-        if self.enhanced_keys {
-            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
-        }
-        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
-        let _ = disable_raw_mode();
-    }
-}
-
-type Term = Terminal<CrosstermBackend<io::Stdout>>;
-
-/// Run the TUI until it quits. Switching workspace ends one session and
-/// starts another on the same terminal: a new client, and a new `App`, since
-/// nothing loaded from one workspace means anything in the next.
-async fn run_tui(
-    config: Config,
-    token_store: TokenStore,
-    auth: auth::AuthMethod,
-    session: Session,
-) -> Result<()> {
-    let Session {
-        origin,
-        restored,
-        open,
-        mut recorder,
-        shelf,
-        pinned,
-    } = session;
-    let _guard = TerminalGuard::enter()?;
-    let backend = CrosstermBackend::new(io::stdout());
-    let mut terminal = Terminal::new(backend)?;
-    terminal.hide_cursor()?;
-
-    // Only the herdr plugin writes the agents file.
-    let mut agents = herdr::available().then(herdr::AgentWatch::new).flatten();
-    // The view each workspace was left on this run, to come back to.
-    let mut left: HashMap<OrganizationId, entity::snapshot::ViewSnapshot> = HashMap::new();
-    let mut organization = auth.organization().map(|org| org.id.clone());
-    let mut client = Arc::new(LinearClient::new(
-        auth.into_credentials(token_store.clone()),
-    ));
-    let mut app = new_app(&config, &token_store, restored, open.as_deref());
-
-    loop {
-        run_session(
-            &mut terminal,
-            &mut app,
-            &client,
-            &origin,
-            &mut recorder,
-            &mut agents,
-        )?;
-        let Some(target) = app.switch_to.take() else {
-            break;
-        };
-        // The one await on the UI's path: a token past its expiry is renewed
-        // before the new session can send anything. The status line says so.
-        match auth::switch_to(&token_store, config.auth.api_key.as_deref(), &target).await {
-            Ok(auth) => {
-                tracing::info!(organization = %target, "switched workspace");
-                if let (Some(org), Some(view)) = (
-                    organization.take(),
-                    app.snapshot(&origin, snapshot::timestamp_now()),
-                ) {
-                    left.insert(org, view);
-                }
-                organization = Some(target.clone());
-                client = Arc::new(LinearClient::new(
-                    auth.into_credentials(token_store.clone()),
-                ));
-                let restored = if pinned {
-                    None
-                } else {
-                    left.remove(&target).or_else(|| {
-                        shelf
-                            .as_ref()
-                            .and_then(|s| reopen(s, &origin, Some(&target)))
-                    })
-                };
-                app = new_app(&config, &token_store, restored, None);
-            }
-            Err(e) => {
-                tracing::warn!(error = %e, "could not switch workspace");
-                app.set_error(format!("Could not switch workspace: {e:#}"));
-            }
-        }
-    }
-
-    if let Some(recorder) = &mut recorder
-        && let Some(snapshot) = app.snapshot(&origin, snapshot::timestamp_now())
-    {
-        recorder.close(snapshot);
-    }
-    Ok(())
 }
 
 /// The view a launch in `origin`'s repository reopens, signed in to
@@ -325,101 +264,202 @@ fn workspace_entries(token_store: &TokenStore) -> Vec<app::WorkspaceEntry> {
         .collect()
 }
 
-/// Drive one session until the user quits or picks another workspace.
-fn run_session(
-    terminal: &mut Term,
-    app: &mut App,
-    client: &Arc<LinearClient>,
-    origin: &entity::Origin,
-    recorder: &mut Option<snapshot::Recorder>,
-    agents: &mut Option<herdr::AgentWatch>,
-) -> Result<()> {
-    // A channel per session: answers still on their way from the last one
-    // have nowhere to land.
-    let (tx, mut rx) = mpsc::unbounded_channel::<Message>();
-    let mut cache = ui::Cache::default();
-    let mut last_tick = Instant::now();
-    let mut dirty = true;
+/// Moving between workspaces: switching ends one session and starts another
+/// on the same screen, with that workspace's credentials and a fresh app.
+struct Switcher {
+    config: Config,
+    token_store: TokenStore,
+    origin: entity::Origin,
+    /// Where a view to reopen is looked for after switching workspace.
+    shelf: Option<snapshot::Shelf>,
+    /// Whether config.toml pins this directory, which reopens no view.
+    pinned: bool,
+    /// The workspace the session in progress acts in.
+    organization: Option<OrganizationId>,
+    /// The view each workspace was left on this run, to come back to.
+    left: HashMap<OrganizationId, entity::snapshot::ViewSnapshot>,
+}
+
+impl Switcher {
+    /// Start the session the user asked for, if they picked a workspace.
+    /// Returns whether linear-tui keeps running: false once they quit.
+    async fn switch(&mut self, runtime: &mut Runtime) -> bool {
+        let Some(target) = runtime.app.switch_to.take() else {
+            return false;
+        };
+        // The one await on the UI's path: a token past its expiry is renewed
+        // before the new session can send anything. The status line says so.
+        let api_key = self.config.auth.api_key.as_deref();
+        match auth::switch_to(&self.token_store, api_key, &target).await {
+            Ok(auth) => {
+                tracing::info!(organization = %target, "switched workspace");
+                if let (Some(org), Some(view)) = (
+                    self.organization.take(),
+                    runtime
+                        .app
+                        .snapshot(&self.origin, snapshot::timestamp_now()),
+                ) {
+                    self.left.insert(org, view);
+                }
+                self.organization = Some(target.clone());
+                let client = LinearClient::new(auth.into_credentials(self.token_store.clone()));
+                let restored = if self.pinned {
+                    None
+                } else {
+                    self.left.remove(&target).or_else(|| {
+                        self.shelf
+                            .as_ref()
+                            .and_then(|s| reopen(s, &self.origin, Some(&target)))
+                    })
+                };
+                let app = new_app(&self.config, &self.token_store, restored, None);
+                runtime.restart(app, client);
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "could not switch workspace");
+                runtime
+                    .app
+                    .set_error(format!("Could not switch workspace: {e:#}"));
+            }
+        }
+        true
+    }
+}
+
+/// RAII guard so the terminal is restored even if the loop returns an error.
+struct TerminalGuard {
+    /// Whether the kitty keyboard protocol was successfully enabled.
+    enhanced_keys: bool,
+}
+
+impl TerminalGuard {
+    fn enter() -> Result<Self> {
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+
+        // Linear binds actions to Ctrl+punctuation (copy ID, copy branch name)
+        // and to Ctrl+M, none of which a legacy terminal can distinguish. The
+        // kitty keyboard protocol reports them as distinct events; terminals
+        // without it fall back to the plain-key aliases in `keys.rs`.
+        let enhanced_keys = supports_keyboard_enhancement().unwrap_or(false);
+        if enhanced_keys {
+            execute!(
+                io::stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )?;
+        }
+
+        Ok(Self { enhanced_keys })
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        if self.enhanced_keys {
+            let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
+        }
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
+        let _ = disable_raw_mode();
+    }
+}
+
+/// Whether a session is over: the user quit, or picked another workspace.
+/// A switch is drawn first, so "Switching to …" shows while the next session
+/// is prepared.
+fn session_over<B>(runtime: &mut Runtime, terminal: &mut Terminal<B>) -> Result<bool>
+where
+    B: Backend,
+    B::Error: Send + Sync + 'static,
+{
+    if runtime.app.switch_to.is_some() {
+        runtime.touch();
+        runtime.draw(terminal)?;
+        return Ok(true);
+    }
+    Ok(runtime.app.should_quit)
+}
+
+/// The TUI in this terminal, until the user quits.
+async fn run_in_terminal(runtime: &mut Runtime, switcher: &mut Switcher) -> Result<()> {
+    let _guard = TerminalGuard::enter()?;
+    let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
+    terminal.hide_cursor()?;
 
     loop {
-        // A palette query that has rested long enough is searched now.
-        if app.flush_palette_search(Instant::now()) {
-            dirty = true;
-        }
+        loop {
+            runtime.send_queued(Instant::now());
+            runtime.draw(&mut terminal)?;
+            runtime.answer_waiting(Instant::now());
 
-        // Spawn everything the UI has queued since the last pass. Each request
-        // runs on the tokio runtime, so the UI never blocks on the network.
-        while let Some(req) = app.outbox.requests.pop_front() {
-            app.outbox.inflight += 1;
-            let client = Arc::clone(client);
-            let tx = tx.clone();
-            let per_page = app.items_per_page;
-            tokio::spawn(async move {
-                let msg = dispatch::execute_request(&client, req, per_page).await;
-                let _ = tx.send(msg);
-            });
-            dirty = true;
-        }
+            // Drain completed requests without blocking.
+            let mut moved = runtime.receive();
 
-        if dirty {
-            terminal.draw(|f| ui::draw(f, app, &mut cache))?;
-            dirty = false;
-        }
-
-        // Drain completed requests without blocking.
-        let mut moved = false;
-        while let Ok(msg) = rx.try_recv() {
-            app.outbox.inflight = app.outbox.inflight.saturating_sub(1);
-            app.handle_message(msg);
-            moved = true;
-        }
-
-        if let Some(text) = app.outbox.clipboard.take() {
-            copy_to_clipboard(&text)?;
-        }
-
-        if event::poll_and_handle(app)? {
-            moved = true;
-        }
-
-        // Record where the user is once the view has rested. This is the
-        // only place a snapshot is written — never from rendering.
-        let now = Instant::now();
-        if let Some(recorder) = recorder {
-            if moved {
-                recorder.touch(now);
+            if let Some(text) = runtime.app.outbox.clipboard.take() {
+                copy_to_clipboard(&text)?;
             }
-            if recorder.is_due(now)
-                && let Some(snapshot) = app.snapshot(origin, snapshot::timestamp_now())
-            {
-                recorder.record(snapshot);
+
+            moved |= event::poll_and_handle(&mut runtime.app)?;
+            moved |= runtime.serve_control();
+            runtime.settle(moved, Instant::now());
+
+            if session_over(runtime, &mut terminal)? {
+                break;
             }
         }
-        dirty |= moved;
-
-        // What the herdr plugin says its agents are working on.
-        if let Some(watch) = agents
-            && let Some(list) = watch.poll(now)
-        {
-            app.set_agents(list);
-            dirty = true;
-        }
-
-        if app.loading() && last_tick.elapsed() >= TICK {
-            app.tick_spinner();
-            last_tick = Instant::now();
-            dirty = true;
-        }
-
-        if app.should_quit {
-            return Ok(());
-        }
-        if app.switch_to.is_some() {
-            // Show "Switching to …" while the next session is prepared.
-            terminal.draw(|f| ui::draw(f, app, &mut cache))?;
-            return Ok(());
+        if !switcher.switch(runtime).await {
+            break;
         }
     }
+
+    runtime.close();
+    Ok(())
+}
+
+/// How often a headless instance looks for work when it has none.
+const HEADLESS_IDLE: Duration = Duration::from_millis(20);
+
+/// The TUI with no terminal, until an agent quits it or the process is
+/// interrupted.
+async fn run_headless(
+    runtime: &mut Runtime,
+    size: (u16, u16),
+    switcher: &mut Switcher,
+) -> Result<()> {
+    runtime.hold_external();
+    let mut terminal = Terminal::new(TestBackend::new(size.0, size.1))?;
+    let interrupted = tokio::signal::ctrl_c();
+    tokio::pin!(interrupted);
+
+    'run: loop {
+        loop {
+            runtime.send_queued(Instant::now());
+            runtime.draw(&mut terminal)?;
+            runtime.answer_waiting(Instant::now());
+
+            let mut moved = runtime.receive();
+            moved |= runtime.serve_control();
+            // Noted in the same pass as the key that copied, so the answer to
+            // that key already says so.
+            if let Some(text) = runtime.app.outbox.clipboard.take() {
+                runtime.note_held(format!("would copy {text:?} to the clipboard"));
+            }
+            runtime.settle(moved, Instant::now());
+
+            if session_over(runtime, &mut terminal)? {
+                break;
+            }
+            tokio::select! {
+                _ = tokio::time::sleep(HEADLESS_IDLE) => {}
+                _ = &mut interrupted => break 'run,
+            }
+        }
+        if !switcher.switch(runtime).await {
+            break;
+        }
+    }
+
+    runtime.close();
+    Ok(())
 }
 
 /// Push `text` to the system clipboard with an OSC 52 escape sequence.

@@ -18,6 +18,58 @@ use crate::interface::app::{App, Nav, Popup, SidebarAction, TeamSection};
 use crate::interface::fuzzy;
 use crate::interface::keys::{self, Binding};
 
+/// Run the palette command titled `title` where the palette would offer it:
+/// in the context on screen, exactly as its key would. The title matches in
+/// any case, with or without its trailing `…`; a part of a title will do
+/// when it names one command only. Otherwise the error says what is on
+/// offer. For `linear-tui tui run`.
+pub fn run_command(app: &mut App, title: &str) -> Result<(), String> {
+    let normal = |t: &str| {
+        t.trim()
+            .trim_end_matches('\u{2026}')
+            .trim_end_matches("...")
+            .trim()
+            .to_lowercase()
+    };
+    let wanted = normal(title);
+    let offered: Vec<&'static Binding> = keys::commands(keys::context(app), app.herdr);
+    let title_of = |b: &Binding| b.command.map_or("", |c| c.title);
+    let exact: Vec<&'static Binding> = offered
+        .iter()
+        .copied()
+        .filter(|b| normal(title_of(b)) == wanted)
+        .collect();
+    let chosen = match exact.as_slice() {
+        [one] => *one,
+        _ => {
+            let partial: Vec<&'static Binding> = offered
+                .iter()
+                .copied()
+                .filter(|b| normal(title_of(b)).contains(&wanted))
+                .collect();
+            match partial.as_slice() {
+                [one] if !wanted.is_empty() => *one,
+                _ => {
+                    let choices: Vec<&str> = if partial.is_empty() {
+                        offered.iter().map(|b| title_of(b)).collect()
+                    } else {
+                        partial.iter().map(|b| title_of(b)).collect()
+                    };
+                    return Err(format!(
+                        "No single command \"{title}\" here. Commands here: {}",
+                        choices.join(", ")
+                    ));
+                }
+            }
+        }
+    };
+    if let Some(command) = chosen.command {
+        app.remember_command(command.title);
+    }
+    (chosen.action)(app);
+    Ok(())
+}
+
 /// A keyword hit ranks below a hit on the title itself.
 const KEYWORD_PENALTY: i32 = 20;
 /// An exact issue ID outranks every fuzzy hit.

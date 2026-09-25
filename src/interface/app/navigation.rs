@@ -285,6 +285,20 @@ impl App {
         }
     }
 
+    /// Open the issue `identifier` names over whatever is on screen, as an
+    /// agent asks with `linear-tui tui open`. Linear looks an issue up by
+    /// identifier as readily as by id, so the identifier stands in for the
+    /// id until the detail arrives.
+    pub fn open_issue_by_identifier(&mut self, identifier: &str) {
+        let stub = Issue {
+            id: IssueId::new(identifier),
+            identifier: identifier.to_string(),
+            ..Issue::default()
+        };
+        self.view.sidebar.focus = false;
+        self.open_issue_from_list(&stub);
+    }
+
     /// Open issue detail from any sub-list (project issues, cycle issues, my issues).
     pub fn open_issue_from_list(&mut self, issue: &Issue) {
         if self.nav.screen != Screen::IssueDetail {
