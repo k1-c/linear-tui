@@ -2,10 +2,10 @@
 
 A view snapshot records what one linear-tui instance is showing. linear-tui
 writes it as you move around and reads it back on the next launch in the same
-repository; other programs — an agent, a herdr plugin — can read it to learn
-what you are looking at.
+repository; other programs, such as an agent or a herdr plugin, can read it to
+learn what you are looking at.
 
-This document is the contract. Fields are only ever added; a change that
+This document describes the contract. Fields are only added; a change that
 removes or reinterprets one bumps `version`, and readers must refuse a version
 they do not know.
 
@@ -25,18 +25,18 @@ $STATE/workspaces/<name>-<hash>/<pid>.json
   directory itself. `<name>` is the directory's name, for humans; `<hash>` is the
   64-bit FNV-1a of the absolute path, in hex.
 - `<pid>` is the process that owns the file. Each running instance writes only
-  its own, so two instances in one repository never overwrite each other.
+  its own, so two instances in one repository do not overwrite each other.
 
-The file is written owner-only (`0600`) and atomically — a reader never sees a
-half-written one. It is rewritten at most every half second while the view
+The file is written owner-only (`0600`) and atomically, so a reader does not see
+a half-written one. It is rewritten at most every half second while the view
 changes, and a last time when linear-tui quits, with `closed_at` set. The newest
 four files of instances that are gone are kept; older ones are deleted.
 
 ### Which file to read
 
 - **Reopening** (what linear-tui does on launch): the file with the latest
-  `closed_at`; if none has one — every earlier instance crashed or is still
-  running — the one with the latest `updated_at`.
+  `closed_at`; if none has one, because every earlier instance crashed or is
+  still running, the one with the latest `updated_at`.
 - **Reporting** (what `linear-tui context` does): the file of a running instance
   (`closed_at` absent and process `pid` alive) with the latest `updated_at`;
   failing that, the newest file of all, reported as stale.
@@ -86,14 +86,14 @@ keeps it parseable.
 
 ## Fields
 
-Every ID is a Linear ID. Pages are recorded by ID, never by their position in
+Every ID is a Linear ID. Pages are recorded by ID, not by their position in
 the sidebar, so a reordered sidebar still names the same page.
 
 | Field | Type | |
 | --- | --- | --- |
 | `version` | number | `1`. |
 | `workspace` | path | The repository root (or directory) the file is filed under. |
-| `cwd` | path | Where the instance was started — a worktree, a subdirectory. |
+| `cwd` | path | Where the instance was started (a worktree or a subdirectory, for example). |
 | `pid` | number | The instance's process. |
 | `updated_at` | timestamp | When the view last changed. |
 | `closed_at` | timestamp? | When the instance quit normally. |
@@ -114,8 +114,8 @@ the sidebar, so a reordered sidebar still names the same page.
 Timestamps are RFC 3339 in UTC, to the second: `2026-09-25T06:01:02Z`. A `?`
 marks a field that may be absent.
 
-**team** — `{ "id", "key", "name" }`. **ref** — `{ "id", "name" }`.
-**issue** — `{ "id", "identifier", "title" }`, `identifier` being `ENG-42`.
+**team**: `{ "id", "key", "name" }`. **ref**: `{ "id", "name" }`.
+**issue**: `{ "id", "identifier", "title" }`, where `identifier` is `ENG-42`.
 
 **destination** is tagged by `kind`:
 
@@ -129,23 +129,23 @@ marks a field that may be absent.
 
 **screen** is one of `issue_list`, `issue_detail`, `project_list`,
 `project_detail`, `cycle_list`, `cycle_detail`, `view_list`. The screens form
-the way back: an `issue_detail` over a `project` goes back to that project's
+the path back: an `issue_detail` over a `project` goes back to that project's
 page, which goes back to the destination's list.
 
-**list settings** — `{ "source", "preset", "status"?, "priority"?, "selected"? }`.
+**list settings**: `{ "source", "preset", "status"?, "priority"?, "selected"? }`.
 `source` is which list: `team`, `my`, `view`, `project`, or `cycle`. `preset`
 is `active`, `backlog`, or `all`. `status` is a workflow state name, `priority`
 a label (`Urgent`, `High`, `Medium`, `Low`, `None`), `selected` the issue under
 that list's cursor. The search box is not recorded.
 
-**row** — `{ "kind", "id", "identifier"?, "title", "state"?, "assignee"?,
+**row**: `{ "kind", "id", "identifier"?, "title", "state"?, "assignee"?,
 "priority"?, "url"? }`. `kind` is `issue`, `project`, `cycle`, or `view`.
 `state` is an issue's workflow state or a project's state; `assignee` an
 issue's assignee or a project's lead.
 
 ## Reopening
 
-On launch linear-tui walks back down the recorded path as Linear answers: the
+On launch linear-tui follows the recorded path as Linear answers: the
 team, then the destination, then the project or cycle page, then the issue, and
 puts each list's cursor back on its issue. Whatever no longer exists opens its
 parent instead:
@@ -162,4 +162,4 @@ A project or cycle is looked for in the first page of its list. Pressing a key
 before the page is back stops the restore where it is.
 
 A `[workspaces."<path>"]` entry in `config.toml` for the repository or the
-directory wins over the snapshot: that directory always opens as configured.
+directory wins over the snapshot: that directory opens as configured.

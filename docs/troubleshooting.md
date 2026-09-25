@@ -4,12 +4,11 @@ When something goes wrong, the log usually says why:
 `~/.config/linear-tui/debug.log` (on macOS,
 `~/Library/Application Support/linear-tui/debug.log`). Run with
 `RUST_LOG=debug linear-tui` for more detail. The log names issues and people in
-your workspace, so it is readable only by you — check it before you paste it
-anywhere.
+your workspace, so check it before you paste it anywhere.
 
 ## Signing in
 
-**The browser opens, but linear-tui never hears back.** The callback goes to
+**The browser opens, but linear-tui does not hear back.** The callback goes to
 `http://localhost:53681` (or 53682, 53683) on the machine linear-tui runs on.
 Over SSH, or in a container, the browser's `localhost` is a different machine.
 Use a personal API key instead: `linear-tui auth token <key>`
@@ -25,8 +24,8 @@ key, how long the token has left, and who Linear says you are.
 
 ## Copying does nothing
 
-`y`, `Y`, and `b` copy through the terminal (OSC 52), so they work over SSH —
-but only if the terminal allows it.
+`y`, `Y`, and `b` copy through the terminal (OSC 52), so they work over SSH if
+the terminal allows it.
 
 - **tmux:** `set -g set-clipboard on` in `~/.tmux.conf`.
 - **GNU screen** does not pass OSC 52 through.
@@ -43,8 +42,8 @@ tell these apart from other keys. Use their aliases `y`, `Y`, `b`, `m`, or a
 terminal with the kitty keyboard protocol (kitty, Ghostty, WezTerm, foot,
 Alacritty), which linear-tui enables automatically.
 
-**Inside tmux or a multiplexer,** the multiplexer may take the key first —
-`Ctrl+b` is tmux's and herdr's prefix, for example. The sidebar can also be
+**Inside tmux or a multiplexer,** the multiplexer may take the key first. For
+example, `Ctrl+b` is tmux's and herdr's prefix. The sidebar can also be
 toggled from the command palette (`Ctrl+K`, *Toggle sidebar*).
 
 **`Ctrl+S` freezes the terminal** in some setups with flow control on. linear-tui
@@ -60,8 +59,8 @@ and `sidebar = false` in `config.toml` keeps it hidden at start
 
 ## linear-tui does not reopen where I left off
 
-- The view is remembered per repository. Starting in another repository — or
-  outside git, another directory — opens that one's view.
+- The view is remembered per repository. Starting in another repository, or
+  outside git in another directory, opens that one's view.
 - A `[workspaces."<path>"]` entry in `config.toml` wins over the remembered
   view.
 - `linear-tui open <ID>` opens that issue instead.
@@ -86,11 +85,11 @@ The plugin reports failures to herdr's plugin log:
 herdr plugin log list --plugin k1-c.linear-tui
 ```
 
-- **"linear-tui is not installed"** — herdr starts plugins with a short `PATH`.
+- **"linear-tui is not installed":** herdr starts plugins with a short `PATH`.
   Set `LINEAR_TUI_BIN` in the plugin's `config.env`.
-- **Notes were not sent** — no agent was in the workspace, or it did not take
+- **Notes were not sent:** no agent was in the workspace, or it did not take
   the prompt. The prompt is saved under `~/.local/state/linear-tui/herdr/outbox/undelivered/`.
-- **Agent states do not show** — the plugin needs `jq`, and the agent's branch
+- **Agent states do not show:** the plugin needs `jq`, and the agent's branch
   must name the issue (`me/eng-42-…`).
 
 See [herdr.md](herdr.md).

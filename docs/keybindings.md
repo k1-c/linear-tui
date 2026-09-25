@@ -8,25 +8,25 @@ matter on the current screen.
 
 ## Command palette
 
-`Ctrl+K` opens the command palette, as in Linear. It lists everything that can
-be done where you are, with the key that does the same next to each entry, so it
-also teaches the shortcuts. Type to narrow it down — letters match in order,
-`cs` finds **C**hange **s**tatus — then `Enter` to run, or `Esc` to close.
+`Ctrl+K` opens the command palette, as in Linear. It lists what can be done
+where you are, with the key that does the same next to each entry, so it
+also teaches the shortcuts. Type to narrow it down: letters match in order,
+`cs` finds **C**hange **s**tatus, then `Enter` to run, or `Esc` to close.
 `↑` / `↓` (or `Ctrl+p` / `Ctrl+n`) move; recently used commands come first.
 
 The palette also goes places. Type an issue ID or part of a title, or the name
 of a team page, saved view, favorite, project, or cycle, and `Enter` opens it.
-Issues already loaded match at once. Linear is searched once you stop typing
-for a moment, so an issue in no list on screen turns up too. Start the query
+Issues already loaded match at once. Linear is searched after you pause typing,
+so an issue that is not in a list on screen can turn up too. Start the query
 with `>` to see commands only.
 
-A command that needs a value — *Change status…*, *Assign to…*, *Group by…*,
-*Switch team…*, *Filter…* — turns the palette into a list of choices; `Esc` (or
-`Backspace` on an empty query) steps back to the commands.
+A command that needs a value, such as *Change status…*, *Assign to…*,
+*Group by…*, *Switch team…*, or *Filter…*, turns the palette into a list of
+choices; `Esc` (or `Backspace` on an empty query) steps back to the commands.
 
 The same pickers open directly with `s`, `p`, `a`, `t` and `f`, and narrow as you
-type there too. Until you type, they keep their single keys — `j` / `k` to move,
-`1`-`9` to pick, `q` to close; an upper-case letter always starts a query.
+type there too. Until you type, they keep their single keys: `j` / `k` to move,
+`1`-`9` to pick, `q` to close; an upper-case letter starts a query.
 
 ## Navigation
 
@@ -100,7 +100,7 @@ agent in the same workspace, anywhere else to the clipboard. See
 | `Ctrl+S` | Send the notes to your agent |
 | `g` `w` | Go to the herdr agent working on the issue (inside herdr only) |
 
-Inside herdr, an issue row also shows the state of the agent working on it —
+Inside herdr, an issue row also shows the state of the agent working on it:
 `▲` waiting for you, `●` working, `○` idle, `✓` done.
 
 ## Other
@@ -139,11 +139,11 @@ actions have no meaning here. Where they differ:
 | Linear | linear-tui | Why |
 | --- | --- | --- |
 | `Ctrl+.`, `Ctrl+Shift+.`, `Ctrl+Shift+,`, `Ctrl+M` | also `y`, `b`, `Y`, `m` | Legacy terminals cannot distinguish `Ctrl`+punctuation, and `Ctrl+M` *is* `Enter`. The originals work in terminals supporting the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (kitty, Ghostty, WezTerm, foot, Alacritty), which is enabled automatically when available. |
-| `Cmd+K` — command menu | `Ctrl+K` | A terminal never receives `Cmd`. `Ctrl+K` is what Linear uses outside macOS; inside a text field it keeps its readline meaning (delete to the end). |
-| `r` — rename issue | *(unbound)* | Renaming isn't supported yet; refreshing uses the terminal's `Ctrl+r` instead. |
-| `j` / `k` — next / previous issue in the issue view | `J` / `K` | In the detail view `j`/`k` scroll the text, which a terminal cannot do with a trackpad. |
+| `Cmd+K` (command menu) | `Ctrl+K` | A terminal never receives `Cmd`. `Ctrl+K` is what Linear uses outside macOS; inside a text field it keeps its readline meaning (delete to the end). |
+| `r` (rename issue) | *(unbound)* | Renaming isn't supported yet; refreshing uses the terminal's `Ctrl+r` instead. |
+| `j` / `k` (next / previous issue in the issue view) | `J` / `K` | In the detail view `j`/`k` scroll the text, which a terminal cannot do with a trackpad. |
 | Display options menu (grouping, collapsing) | `D`, `z`, `Z`, `Shift+Tab` | Linear keeps these behind a menu with no shortcut; the keys are ones Linear leaves free. |
 | Double-click to open | click the selected row again | Terminals do not report double-clicks. |
-| `Ctrl+d` — set due date | half page down | The scrolling convention wins in a terminal. |
+| `Ctrl+d` (set due date) | half page down | The scrolling convention wins in a terminal. |
 | — | `o`, `t`, `q`, `Tab`, `Ctrl+b`, `1`-`5` | Open in browser, switch team, quit, and sidebar focus have no web-app equivalent. |
 | — | `n`, `Shift+N`, `Ctrl+S`, `g` `w` | Notes for a coding agent, and jumping to one; Linear has no agent beside it. |

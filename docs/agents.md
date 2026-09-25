@@ -1,14 +1,13 @@
 # Working with coding agents
 
-More and more Linear issues are read, filed, and fixed by coding agents. The
-human's part becomes reading what is on the board, pointing at it, and saying
-what to do. linear-tui lets you do that without spelling out IDs: the agent can
-see what you are looking at, act on Linear with your credentials, and take your
-notes on it as one prompt.
+Linear issues are often read, filed, and fixed by coding agents. The human part
+is to read what is on the board, point at it, and say what to do. linear-tui
+supports that workflow without spelling out IDs: the agent can see what you are
+looking at, act on Linear with your credentials, and use your notes as one
+prompt.
 
-None of this needs a Linear MCP server or a second sign-in, and all of it works
-without [herdr](herdr.md) — herdr only adds the parts that need a workspace
-manager.
+This does not require a Linear MCP server or a second sign-in. It also works
+without [herdr](herdr.md); herdr adds the parts that need a workspace manager.
 
 <img src="https://raw.githubusercontent.com/k1-c/linear-tui/main/assets/agents.gif" alt="linear-tui on the left, an agent's shell on the right: notes copied with Ctrl+S, then linear-tui context and linear-tui issue show">
 
@@ -18,7 +17,7 @@ manager.
 linear-tui context
 ```
 
-prints what linear-tui is showing in the current repository — the page, the
+prints what linear-tui is showing in the current repository: the page, the
 issue open in the detail view, and the list on screen, numbered, with the row
 under your cursor marked:
 
@@ -49,7 +48,7 @@ linear-tui issue create --team ENG --title "Retry payment webhooks"
 Every command takes `--json`, prints Markdown otherwise, and fails on stderr
 with a non-zero exit. The contract is [cli.md](cli.md).
 
-## 3. The agent knows all this without being told
+## 3. The agent learns the commands
 
 Install the agent plugin once:
 
@@ -64,9 +63,9 @@ codex plugin add linear-tui@linear-tui
 ```
 
 Every new session in a repository where you use linear-tui then starts with a
-few lines on the commands above, through a SessionStart hook — no prompt is
-sent, no turn is spent, and repositories where you do not use linear-tui get
-nothing. A `linear-tui` skill covers "this issue" and "the top three". See
+few lines on the commands above, through a SessionStart hook. No prompt is sent,
+no turn is spent, and repositories where you do not use linear-tui get nothing.
+A `linear-tui` skill covers "this issue" and "the top three". See
 [agent-plugin.md](agent-plugin.md).
 
 For another agent, add a line like this to its instructions (`AGENTS.md`,
@@ -94,8 +93,7 @@ My notes on what I am looking at in linear-tui (Engineering › Issues):
 ```
 
 Outside herdr the prompt is copied to the clipboard, to paste into whichever
-agent you use. Inside herdr it goes straight to the agent in the same
-workspace.
+agent you use. Inside herdr it goes to the agent in the same workspace.
 
 ## 5. In herdr
 
@@ -116,4 +114,4 @@ commands are designed around:
 
 - The agent acts with **your** credentials; issues it files are yours.
 - Without an instruction to change an issue, an agent only comments on it.
-- It moves an issue — to Done or anywhere else — only when you ask.
+- It moves an issue to Done or anywhere else only when you ask.
