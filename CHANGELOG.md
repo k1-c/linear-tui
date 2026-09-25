@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-09-25
+
+### Features
+
+- **agent-plugin**: Tell Claude Code and Codex about linear-tui through a hook
+
+
+
 ## [0.7.0] - 2026-09-25
 
 ### Bug Fixes
