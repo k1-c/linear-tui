@@ -786,6 +786,10 @@ pub static BINDINGS: &[Binding] = &[
     bind(&[plain('t')], TEAM_PAGES, App::open_team_select)
         .help(Section::Other, "t", "Switch team")
         .command("Switch team\u{2026}", &["workspace"]),
+    // Linear switches workspaces from its own menu, with no shortcut to mirror.
+    palette_only(SCREENS, App::open_workspace_select)
+        .command("Switch workspace\u{2026}", &["organization", "account"])
+        .in_section(Section::Other),
     // Linear syncs live and binds plain `r` to Rename, so this client uses the
     // terminal convention instead and leaves `r` free.
     bind(&[code(KeyCode::F(5)), ctrl('r')], SCREENS, refresh)

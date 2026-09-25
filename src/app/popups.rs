@@ -17,6 +17,32 @@ impl App {
         self.show_popup(Popup::TeamSelect, self.nav.team);
     }
 
+    /// Offer the other signed-in workspaces. With only one there is nothing
+    /// to pick, so say how to add another instead.
+    pub fn open_workspace_select(&mut self) {
+        if self.workspaces.len() < 2 {
+            self.set_status(
+                "Only one workspace is signed in \u{2014} `linear-tui auth login` adds another",
+            );
+            return;
+        }
+        let current = self.workspaces.iter().position(|w| w.current).unwrap_or(0);
+        self.show_popup(Popup::WorkspaceSelect, current);
+    }
+
+    /// Switch to the picked workspace; the main loop does the switching.
+    pub fn select_workspace(&mut self) {
+        let Some(entry) = self.popup_choice().and_then(|i| self.workspaces.get(i)) else {
+            return;
+        };
+        let (id, current, name) = (entry.id.clone(), entry.current, entry.name.clone());
+        self.close_popup();
+        if !current {
+            self.set_status(format!("Switching to {name}\u{2026}"));
+            self.switch_to = Some(id);
+        }
+    }
+
     /// Pick a team from the switcher and go to it, keeping the page (Issues,
     /// Cycles, Projects) when already on one of the team's pages.
     pub fn select_team(&mut self) {
@@ -193,6 +219,7 @@ impl App {
     pub fn apply_popup(&mut self) {
         match self.view.popup {
             Popup::TeamSelect => self.select_team(),
+            Popup::WorkspaceSelect => self.select_workspace(),
             Popup::Filter(_) => self.apply_filter_selection(),
             Popup::StatusChange(_) => self.apply_status_selection(),
             Popup::PriorityChange(_) => self.apply_priority_selection(),
@@ -341,6 +368,11 @@ impl App {
                 .teams
                 .iter()
                 .map(|t| format!("{} {}", t.name, t.key))
+                .collect(),
+            Popup::WorkspaceSelect => self
+                .workspaces
+                .iter()
+                .map(|w| format!("{} {}", w.name, w.url_key))
                 .collect(),
             Popup::Filter(FilterKind::Status) => std::iter::once("Any status".to_string())
                 .chain(self.filter_states().iter().map(|s| s.name.clone()))
