@@ -1,8 +1,9 @@
 //! Projects: a team's, and a saved project view's.
 //!
 //! [`open_team_projects`] and [`open_view_projects`] list them; [`next_page`],
-//! [`reload`], and [`take_page`] follow the list as pages land. A project's
-//! issues are an issue list: `issue::open_project_issues`.
+//! [`reload`], and [`take_page`] follow the list as pages land; [`open_url`]
+//! shows a project on linear.app. A project's issues are an issue list:
+//! `issue::open_project_issues`.
 
 use super::{Open, Refusal};
 use crate::entity::{CustomViewId, Page, Project, TeamId};
@@ -101,6 +102,17 @@ mod tests {
 
     fn project(id: &str) -> Project {
         serde_json::from_str(&format!(r#"{{"id":"{id}","name":"{id}"}}"#)).unwrap()
+    }
+
+    /// A project opens on linear.app by its URL; without one there is
+    /// nothing to open.
+    #[test]
+    fn a_project_opens_by_its_url() {
+        assert_eq!(
+            open_url(Some("https://linear.app/p".into())),
+            Ok(Request::OpenInBrowser("https://linear.app/p".into()))
+        );
+        assert_eq!(open_url(None), Err(Refusal::NothingToOpen));
     }
 
     /// A team's projects are asked for once, then shown from what is held.

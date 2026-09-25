@@ -5,11 +5,13 @@
 //! [`open_view_issues`], [`open_project_issues`], [`open_cycle_issues`];
 //! then [`next_page`], [`reload`], and [`take_page`] as pages land. A list
 //! is narrowed on screen by [`matches`], and searched across the workspace
-//! by [`search`].
+//! by [`search`] (results land by [`take_search_results`]) or from the
+//! command palette by [`quick_search`].
 //!
-//! **One issue.** [`open`] reads it with its thread; [`refresh`] reads it
-//! again. [`copy`] and [`open_url`] take its identifier, URL, or branch name
-//! elsewhere.
+//! **One issue.** [`open`] reads it with its thread, and [`take_detail`]
+//! takes what Linear sends; [`ensure_thread`] keeps the thread in view and
+//! [`refresh`] reads it again. [`copy`] and [`open_url`] take its
+//! identifier, URL, or branch name elsewhere.
 //!
 //! **Changes.** [`set_status`], [`set_priority`], [`set_assignee`],
 //! [`assign_to_me`], [`comment`], [`create`] (and [`created`] once Linear
@@ -1103,5 +1105,66 @@ mod tests {
     #[test]
     fn a_refused_change_reads_the_issue_back() {
         assert_eq!(change_refused(&id()), Request::Detail { issue_id: id() });
+    }
+
+    // ------------------------------------------------- details, palette
+
+    /// Details from Linear reach every copy; a list copy keeps its own
+    /// thread state.
+    #[test]
+    fn details_reach_every_copy() {
+        let mut store = store_with_issue();
+        let mut fresh = row("i1", "renamed", ("Done", "completed"), 0);
+        fresh.identifier = "ENG-1".into();
+        fresh.comments = Some(serde_json::from_str(r#"{"nodes":[]}"#).unwrap());
+        assert!(!take_detail(&mut store, fresh));
+        assert_eq!(store.current_issue.as_ref().unwrap().title, "renamed");
+        let listed = &store.issues[IssueSource::Team].items[0];
+        assert_eq!(listed.title, "renamed");
+        assert!(listed.comments.is_none());
+    }
+
+    /// An issue opened by its identifier takes its real id when Linear
+    /// answers.
+    #[test]
+    fn an_issue_opened_by_identifier_learns_its_id() {
+        // Opened by identifier, which stands in for the id until Linear answers.
+        let mut store = Store {
+            current_issue: Some(
+                serde_json::from_str(r#"{"id":"ENG-7","identifier":"ENG-7","title":""}"#).unwrap(),
+            ),
+            ..Store::default()
+        };
+        let mut real = row("uuid-7", "Real", ("Todo", "unstarted"), 0);
+        real.identifier = "ENG-7".into();
+        assert!(take_detail(&mut store, real));
+        assert_eq!(store.current_issue.as_ref().unwrap().id, "uuid-7");
+    }
+
+    /// An open issue without its thread asks for it; one with it asks for
+    /// nothing, and so does no open issue.
+    #[test]
+    fn a_missing_thread_is_read() {
+        let mut store = store_with_issue();
+        assert_eq!(
+            ensure_thread(&store),
+            Some(Request::Detail { issue_id: id() })
+        );
+        store.current_issue.as_mut().unwrap().comments =
+            Some(serde_json::from_str(r#"{"nodes":[]}"#).unwrap());
+        assert_eq!(ensure_thread(&store), None);
+        assert_eq!(ensure_thread(&Store::default()), None);
+    }
+
+    /// A palette search is numbered and sent without surrounding blanks.
+    #[test]
+    fn a_palette_search_is_numbered_and_trimmed() {
+        assert_eq!(
+            quick_search("  sunrise ", 3),
+            Request::QuickSearch {
+                term: "sunrise".into(),
+                seq: 3
+            }
+        );
     }
 }

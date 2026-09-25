@@ -131,6 +131,12 @@ mod tests {
         serde_json::from_str(json).unwrap()
     }
 
+    /// The favorites are asked of Linear.
+    #[test]
+    fn the_favorites_are_asked_for() {
+        assert_eq!(load(), Request::Favorites);
+    }
+
     fn views() -> Vec<CustomView> {
         vec![serde_json::from_str(r#"{"id":"v1","name":"Mine"}"#).unwrap()]
     }

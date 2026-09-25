@@ -1,4 +1,7 @@
 //! Coding agents working on issues, as herdr's plugin reports them.
+//!
+//! [`agent_for`] says which agent works on an issue; [`jump`] brings its
+//! pane to the front.
 
 use super::Refusal;
 use crate::entity::AgentLink;

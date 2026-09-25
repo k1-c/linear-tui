@@ -1,5 +1,9 @@
 //! Notes for a coding agent: remarks on issues, or on the whole view,
 //! collected while reading and sent together as one prompt.
+//!
+//! [`add`] writes one; [`prompt`] is what they make together; [`send`]
+//! hands them to the agent (or the clipboard) and [`discard`] drops them.
+//! [`salvage`] keeps a prompt herdr could not take.
 
 use super::Refusal;
 use crate::entity::{Handoff, Note, Notes, Subject};

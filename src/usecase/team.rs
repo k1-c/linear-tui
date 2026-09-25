@@ -112,6 +112,12 @@ mod tests {
         vec![team("t1", "Core", "COR"), team("t2", "Design", "DES")]
     }
 
+    /// The teams are asked of Linear.
+    #[test]
+    fn the_teams_are_asked_for() {
+        assert_eq!(load(), Request::Teams);
+    }
+
     /// The remembered team wins over the configured one.
     #[test]
     fn the_remembered_team_comes_first() {
