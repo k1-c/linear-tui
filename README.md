@@ -117,9 +117,9 @@ A few keys to begin with:
 | --- | --- |
 | [Keybindings](docs/keybindings.md) | Shortcuts, the palette, the mouse, differences from Linear |
 | [Configuration](docs/configuration.md) | `config.toml`, per-directory settings, themes, files |
-| [Working with coding agents](docs/agents.md) | `context`, notes, the agent plugin, herdr |
-| [Headless commands](docs/cli.md) | The CLI contract for agents and scripts |
-| [Troubleshooting](docs/troubleshooting.md) | Sign-in, clipboard, shortcuts, restores |
+| [Working with coding agents](docs/agents.md) | `context`, notes, working the TUI, the agent plugin, herdr |
+| [Headless commands](docs/cli.md) | The CLI contract for agents and scripts, `linear-tui tui …`, `--headless` |
+| [Troubleshooting](docs/troubleshooting.md) | Sign-in, clipboard, shortcuts, restores, agents |
 | [Development](docs/development.md) | Building, testing, recording the demos |
 
 The full index is [docs/README.md](docs/README.md).
