@@ -732,11 +732,13 @@ fn the_team_switcher_goes_to_the_picked_team() {
     assert_eq!(app.nav.team, 1);
 }
 
-fn workspace(id: &str, name: &str, current: bool) -> WorkspaceEntry {
-    WorkspaceEntry {
-        id: id.into(),
-        name: name.into(),
-        url_key: name.to_lowercase(),
+fn workspace(id: &str, name: &str, current: bool) -> Workspace {
+    Workspace {
+        organization: Organization {
+            id: id.into(),
+            name: name.into(),
+            url_key: name.to_lowercase(),
+        },
         current,
     }
 }

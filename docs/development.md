@@ -55,8 +55,8 @@ can do, and the rules each thing follows. It is written to be read as such,
 by people and by agents working on the code.
 
 **Structure.** One module per aggregate (`issue`, `project`, `cycle`, `team`,
-`view`, `favorite`, `user`, `notes`, `agent`, `instance`). Everything done to
-an aggregate lives in its module — finding, reading, and changing an issue
+`view`, `favorite`, `user`, `notes`, `agent`, `instance`, `workspace`).
+Everything done to an aggregate lives in its module — finding, reading, and changing an issue
 are all in `issue.rs`. Never group use cases by kind of operation ("browse",
 "search", "mutations"). `usecase/mod.rs` opens with a table of the modules.
 
