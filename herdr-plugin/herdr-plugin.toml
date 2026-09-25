@@ -1,0 +1,27 @@
+id = "k1-c.linear-tui"
+name = "linear-tui"
+version = "0.1.0"
+# Tested against 0.9.1: plugin panes with --env, and the pane.agent_status_changed event hook.
+min_herdr_version = "0.9.1"
+description = "Linear in a pane: open linear-tui over any workspace and let agents read what you are looking at."
+platforms = ["linux", "macos"]
+
+# The TUI itself. open.sh passes the resolved binary in LINEAR_TUI_BIN, since
+# herdr starts panes with a minimal PATH.
+[[panes]]
+id = "tui"
+title = "linear-tui"
+placement = "overlay"
+command = ["sh", "-c", "exec \"${LINEAR_TUI_BIN:-linear-tui}\""]
+
+[[actions]]
+id = "open"
+title = "linear-tui: open"
+description = "Focus this workspace's linear-tui pane, or open one in the focused pane's directory"
+contexts = ["pane", "workspace"]
+command = ["bash", "open.sh", "open"]
+
+# Opt-in (NOTIFY_AGENTS=1): tell a freshly started agent about `linear-tui context`.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["bash", "event.sh"]
