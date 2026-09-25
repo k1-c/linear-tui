@@ -117,6 +117,7 @@ pub struct Seeded {
     pub team_name: String,
     /// Another team of the workspace, for switching to.
     pub other_team: Option<String>,
+    /// The signed-in user as linear-tui names them: display name first.
     pub viewer_name: String,
     /// Issue identifiers by title.
     pub issues: HashMap<String, String>,
@@ -318,7 +319,8 @@ pub fn seed_a(linear: &Linear, account: &Account) -> Result<Seeded, String> {
     let (team, other_team) = team(linear, account)?;
     let other_team = Some(second_team(linear, other_team)?);
     let team_id = team["id"].as_str().unwrap_or_default().to_string();
-    let viewer = linear.gql("query { viewer { id name } }", json!({}))?["viewer"].clone();
+    let viewer =
+        linear.gql("query { viewer { id name displayName } }", json!({}))?["viewer"].clone();
     let viewer_id = viewer["id"].as_str().unwrap_or_default().to_string();
     let states = states(linear, &team_id)?;
     let state = |name: &str| {
@@ -420,7 +422,11 @@ pub fn seed_a(linear: &Linear, account: &Account) -> Result<Seeded, String> {
         team_key: team["key"].as_str().unwrap_or_default().to_string(),
         team_name: team["name"].as_str().unwrap_or_default().to_string(),
         other_team,
-        viewer_name: viewer["name"].as_str().unwrap_or_default().to_string(),
+        viewer_name: viewer["displayName"]
+            .as_str()
+            .or(viewer["name"].as_str())
+            .unwrap_or_default()
+            .to_string(),
         issues,
     })
 }
@@ -431,9 +437,12 @@ pub fn seed_b(linear: &Linear, account: &Account) -> Result<Seeded, String> {
     reset(linear)?;
     let (team, other_team) = team(linear, account)?;
     let team_id = team["id"].as_str().unwrap_or_default();
+    let todo = states(linear, team_id)?
+        .remove("Todo")
+        .ok_or("workspace B's team has no Todo state")?;
     let data = linear.gql(
         "mutation($input: IssueCreateInput!) { issueCreate(input: $input) { issue { identifier } } }",
-        json!({ "input": { "teamId": team_id, "title": titles::IN_WORKSPACE_B } }),
+        json!({ "input": { "teamId": team_id, "title": titles::IN_WORKSPACE_B, "stateId": todo } }),
     )?;
     let viewer = linear.gql("query { viewer { name } }", json!({}))?;
     Ok(Seeded {

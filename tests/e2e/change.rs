@@ -87,6 +87,8 @@ fn a_new_issue_is_filed_and_listed() {
     let (account, _) = a();
     let title = format!("Filed from the TUI {}", std::process::id());
     let tui = Tui::start(&account, "");
+    // A new issue lands in the team's default state, which Active may hide.
+    tui.press("g e");
     let form = tui.press("c");
     assert_eq!(form.focus(), "new issue: title");
     tui.type_text(&title);
@@ -122,7 +124,8 @@ fn an_issue_is_copied_and_opened_and_so_is_a_project() {
             .any(|h| h.starts_with("would open https://linear.app/") && h.contains(id)),
         "{held:?}"
     );
-    let held = tui.press("g p o").held();
+    tui.press("g p");
+    let held = tui.press("o").held();
     assert!(
         held.iter().any(|h| h.contains("/project/")),
         "the project's page: {held:?}"

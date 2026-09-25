@@ -178,8 +178,8 @@ impl Drop for Tui {
 }
 
 /// Try `attempt` until it gives something, for up to `SEARCH_INDEX_LAG`:
-/// Linear's search finds a new issue only once it has indexed it, a few
-/// seconds after it was filed.
+/// Linear's search finds a new issue only once it has indexed it, a while
+/// after it was filed.
 pub fn eventually<T>(what: &str, mut attempt: impl FnMut() -> Option<T>) -> T {
     let deadline = Instant::now() + SEARCH_INDEX_LAG;
     loop {
@@ -195,7 +195,7 @@ pub fn eventually<T>(what: &str, mut attempt: impl FnMut() -> Option<T>) -> T {
 }
 
 /// How long Linear may take to index a new issue for search.
-const SEARCH_INDEX_LAG: Duration = Duration::from_secs(60);
+const SEARCH_INDEX_LAG: Duration = Duration::from_secs(120);
 
 /// The binary under test.
 fn bin() -> &'static str {

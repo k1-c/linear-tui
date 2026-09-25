@@ -10,7 +10,8 @@ use super::tui::Tui;
 fn a_relaunch_reopens_the_page_left() {
     let (account, _) = a();
     let mut tui = Tui::start(&account, "");
-    tui.press("g p <Enter>")
+    tui.press("g p");
+    tui.press("<Enter>")
         .expect("Hourly forecasts, rebuilt on the new API");
     tui.relaunch();
     let screen = tui.screen();

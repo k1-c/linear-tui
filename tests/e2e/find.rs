@@ -21,11 +21,15 @@ fn typing_a_filter_narrows_the_list() {
 #[test]
 #[ignore = "touches real Linear workspaces; see tests/e2e/main.rs"]
 fn searching_all_of_linear_finds_issues_the_preset_hides() {
-    let (account, _) = a();
+    let (account, seeded) = a();
     let tui = Tui::start(&account, "");
+    // By this run's identifier: Linear keeps a search's answer for a while,
+    // and a term searched before this run was seeded would still find the
+    // issues it deleted.
+    let id = seeded.issue(RADAR);
     eventually("search finds the radar issue", || {
         tui.press("/");
-        tui.type_text("radar");
+        tui.type_text(id);
         let screen = tui.press("<C-g>");
         screen.text().contains(RADAR).then_some(())
     });
@@ -61,10 +65,8 @@ fn the_palette_finds_an_issue_anywhere_in_the_workspace() {
                 .overlay()
                 .is_some_and(|o| o.starts_with("command palette"))
         );
-        let found = tui
-            .type_text("wind arrows")
-            .text()
-            .contains(seeded.issue(WIND));
+        // By this run's identifier, as above.
+        let found = tui.type_text(seeded.issue(WIND)).text().contains(WIND);
         if !found {
             tui.press("<Esc>");
         }

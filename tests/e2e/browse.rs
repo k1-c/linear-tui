@@ -157,6 +157,8 @@ fn scrolling_to_the_bottom_loads_the_next_page() {
 fn a_refresh_shows_what_changed_in_linear() {
     let (account, seeded) = a();
     let tui = Tui::start(&account, "");
+    // A new issue lands in the team's default state, which Active may hide.
+    tui.press("g e");
     let filed = format!("Filed behind linear-tui's back {}", std::process::id());
     tui.cli(&[
         "issue",
