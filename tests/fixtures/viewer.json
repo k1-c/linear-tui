@@ -2,6 +2,11 @@
   "viewer": {
     "id": "user-001",
     "name": "Test User",
-    "displayName": "test.user"
+    "displayName": "test.user",
+    "organization": {
+      "id": "org-001",
+      "name": "Acme",
+      "urlKey": "acme"
+    }
   }
 }

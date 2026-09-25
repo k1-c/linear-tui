@@ -178,6 +178,16 @@ fn deserialize_viewer() {
     }
     let resp: Resp = serde_json::from_str(&fixture("viewer.json")).unwrap();
     assert_eq!(resp.viewer.name, "Test User");
+    let org = resp.viewer.organization.unwrap();
+    assert_eq!(org.name, "Acme");
+    assert_eq!(org.url_key, "acme");
+}
+
+#[test]
+fn deserialize_viewer_without_organization() {
+    let viewer: Viewer =
+        serde_json::from_str(r#"{ "id": "u1", "name": "Ada", "displayName": null }"#).unwrap();
+    assert!(viewer.organization.is_none());
 }
 
 #[test]

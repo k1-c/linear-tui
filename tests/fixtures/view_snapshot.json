@@ -5,6 +5,7 @@
   "pid": 48213,
   "updated_at": "2026-09-25T06:01:02Z",
   "herdr_pane": "w2:p3",
+  "organization": { "id": "b41d…org", "name": "Shop", "url_key": "shop" },
   "team": { "id": "3f1c…team", "key": "ENG", "name": "Engineering" },
   "destination": {
     "kind": "team",

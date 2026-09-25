@@ -235,7 +235,7 @@ fn every_screen_renders_at_every_size() {
             sizes.push((width, height));
         }
     }
-    let setups: [fn(&mut App); 15] = [
+    let setups: [fn(&mut App); 16] = [
         |_| {},
         |app| app.open_issue_detail(),
         |app| {
@@ -250,6 +250,19 @@ fn every_screen_renders_at_every_size() {
         |app| app.open_help(),
         |app| app.open_filter(),
         |app| app.open_team_select(),
+        |app| {
+            app.workspaces = ["Acme", "Globex"]
+                .iter()
+                .enumerate()
+                .map(|(i, name)| crate::interface::app::WorkspaceEntry {
+                    id: (*name).into(),
+                    name: (*name).into(),
+                    url_key: name.to_lowercase(),
+                    current: i == 0,
+                })
+                .collect();
+            app.open_workspace_select();
+        },
         |app| app.open_status_change(),
         |app| app.open_assignee_change(),
         |app| app.start_new_issue(),

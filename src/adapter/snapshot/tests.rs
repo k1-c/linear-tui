@@ -23,6 +23,7 @@ fn snapshot(pid: u32, updated_at: &str, closed_at: Option<&str>) -> ViewSnapshot
         updated_at: updated_at.into(),
         closed_at: closed_at.map(Into::into),
         herdr_pane: None,
+        organization: None,
         team: None,
         destination: Destination::MyIssues,
         screen: Screen::IssueList,

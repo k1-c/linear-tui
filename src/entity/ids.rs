@@ -69,6 +69,7 @@ id_type!(
     LabelId,
     CommentId,
     MilestoneId,
+    OrganizationId,
 );
 
 #[cfg(test)]

@@ -57,7 +57,13 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
             Ok(Message::Favorites(client.favorites().await?))
         }
         Request::Favorite(favorite::Request::OpenInBrowser(url)) => open_in_browser(url),
-        Request::User(user::Request::Viewer) => Ok(Message::Viewer(client.viewer().await?.id)),
+        Request::User(user::Request::Viewer) => {
+            let viewer = client.viewer().await?;
+            Ok(Message::Viewer {
+                id: viewer.id,
+                organization: viewer.organization,
+            })
+        }
         Request::Notes(notes::Request::Deliver(handoff)) => {
             crate::adapter::herdr::deliver(handoff).await?;
             Ok(Message::Mutated(handoff.done()))

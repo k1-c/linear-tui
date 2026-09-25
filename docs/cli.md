@@ -3,7 +3,8 @@
 `linear-tui context` and `linear-tui issue …` run without the TUI. They are how
 a coding agent reads what you are looking at in linear-tui and acts on Linear
 itself, using the credentials `linear-tui auth` set up and the same request
-code as the TUI, so there is no second client and no second sign-in.
+code as the TUI, so there is no second client and no second sign-in. They act
+in the workspace in use ([authentication.md](authentication.md#several-workspaces)).
 `linear-tui tui …` goes further and works the running TUI itself, and
 `linear-tui --headless` runs one for agents alone.
 
@@ -118,6 +119,7 @@ worktree is for.
 This worktree is for **ENG-42** — `linear-tui issue show ENG-42` for the issue itself.
 
 - Showing: Engineering › Issues › ENG-42
+- Linear workspace: Shop (shop)
 - Updated: 2 minutes ago (2026-09-25T06:01:02Z); linear-tui is open (pid 48213)
 
 ## Open issue
@@ -135,6 +137,9 @@ Act on these with `linear-tui issue show|comment|status <ID>` and `linear-tui is
 ```
 
 - `- Showing:` is the path back: destination › project or cycle › issue.
+- `- Linear workspace:` is the workspace the view is of. When `linear-tui
+  issue …` would act in another one (`linear-tui auth switch`), the output ends
+  with a bold warning naming the `auth switch` that fixes it.
 - `- Search results for:` appears when the list is a workspace search.
 - A closed instance reads `linear-tui is **closed — this is the last view
   before it quit, and may be stale**`.

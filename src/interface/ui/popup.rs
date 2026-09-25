@@ -15,6 +15,7 @@ use crate::interface::grouping::GroupBy;
 pub fn draw(f: &mut Frame, app: &mut App) {
     match app.view.popup {
         Popup::TeamSelect => draw_team_select(f, app),
+        Popup::WorkspaceSelect => draw_workspace_select(f, app),
         Popup::Filter(kind) => draw_filter(f, app, kind),
         Popup::StatusChange(_) => draw_status_change(f, app),
         Popup::PriorityChange(_) => draw_priority_change(f, app),
@@ -156,6 +157,26 @@ fn draw_team_select(f: &mut Frame, app: &mut App) {
         })
         .collect();
     render_popup_list(f, app, "Switch team", items, None, 44);
+}
+
+fn draw_workspace_select(f: &mut Frame, app: &mut App) {
+    let th = app.theme;
+    let num = numbering(app);
+    let items: Vec<ListItem> = app
+        .workspaces
+        .iter()
+        .enumerate()
+        .map(|(i, w)| {
+            numbered_item(
+                num(i),
+                vec![],
+                &format!("{}  {}", w.name, w.url_key),
+                w.current,
+                &th,
+            )
+        })
+        .collect();
+    render_popup_list(f, app, "Switch workspace", items, None, 44);
 }
 
 fn draw_filter(f: &mut Frame, app: &mut App, kind: FilterKind) {

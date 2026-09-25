@@ -144,6 +144,7 @@ fn overlay(app: &App) -> Option<String> {
         ),
         Popup::GroupBy => picker("group by"),
         Popup::TeamSelect => picker("team"),
+        Popup::WorkspaceSelect => picker("workspace"),
         Popup::Filter(kind) => picker(&format!("{kind:?} filter").to_lowercase()),
         Popup::StatusChange(_) => picker("status"),
         Popup::PriorityChange(_) => picker("priority"),

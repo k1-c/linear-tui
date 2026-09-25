@@ -6,7 +6,7 @@
 //! agent ("what am I looking at"). Reading the records from disk and asking
 //! the system which processes run is the adapter's (`crate::adapter::snapshot`).
 
-use crate::entity::{Instance, InstanceId};
+use crate::entity::{Instance, InstanceId, OrganizationId};
 
 /// The instances, the one that recorded its view last first.
 fn newest_first(instances: &[Instance]) -> Vec<&Instance> {
@@ -24,10 +24,23 @@ fn newest_first(instances: &[Instance]) -> Vec<&Instance> {
 /// last is reopened. A record left under the launching process's own id is
 /// from an earlier process that happened to have it, and is reopened only
 /// if that process quit normally.
-pub fn to_reopen<'a>(instances: &'a [Instance], me: &InstanceId) -> Option<&'a Instance> {
+///
+/// A view names its pages by Linear ID, which only mean something in the
+/// Linear workspace they came from, so a view of another workspace than
+/// `organization` (the one the launch is signed in to) is passed over. When
+/// either side does not know its workspace, the view is taken.
+pub fn to_reopen<'a>(
+    instances: &'a [Instance],
+    me: &InstanceId,
+    organization: Option<&OrganizationId>,
+) -> Option<&'a Instance> {
     let candidates: Vec<&Instance> = newest_first(instances)
         .into_iter()
         .filter(|i| i.id.pid != me.pid || i.closed())
+        .filter(|i| match (&i.view.organization, organization) {
+            (Some(theirs), Some(ours)) => theirs.id == *ours,
+            _ => true,
+        })
         .collect();
     let quit_last = candidates
         .iter()
@@ -94,14 +107,14 @@ mod tests {
             instance(2, 10, Some(10), false),
             instance(3, 11, None, false),
         ];
-        assert_eq!(to_reopen(&instances, &me(99)).unwrap().id.pid, 2);
+        assert_eq!(to_reopen(&instances, &me(99), None).unwrap().id.pid, 2);
     }
 
     /// When none quit normally, the view recorded last is reopened.
     #[test]
     fn without_a_clean_quit_the_last_view_recorded_is_reopened() {
         let instances = [instance(1, 9, None, false), instance(2, 11, None, false)];
-        assert_eq!(to_reopen(&instances, &me(99)).unwrap().id.pid, 2);
+        assert_eq!(to_reopen(&instances, &me(99), None).unwrap().id.pid, 2);
     }
 
     /// A record under the launching process's own id is an earlier
@@ -109,15 +122,40 @@ mod tests {
     #[test]
     fn a_record_under_my_own_pid_is_passed_over_unless_it_quit() {
         let stale = [instance(7, 11, None, true), instance(1, 9, None, false)];
-        assert_eq!(to_reopen(&stale, &me(7)).unwrap().id.pid, 1);
+        assert_eq!(to_reopen(&stale, &me(7), None).unwrap().id.pid, 1);
         let quit = [instance(7, 11, Some(11), false)];
-        assert_eq!(to_reopen(&quit, &me(7)).unwrap().id.pid, 7);
+        assert_eq!(to_reopen(&quit, &me(7), None).unwrap().id.pid, 7);
+    }
+
+    /// A view of another Linear workspace is passed over; one whose
+    /// workspace is not known, or a launch that does not know its own, takes
+    /// the newest view.
+    #[test]
+    fn a_view_of_another_linear_workspace_is_not_reopened() {
+        let of = |pid, closed: u32, org: &str| {
+            let mut i = instance(pid, closed, Some(closed), false);
+            i.view.organization = Some(crate::entity::snapshot::OrganizationRef {
+                id: org.into(),
+                name: org.into(),
+                url_key: org.into(),
+            });
+            i
+        };
+        let instances = [of(1, 8, "acme"), of(2, 9, "globex")];
+        let acme = OrganizationId::from("acme");
+        assert_eq!(
+            to_reopen(&instances, &me(99), Some(&acme)).unwrap().id.pid,
+            1
+        );
+        let initech = OrganizationId::from("initech");
+        assert!(to_reopen(&instances, &me(99), Some(&initech)).is_none());
+        assert_eq!(to_reopen(&instances, &me(99), None).unwrap().id.pid, 2);
     }
 
     /// With no record at all, there is nothing to reopen.
     #[test]
     fn with_no_record_nothing_is_reopened() {
-        assert!(to_reopen(&[], &me(1)).is_none());
+        assert!(to_reopen(&[], &me(1), None).is_none());
     }
 
     /// An agent is shown the open instance that moved last.
