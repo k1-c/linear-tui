@@ -67,7 +67,11 @@ impl Tui {
     fn wait_until_ready(&self) {
         let deadline = Instant::now() + STARTUP;
         loop {
-            if let Ok(screen) = self.try_tui(&["screen"])
+            let answer = self.try_tui(&["screen"]);
+            if let Ok(screen) = &answer {
+                screen.fail_if_rate_limited();
+            }
+            if let Ok(screen) = answer
                 && !screen.loading()
                 && !screen.text().contains("Loading")
             {
@@ -92,8 +96,11 @@ impl Tui {
     }
 
     fn tui(&self, args: &[&str]) -> Screen {
-        self.try_tui(args)
-            .unwrap_or_else(|e| panic!("linear-tui tui {}: {e}", args.join(" ")))
+        let screen = self
+            .try_tui(args)
+            .unwrap_or_else(|e| panic!("linear-tui tui {}: {e}", args.join(" ")));
+        screen.fail_if_rate_limited();
+        screen
     }
 
     pub fn screen(&self) -> Screen {
@@ -214,6 +221,15 @@ fn env(dir: &Path) -> Vec<(&'static str, PathBuf)> {
 }
 
 impl Screen {
+    /// Stop the scenario, saying why, when linear-tui shows that Linear is
+    /// rate limiting it: nothing after that would test what it claims to.
+    pub fn fail_if_rate_limited(&self) {
+        if self.text().contains("rate limiting requests") {
+            eprintln!("{}", self.text());
+            crate::linear::rate_limited();
+        }
+    }
+
     /// The frame, one line per row.
     pub fn text(&self) -> String {
         self.0["lines"]

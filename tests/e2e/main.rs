@@ -64,6 +64,7 @@ pub fn b() -> (Account, &'static Seeded) {
 }
 
 fn account(name: &'static str) -> Account {
+    linear::stop_if_rate_limited();
     Account::from_env(name).unwrap_or_else(|| {
         panic!("set LINEAR_E2E_API_KEY_{name} and LINEAR_E2E_WORKSPACE_{name} to run the end-to-end tests")
     })
