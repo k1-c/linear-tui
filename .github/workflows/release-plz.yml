@@ -8,6 +8,14 @@ on:
   push:
     branches: [main]
 
+# Merging several PRs in a row pushes to main several times. One run at a
+# time, none cancelled, so the release PR is rebuilt in order and the last
+# run leaves it matching the newest main, instead of runs racing to close
+# and reopen it.
+concurrency:
+  group: release-plz-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   release-plz:
     name: Release-plz
