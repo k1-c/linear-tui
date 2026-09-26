@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.11.0] - 2026-09-26
+
+### Features
+
+- **issue**: Edit issues and address comments from the CLI and the TUI ([#98](https://github.com/k1-c/linear-tui/pull/98))
+
+
+
 ## [0.10.0] - 2026-09-26
 
 ### Bug Fixes
