@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.12.0] - 2026-09-26
+
+### Features
+
+- **cli**: Do every use case from the command line, projects and milestones included ([#100](https://github.com/k1-c/linear-tui/pull/100))
+
+
+
 ## [0.11.0] - 2026-09-26
 
 ### Features
