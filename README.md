@@ -59,6 +59,8 @@ linear-tui issue show ENG-42             # description, fields, and comments as 
 linear-tui issue comment ENG-42 -        # comment, body from stdin
 linear-tui issue status ENG-42 "In Review"
 linear-tui issue update ENG-42 --priority low --description -   # rewrite, body from stdin
+linear-tui issue list --mine             # any list the TUI shows, headless
+linear-tui project show "Forecast v2"    # projects and milestones, read and changed
 ```
 
 Say "fix this one" or "look at the top three" and the agent knows which you

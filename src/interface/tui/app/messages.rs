@@ -194,6 +194,12 @@ impl App {
             // Kept for nothing yet: the labels are asked for by the
             // headless commands.
             Message::Labels { .. } => {}
+            // Asked for by the headless commands alone.
+            Message::ProjectsFound { .. }
+            | Message::ProjectDetail(_)
+            | Message::ProjectStatuses(_)
+            | Message::ProjectCreated(_)
+            | Message::MilestoneCreated { .. } => {}
             Message::CommentPosted { issue_id, .. } => {
                 self.set_status("Comment posted");
                 // Its thread was dropped when it was sent; read it back if it

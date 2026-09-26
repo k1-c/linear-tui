@@ -31,6 +31,7 @@
 mod agents;
 mod browse;
 mod change;
+mod cli;
 mod find;
 mod linear;
 mod session;

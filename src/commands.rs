@@ -201,7 +201,9 @@ async fn auth(args: &[String]) -> Result<()> {
     }
 }
 
-/// Print every signed-in workspace, the current one marked.
+/// `auth list`: every signed-in workspace, the current one marked.
+///
+/// Covers: workspace::signed_in
 fn list(token_store: &TokenStore) -> Result<()> {
     let accounts = token_store.load()?;
     if accounts.is_empty() {
@@ -222,7 +224,10 @@ fn list(token_store: &TokenStore) -> Result<()> {
     Ok(())
 }
 
-/// Make the workspace `name` names the current one.
+/// `auth switch`: make the workspace `name` names the current one; with no
+/// name, the workspaces to pick from are listed.
+///
+/// Covers: workspace::open_switcher, workspace::pick
 fn switch(token_store: &TokenStore, name: &str) -> Result<auth::token::Account> {
     token_store
         .update(|accounts| {

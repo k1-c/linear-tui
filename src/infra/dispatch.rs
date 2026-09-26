@@ -225,6 +225,43 @@ async fn project(client: &LinearClient, req: &project::Request, append: bool) ->
             }
         }
         R::OpenInBrowser(url) => open_in_browser(url)?,
+        R::Find { name } => Message::ProjectsFound {
+            name: name.clone(),
+            projects: client.find_projects(name).await?,
+        },
+        R::Detail { project_id } => {
+            Message::ProjectDetail(Box::new(client.project_detail(project_id).await?))
+        }
+        R::Statuses => Message::ProjectStatuses(client.project_statuses().await?),
+        R::Create { draft } => {
+            Message::ProjectCreated(Box::new(client.create_project(draft).await?))
+        }
+        R::Update {
+            project_id,
+            changes,
+        } => {
+            client.update_project(project_id, changes).await?;
+            Message::Mutated("Project updated")
+        }
+        R::Delete { project_id } => {
+            client.delete_project(project_id).await?;
+            Message::Mutated("Project deleted")
+        }
+        R::CreateMilestone { project_id, draft } => Message::MilestoneCreated {
+            project_id: project_id.clone(),
+            milestone: Box::new(client.create_milestone(project_id, draft).await?),
+        },
+        R::UpdateMilestone {
+            milestone_id,
+            changes,
+        } => {
+            client.update_milestone(milestone_id, changes).await?;
+            Message::Mutated("Milestone updated")
+        }
+        R::DeleteMilestone { milestone_id } => {
+            client.delete_milestone(milestone_id).await?;
+            Message::Mutated("Milestone deleted")
+        }
     })
 }
 

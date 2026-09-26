@@ -269,7 +269,7 @@ impl App {
         match self.favorite_target(index) {
             Target::Project(project) => {
                 self.nav.dest = Nav::Favorite(index);
-                self.open_project(project);
+                self.open_project(*project);
             }
             Target::Cycle(cycle) => {
                 self.nav.dest = Nav::Favorite(index);

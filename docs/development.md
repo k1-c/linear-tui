@@ -101,6 +101,28 @@ each summary links its use cases, each use case opens with its bold name and
 has a test, and each test has its rule and a sentence for a name. Whether the
 words say the right thing is for review.
 
+**Every use case can be done from the command line.** An agent should not
+need a TUI open to do what a person can in one, so each use case is served
+by a headless command (`linear-tui issue …`, `project …`, `team …`, …, see
+[cli.md](cli.md)). The command says so on a `Covers:` line in its doc
+comment, as a scenario does:
+
+```rust
+/// `issue update`: any fields at once, a priority or an assignee (`me`)
+/// among them.
+///
+/// Covers: issue::update, issue::set_priority, issue::set_assignee,
+/// issue::assign_to_me
+async fn update(linear: &impl Linear, args: &[String], now: u64) -> Result<String> {
+```
+
+What only exists on screen — keeping a thread in view, which team the TUI
+opens on, notes a person writes for the agent — is listed with the reason
+under "Not from the command line" in `src/interface/cli/mod.rs`.
+`tests/usecase_spec.rs` fails for a use case that is neither; working the
+running TUI (`linear-tui tui …`) does not count. So a new use case comes
+with its command, or with the reason it needs none.
+
 Around the use cases:
 
 - In `src/core/`, `entity/` holds what they act on; `store/` keeps what
@@ -124,7 +146,7 @@ Around the use cases:
 | interface | intents and state transitions, rendering against ratatui's `TestBackend`, key and palette dispatch, the screen an agent reads, the CLI's output | `src/interface/` |
 | infra | API decoding against `tests/fixtures/`, requests against a `wiremock` server, snapshot files | `src/infra/` |
 | architecture | the layers depend inwards | `tests/architecture.rs` |
-| specification | the use case layer's shape, and that every use case has an end-to-end scenario | `tests/usecase_spec.rs` |
+| specification | the use case layer's shape, that every use case can be done from the command line, and that every use case has an end-to-end scenario | `tests/usecase_spec.rs` |
 | end to end | the real binary against real Linear workspaces, one scenario per use case at least | `tests/e2e/`, see below |
 
 Spec coverage is measured on the use case layer:
@@ -221,7 +243,7 @@ scenarios are `#[ignore]`d.
 
 | When you change | Update |
 | --- | --- |
-| what a user or an agent can do | the use case in `src/core/usecase/<aggregate>.rs`: its doc comment and its tests (see [The use case layer](#the-use-case-layer)) |
+| what a user or an agent can do | the use case in `src/core/usecase/<aggregate>.rs`: its doc comment and its tests (see [The use case layer](#the-use-case-layer)); its command in `src/interface/cli/`, with a `Covers:` line |
 | a keybinding | the `BINDINGS` row in `src/interface/tui/keys.rs`, and [keybindings.md](keybindings.md) (with the "Differences from Linear" table if it departs from Linear) |
 | a `config.toml` key | `KNOWN_KEYS` in `src/config.rs`, and [configuration.md](configuration.md) |
 | a subcommand or its output | [cli.md](cli.md), a contract for agents and scripts |

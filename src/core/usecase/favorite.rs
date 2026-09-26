@@ -37,7 +37,7 @@ pub enum Target {
     MyIssues,
     /// A page of one of the user's teams.
     TeamPage(TeamId, TeamPage),
-    Project(Project),
+    Project(Box<Project>),
     Cycle(Cycle),
     Issue(IssueRef),
     /// Something linear-tui has no page for — a document, a label — on
@@ -111,7 +111,7 @@ pub fn target(favorite: &Favorite, views: &[CustomView], teams: &[Team]) -> Targ
         }
     }
     if let Some(project) = &favorite.project {
-        return Target::Project(project.clone());
+        return Target::Project(Box::new(project.clone()));
     }
     if let Some(cycle) = &favorite.cycle {
         return Target::Cycle(cycle.clone());

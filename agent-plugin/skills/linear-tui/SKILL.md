@@ -28,6 +28,8 @@ the context starts with that issue. Use `--json` when you need exact fields.
 
 | Task | Command |
 | --- | --- |
+| List issues | `linear-tui issue list --team ENG` (`--preset backlog\|all`), `--mine`, `--view "…"`, `--project "…"`, `--team ENG --cycle current`; narrow with `--status`, `--priority`, `--query` |
+| Search | `linear-tui issue search "checkout" [--team ENG]` |
 | Read an issue | `linear-tui issue show ENG-42` |
 | Comment | `linear-tui issue comment ENG-42 -` (body on stdin) |
 | Reply in a thread | `linear-tui issue comment ENG-42 - --reply-to <comment-id>` |
@@ -35,13 +37,20 @@ the context starts with that issue. Use `--json` when you need exact fields.
 | Change its state | `linear-tui issue status ENG-42 "In Review"` |
 | Edit it | `linear-tui issue update ENG-42 --title "…" --description - --priority low --assignee me --estimate 3 --label Bug --unlabel UI --project "…" --cycle current --parent ENG-30` (any of them; `none` empties a field) |
 | File an issue | `linear-tui issue create --team ENG --title "…" --description -` (and the same fields as `update`) |
+| File under a milestone | `--project "…" --milestone "Beta"` on `create` or `update` |
+| Projects | `linear-tui project list --team ENG`, `project show "…"`, `project create --team ENG --name "…"`, `project update "…" --status "In Progress" --target 2026-12-01`, `project delete "…"` |
+| Milestones | `linear-tui milestone list "<project>"`, `milestone create "<project>" --name Beta --target 2026-11-01`, `milestone update "<project>" Beta --name …`, `milestone delete "<project>" Beta` |
+| A team's states, members, labels | `linear-tui team show ENG` (`team list` for the teams) |
+| Cycles, views, favorites | `linear-tui cycle list --team ENG`, `view list`, `favorite list` |
 
 `<ID>` may be an identifier in any case or an issue URL. `issue show` gives
 each comment an `- Id:` line to address an edit or reply at. Errors go to
 stderr with a non-zero exit; an unknown name lists what is valid, an
 ambiguous one the candidates. Only a comment's author can edit or delete it.
-Never call Linear's API directly, or drive the TUI to type a long body: these
-commands take Markdown on stdin.
+Whatever the TUI does, a command does too: never call Linear's API directly,
+or drive the TUI to do what a command can. Long bodies go on stdin as
+Markdown. Deleting a project or milestone needs the user's word, like any
+other change.
 
 ## Work the TUI itself
 

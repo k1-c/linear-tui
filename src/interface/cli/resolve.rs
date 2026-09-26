@@ -8,7 +8,10 @@ use anyhow::{Result, bail};
 
 use super::Linear;
 use crate::core::entity::timestamp::parse_timestamp;
-use crate::core::entity::{Cycle, IssueRef, Label, Priority, Project, TeamId, User};
+use crate::core::entity::{
+    CustomView, Cycle, IssueRef, Label, Milestone, Priority, Project, ProjectId, ProjectStatus,
+    Team, TeamId, User,
+};
 use crate::core::message::Message;
 use crate::core::store::Store;
 use crate::core::usecase;
@@ -79,13 +82,13 @@ fn person_name(user: &User) -> String {
 }
 
 /// What a team offers to fill an issue's fields with, fetched as asked for.
-pub struct Team<'a, L: Linear> {
+pub struct InTeam<'a, L: Linear> {
     linear: &'a L,
     pub id: TeamId,
     members: Option<Vec<User>>,
 }
 
-impl<'a, L: Linear> Team<'a, L> {
+impl<'a, L: Linear> InTeam<'a, L> {
     pub fn new(linear: &'a L, id: TeamId) -> Self {
         Self {
             linear,
@@ -253,9 +256,178 @@ pub async fn parent(linear: &impl Linear, key: &str) -> Result<Option<IssueRef>>
     }))
 }
 
+/// Every team the user is in.
+pub async fn teams(linear: &impl Linear) -> Result<Vec<Team>> {
+    let Message::Teams(teams) = linear.run(usecase::team::load()).await? else {
+        bail!("unexpected answer to a teams request");
+    };
+    Ok(teams)
+}
+
+/// A team by key or name.
+pub fn team<'a>(teams: &'a [Team], wanted: &str) -> Result<&'a Team> {
+    pick(
+        "team",
+        wanted,
+        teams,
+        |t| vec![t.key.clone(), t.name.clone()],
+        |t| t.key.clone(),
+    )
+}
+
+/// A team of the user's by key or name, fetched.
+pub async fn one_team(linear: &impl Linear, wanted: &str) -> Result<Team> {
+    Ok(team(&teams(linear).await?, wanted)?.clone())
+}
+
+/// A project anywhere in the workspace, by name in any case or by id. Two
+/// projects of one name are told apart by their teams.
+pub async fn project(linear: &impl Linear, wanted: &str) -> Result<Project> {
+    let request = usecase::project::find(wanted)?;
+    let Message::ProjectsFound { projects, name } = linear.run(request).await? else {
+        bail!("unexpected answer to a project search");
+    };
+    let teams_of = |p: &Project| {
+        p.teams.as_ref().map_or(String::new(), |t| {
+            let keys: Vec<&str> = t.nodes.iter().map(|t| t.key.as_str()).collect();
+            format!(" ({})", keys.join(", "))
+        })
+    };
+    match projects.as_slice() {
+        [one] => return Ok(one.clone()),
+        [] => {}
+        many => {
+            let candidates: Vec<String> = many
+                .iter()
+                .map(|p| format!("{}{} — id {}", p.name, teams_of(p), p.id))
+                .collect();
+            bail!(
+                "project {wanted} is ambiguous: it could be {}; name it by id",
+                candidates.join(", ")
+            )
+        }
+    }
+    // Not a name: perhaps an id.
+    let looks_like_id = wanted.len() >= 8
+        && wanted
+            .trim()
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-');
+    if looks_like_id {
+        return project_detail(linear, &ProjectId::new(wanted.trim())).await;
+    }
+    bail!("no project {name} in this workspace")
+}
+
+/// A project read with its teams and milestones.
+pub async fn project_detail(linear: &impl Linear, id: &ProjectId) -> Result<Project> {
+    let Message::ProjectDetail(project) = linear.run(usecase::project::open(id.clone())).await?
+    else {
+        bail!("unexpected answer to a project request");
+    };
+    Ok(*project)
+}
+
+/// A milestone of `project` (read with its milestones) by name or id, or
+/// `none`.
+pub fn milestone(project: &Project, wanted: &str) -> Result<Option<Milestone>> {
+    if is_none(wanted) {
+        return Ok(None);
+    }
+    let milestones = project
+        .milestones
+        .as_ref()
+        .map_or(&[][..], |m| m.nodes.as_slice());
+    let found = pick(
+        "milestone",
+        wanted,
+        milestones,
+        |m| vec![m.name.clone(), m.id.to_string()],
+        |m| m.name.clone(),
+    )
+    .map_err(|e| anyhow::anyhow!("{e}, in project {}", project.name))?;
+    Ok(Some(found.clone()))
+}
+
+/// One of the workspace's project statuses, by name.
+pub async fn project_status(linear: &impl Linear, wanted: &str) -> Result<ProjectStatus> {
+    let request = usecase::project::load_statuses();
+    let Message::ProjectStatuses(statuses) = linear.run(request).await? else {
+        bail!("unexpected answer to a project statuses request");
+    };
+    Ok(pick(
+        "project status",
+        wanted,
+        &statuses,
+        |s| vec![s.name.clone()],
+        |s| s.name.clone(),
+    )?
+    .clone())
+}
+
+/// A date as Linear takes it, `YYYY-MM-DD`, or `none`.
+pub fn date(text: &str) -> Result<Option<String>> {
+    if is_none(text) {
+        return Ok(None);
+    }
+    let text = text.trim();
+    let digits = |r: std::ops::Range<usize>| {
+        text.get(r)
+            .is_some_and(|s| s.chars().all(|c| c.is_ascii_digit()))
+    };
+    let valid = text.len() == 10
+        && digits(0..4)
+        && &text[4..5] == "-"
+        && digits(5..7)
+        && &text[7..8] == "-"
+        && digits(8..10)
+        && parse_timestamp(&format!("{text}T00:00:00Z")).is_some();
+    if !valid {
+        bail!("not a date: {text} (YYYY-MM-DD, or none)");
+    }
+    Ok(Some(text.to_string()))
+}
+
+/// Every saved view the user can open, in Linear's order.
+pub async fn views(linear: &impl Linear) -> Result<Vec<CustomView>> {
+    let mut store = Store::default();
+    let request = usecase::view::reload_views(&mut store);
+    let Message::CustomViews(views) = linear.run(request).await? else {
+        bail!("unexpected answer to a views request");
+    };
+    usecase::view::take_views(&mut store, views);
+    Ok(store.custom_views)
+}
+
+/// A saved view by name: one listing issues, or one listing projects.
+pub async fn view(linear: &impl Linear, wanted: &str, issues: bool) -> Result<CustomView> {
+    let views: Vec<CustomView> = views(linear)
+        .await?
+        .into_iter()
+        .filter(|v| v.lists_issues() == issues)
+        .collect();
+    let what = if issues { "issue view" } else { "project view" };
+    Ok(pick(
+        what,
+        wanted,
+        &views,
+        |v| vec![v.name.clone()],
+        |v| v.name.clone(),
+    )?
+    .clone())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dates_are_calendar_days_or_none() {
+        assert_eq!(date("2026-12-01").unwrap().as_deref(), Some("2026-12-01"));
+        assert_eq!(date("none").unwrap(), None);
+        assert!(date("2026-13-01").is_err());
+        assert!(date("12/01/2026").is_err());
+    }
 
     fn labels() -> Vec<Label> {
         serde_json::from_value(serde_json::json!([

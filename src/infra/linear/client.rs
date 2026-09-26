@@ -10,6 +10,13 @@ use serde_json::{Value, json};
 use super::error::{ApiError, GraphQLError};
 use crate::core::entity::*;
 use crate::core::usecase::issue::{Changes, Draft};
+use crate::core::usecase::project;
+
+/// Fields selected for a project read on its own: its teams and milestones.
+const PROJECT_DETAIL_FIELDS: &str = r#"
+    teams { nodes { id name key } }
+    projectMilestones { nodes { id name targetDate description } }
+"#;
 
 /// Fields selected for a comment, wherever it comes from.
 const COMMENT_FIELDS: &str = r#"
@@ -65,6 +72,8 @@ const PROJECT_FIELDS: &str = r#"
     startDate
     targetDate
     url
+    priorityLabel
+    status { id name type color }
     lead { id name displayName }
 "#;
 
@@ -336,7 +345,7 @@ impl LinearClient {
                         nodes {{ id identifier title state {{ id name color type }} }}
                     }}
                     project {{ id name url color state }}
-                    projectMilestone {{ id name }}
+                    projectMilestone {{ id name targetDate }}
                     cycle {{ id name number }}
                 }}
             }}"#
@@ -663,6 +672,180 @@ impl LinearClient {
         .await
     }
 
+    /// Every project of the workspace named `name`, in any case.
+    pub async fn find_projects(&self, name: &str) -> Result<Vec<Project>, ApiError> {
+        let query = format!(
+            r#"query FindProjects($name: String!) {{
+                projects(first: 50, filter: {{ name: {{ eqIgnoreCase: $name }} }}) {{
+                    nodes {{ {PROJECT_FIELDS} teams {{ nodes {{ id name key }} }} }}
+                }}
+            }}"#
+        );
+        let (projects, _) = self
+            .connection(&query, json!({ "name": name }), "/projects")
+            .await?;
+        Ok(projects)
+    }
+
+    pub async fn project_detail(&self, project_id: &ProjectId) -> Result<Project, ApiError> {
+        #[derive(Deserialize)]
+        struct Resp {
+            project: Project,
+        }
+        let query = format!(
+            r#"query ProjectDetail($id: String!) {{
+                project(id: $id) {{ {PROJECT_FIELDS} {PROJECT_DETAIL_FIELDS} }}
+            }}"#
+        );
+        let resp: Resp = self.query(&query, json!({ "id": project_id })).await?;
+        Ok(resp.project)
+    }
+
+    pub async fn project_statuses(&self) -> Result<Vec<ProjectStatus>, ApiError> {
+        let (statuses, _) = self
+            .connection(
+                "query ProjectStatuses { projectStatuses(first: 50) { nodes { id name type color } } }",
+                Value::Null,
+                "/projectStatuses",
+            )
+            .await?;
+        Ok(statuses)
+    }
+
+    /// Run a create mutation and take the created `entity` out of its payload.
+    async fn created<T: DeserializeOwned>(
+        &self,
+        query: &str,
+        variables: Value,
+        field: &str,
+        entity: &str,
+        rejected: &'static str,
+    ) -> Result<T, ApiError> {
+        let mut payload = self.mutate(query, variables, field, rejected).await?;
+        let made = payload
+            .get_mut(entity)
+            .map(Value::take)
+            .filter(|v| !v.is_null())
+            .ok_or_else(|| ApiError::Decode(format!("{field} returned no {entity}")))?;
+        serde_json::from_value(made).map_err(|e| decode_error(operation_name(query), e))
+    }
+
+    pub async fn create_project(&self, draft: &project::Draft) -> Result<Project, ApiError> {
+        let query = format!(
+            r#"mutation CreateProject($input: ProjectCreateInput!) {{
+                projectCreate(input: $input) {{
+                    success
+                    project {{ {PROJECT_FIELDS} {PROJECT_DETAIL_FIELDS} }}
+                }}
+            }}"#
+        );
+        self.created(
+            &query,
+            json!({ "input": project_create_input(draft) }),
+            "projectCreate",
+            "project",
+            "Linear rejected the project",
+        )
+        .await
+    }
+
+    pub async fn update_project(
+        &self,
+        project_id: &ProjectId,
+        changes: &project::Changes,
+    ) -> Result<(), ApiError> {
+        self.mutate(
+            r#"mutation UpdateProject($id: String!, $input: ProjectUpdateInput!) {
+                projectUpdate(id: $id, input: $input) { success }
+            }"#,
+            json!({ "id": project_id, "input": project_update_input(changes) }),
+            "projectUpdate",
+            "Linear rejected the update",
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_project(&self, project_id: &ProjectId) -> Result<(), ApiError> {
+        self.mutate(
+            r#"mutation DeleteProject($id: String!) {
+                projectDelete(id: $id) { success }
+            }"#,
+            json!({ "id": project_id }),
+            "projectDelete",
+            "Linear refused to delete the project",
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn create_milestone(
+        &self,
+        project_id: &ProjectId,
+        draft: &project::MilestoneDraft,
+    ) -> Result<Milestone, ApiError> {
+        let mut input = json!({ "projectId": project_id, "name": draft.name });
+        if let Some(description) = &draft.description {
+            input["description"] = json!(description);
+        }
+        if let Some(target) = &draft.target_date {
+            input["targetDate"] = json!(target);
+        }
+        self.created(
+            r#"mutation CreateMilestone($input: ProjectMilestoneCreateInput!) {
+                projectMilestoneCreate(input: $input) {
+                    success
+                    projectMilestone { id name targetDate description }
+                }
+            }"#,
+            json!({ "input": input }),
+            "projectMilestoneCreate",
+            "projectMilestone",
+            "Linear rejected the milestone",
+        )
+        .await
+    }
+
+    pub async fn update_milestone(
+        &self,
+        milestone_id: &MilestoneId,
+        changes: &project::MilestoneChanges,
+    ) -> Result<(), ApiError> {
+        let mut input = serde_json::Map::new();
+        if let Some(name) = &changes.name {
+            input.insert("name".into(), json!(name));
+        }
+        if let Some(description) = &changes.description {
+            input.insert("description".into(), json!(description));
+        }
+        if let Some(target) = &changes.target_date {
+            input.insert("targetDate".into(), json!(target));
+        }
+        self.mutate(
+            r#"mutation UpdateMilestone($id: String!, $input: ProjectMilestoneUpdateInput!) {
+                projectMilestoneUpdate(id: $id, input: $input) { success }
+            }"#,
+            json!({ "id": milestone_id, "input": input }),
+            "projectMilestoneUpdate",
+            "Linear rejected the update",
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_milestone(&self, milestone_id: &MilestoneId) -> Result<(), ApiError> {
+        self.mutate(
+            r#"mutation DeleteMilestone($id: String!) {
+                projectMilestoneDelete(id: $id) { success }
+            }"#,
+            json!({ "id": milestone_id }),
+            "projectMilestoneDelete",
+            "Linear refused to delete the milestone",
+        )
+        .await?;
+        Ok(())
+    }
+
     // --- Mutations ---
 
     /// Apply one `IssueUpdateInput` to an issue.
@@ -836,6 +1019,9 @@ fn update_input(changes: &Changes) -> Value {
     if let Some(project) = &changes.project_id {
         put("projectId", json!(project));
     }
+    if let Some(milestone) = &changes.milestone_id {
+        put("projectMilestoneId", json!(milestone));
+    }
     if let Some(cycle) = &changes.cycle_id {
         put("cycleId", json!(cycle));
     }
@@ -867,6 +1053,9 @@ fn create_input(team_id: &TeamId, draft: &Draft) -> Value {
     if let Some(project) = &draft.project_id {
         input["projectId"] = json!(project);
     }
+    if let Some(milestone) = &draft.milestone_id {
+        input["projectMilestoneId"] = json!(milestone);
+    }
     if let Some(cycle) = &draft.cycle_id {
         input["cycleId"] = json!(cycle);
     }
@@ -874,6 +1063,61 @@ fn create_input(team_id: &TeamId, draft: &Draft) -> Value {
         input["parentId"] = json!(parent);
     }
     input
+}
+
+/// The `ProjectCreateInput` for a draft: what it sets, and nothing else.
+fn project_create_input(draft: &project::Draft) -> Value {
+    let mut input = json!({ "name": draft.name, "teamIds": draft.team_ids });
+    if let Some(description) = &draft.description {
+        input["description"] = json!(description);
+    }
+    if let Some(lead) = &draft.lead_id {
+        input["leadId"] = json!(lead);
+    }
+    if let Some(status) = &draft.status_id {
+        input["statusId"] = json!(status);
+    }
+    if let Some(priority) = draft.priority {
+        input["priority"] = json!(priority.as_u8());
+    }
+    if let Some(start) = &draft.start_date {
+        input["startDate"] = json!(start);
+    }
+    if let Some(target) = &draft.target_date {
+        input["targetDate"] = json!(target);
+    }
+    input
+}
+
+/// The `ProjectUpdateInput` for `changes`: only what it changes, an emptied
+/// field as `null`.
+fn project_update_input(changes: &project::Changes) -> Value {
+    let mut input = serde_json::Map::new();
+    let mut put = |name: &str, value: Value| {
+        input.insert(name.to_string(), value);
+    };
+    if let Some(name) = &changes.name {
+        put("name", json!(name));
+    }
+    if let Some(description) = &changes.description {
+        put("description", json!(description));
+    }
+    if let Some(lead) = &changes.lead_id {
+        put("leadId", json!(lead));
+    }
+    if let Some(status) = &changes.status_id {
+        put("statusId", json!(status));
+    }
+    if let Some(priority) = changes.priority {
+        put("priority", json!(priority.as_u8()));
+    }
+    if let Some(start) = &changes.start_date {
+        put("startDate", json!(start));
+    }
+    if let Some(target) = &changes.target_date {
+        put("targetDate", json!(target));
+    }
+    Value::Object(input)
 }
 
 /// The operation name of a query — `TeamIssues` in `query TeamIssues(…)` —
@@ -1093,6 +1337,53 @@ mod tests {
             .unwrap();
         assert_eq!(comment.id, "c2");
         assert!(comment.url.unwrap().ends_with("comment-c2"));
+    }
+
+    #[test]
+    fn a_project_sends_only_what_it_sets_and_nulls_what_it_empties() {
+        let draft = project::Draft {
+            name: "Launch".into(),
+            team_ids: vec![TeamId::new("t")],
+            target_date: Some("2026-12-01".into()),
+            ..project::Draft::default()
+        };
+        assert_eq!(
+            project_create_input(&draft),
+            json!({ "name": "Launch", "teamIds": ["t"], "targetDate": "2026-12-01" })
+        );
+        let changes = project::Changes {
+            lead_id: Some(None),
+            priority: Some(Priority::High),
+            ..project::Changes::default()
+        };
+        assert_eq!(
+            project_update_input(&changes),
+            json!({ "leadId": null, "priority": 2 })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_milestone_comes_back_from_its_create() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_partial_json(json!({
+                "variables": { "input": { "projectId": "p", "name": "Beta", "targetDate": "2026-11-01" } }
+            })))
+            .respond_with(data(json!({ "projectMilestoneCreate": { "success": true,
+                "projectMilestone": { "id": "m1", "name": "Beta", "targetDate": "2026-11-01" } } })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let draft = project::MilestoneDraft {
+            name: "Beta".into(),
+            target_date: Some("2026-11-01".into()),
+            ..Default::default()
+        };
+        let milestone = client(&server)
+            .create_milestone(&ProjectId::new("p"), &draft)
+            .await
+            .unwrap();
+        assert_eq!(milestone.id, "m1");
     }
 
     #[test]

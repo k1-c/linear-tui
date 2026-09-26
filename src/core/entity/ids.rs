@@ -70,6 +70,7 @@ id_type!(
     CommentId,
     MilestoneId,
     OrganizationId,
+    ProjectStatusId,
 );
 
 #[cfg(test)]

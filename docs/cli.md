@@ -1,8 +1,9 @@
 # Headless commands
 
-`linear-tui context` and `linear-tui issue …` run without the TUI. They are how
-a coding agent reads what you are looking at in linear-tui and acts on Linear
-itself, using the credentials `linear-tui auth` set up and the same request
+`linear-tui context`, `linear-tui issue …`, and the commands for projects,
+milestones, teams, cycles, views, and favorites run without the TUI. They are
+how a coding agent reads what you are looking at in linear-tui and does
+whatever you can do in the TUI, on Linear itself, using the credentials `linear-tui auth` set up and the same request
 code as the TUI, so there is no second client and no second sign-in. They act
 in the workspace in use ([authentication.md](authentication.md#several-workspaces)).
 `linear-tui tui …` goes further and works the running TUI itself, and
@@ -161,6 +162,40 @@ With `--json`:
 `running` and `snapshot` are `null` when no view is recorded. With neither a
 view nor a worktree issue, the command fails.
 
+## `linear-tui issue list (source) [narrowing] [--limit <n>] [--json]`
+
+One of the lists the TUI shows, read afresh. The source is one of:
+
+| Source | Lists |
+| --- | --- |
+| `--team <key> [--preset active\|backlog\|all]` | a team's issues in one of Linear's slices (`active` by default) |
+| `--mine` | the issues assigned to you, across every team |
+| `--view <name>` | a saved issue view's issues, as Linear evaluates it |
+| `--project <name>` | a project's issues |
+| `--team <key> --cycle <name\|current>` | a cycle's issues |
+
+`--status <name>`, `--priority <level>`, and `--query <text>` (in the title or
+identifier, any case) narrow it, as the TUI's filter and search do; `--preset`
+narrows the other sources too. `--limit` (50 by default) caps the rows; pages
+are read until it is reached, ten at most.
+
+```markdown
+# Weather issues, Active (3)
+
+- WX-12 Crash when the forecast is empty — In Progress · Urgent · me
+- WX-9 Retry failed forecast fetches — In Progress · High
+- WX-4 Hourly chart overlaps on narrow screens — Todo · High
+```
+
+`(n)` becomes `(first n)` when there is more. `--json` prints `{ "list",
+"issues": [...], "more" }`, each issue as `issue show --json` prints it.
+
+## `linear-tui issue search <text> [--team <key>] [--json]`
+
+Linear's full-text search, done or not, in one team or the whole workspace.
+Prints the results as `issue list` does; `--json` prints `{ "search",
+"issues" }`.
+
 ## `linear-tui issue show <ID> [--json]`
 
 ```markdown
@@ -218,7 +253,8 @@ in the order above).
 `--team` is a team key or name, in any case. The fields are those of
 `issue update` below, without `--unlabel` and `none`: `--description`,
 `--priority` (`none` by default), `--assignee`, `--estimate`, `--label`
-(repeatable), `--project`, `--cycle`, `--parent`, each resolved in that team.
+(repeatable), `--project`, `--milestone` (of that project), `--cycle`,
+`--parent`, each resolved in that team.
 Prints `Created ENG-44 <title>` and the URL on the next line; `--json` prints
 the new issue as `issue show --json` does.
 
@@ -236,6 +272,7 @@ Changes any of the issue's fields at once:
 | `--label <name>` | a label to add; repeatable |
 | `--unlabel <name>` | a label to remove; repeatable |
 | `--project <name>` | a project of the team, or `none` |
+| `--milestone <name>` | a milestone of the project the issue is moved to, or else of its own; `none` takes it out of one. Moving the issue to another project takes it out of its milestone |
 | `--cycle <name>` | a cycle of the team by name or number, `current` for the one under way, or `none` |
 | `--parent <ID>` | the parent issue, or `none` |
 
@@ -286,3 +323,117 @@ is looked up in the **issue's own team**: two teams can both have a "Done",
 and only the issue's is valid for it. An unknown name fails and lists the
 team's states. Prints `ENG-42: Todo → Done`; `--json` prints
 `{ "issue": "ENG-42", "from": "Todo", "to": "Done" }`.
+
+
+## `linear-tui project list (--team <key> | --view <name>) [--json]`
+
+A team's projects, or a saved project view's:
+
+```markdown
+# Weather projects (2)
+
+- Forecast v2 — In Progress · High · target 2026-12-01
+- Radar — Planned
+```
+
+`--json` prints `{ "list", "projects": [...] }`, each as `project show --json`
+prints it without its milestones.
+
+A `<project>` below is a project's name, in any case, anywhere in the
+workspace, or its id. Two projects of one name fail with both listed, ids
+and teams included; name one by its id then.
+
+## `linear-tui project show <project> [--json]`
+
+```markdown
+# Forecast v2
+
+- Id: 3f2c…
+- Status: In Progress
+- Priority: High
+- Lead: me
+- Teams: WX
+- Start: 2026-09-01
+- Target: 2026-12-01
+- Progress: 40%
+- URL: https://linear.app/…
+
+## Description
+
+…
+
+## Milestones (2)
+
+- Beta — target 2026-11-01 (id 9a41…)
+- Launch (id 77b0…)
+```
+
+A field without a value is left out. `--json` gives `id`, `name`, `url`,
+`status` (`{ name, type }`), `priority`, `lead`, `teams` (keys),
+`start_date`, `target_date`, `progress` (0 to 1), `description`, and
+`milestones` (`{ id, name, target_date, description }`).
+
+## `linear-tui project create --team <key>... --name <text> [fields] [--json]`
+
+## `linear-tui project update <project> [--name <text>] [fields] [--json]`
+
+| Option | Value |
+| --- | --- |
+| `--team <key>` | create only: a team it belongs to; repeatable, at least one |
+| `--description <text>` | Markdown; `-` reads stdin |
+| `--lead <who>` | `me`, or a member of its (first) team by name, display name, or email; `none` on update |
+| `--status <name>` | one of the workspace's project statuses (`Backlog`, `Planned`, `In Progress`, …) |
+| `--priority <level>` | `urgent`, `high`, `medium`, `low`, or `none` |
+| `--start <date>`, `--target <date>` | `YYYY-MM-DD`; `none` on update |
+
+A target date before the start date is refused. `create` prints `Created
+project <name> (id <id>)` and the URL; `--json` prints the project. `update`
+prints one line per field changed (`Forecast v2: status Planned → In
+Progress`), and `--json` `{ "project", "id", "changes": [{ "field", "from",
+"to" }] }`.
+
+## `linear-tui project delete <project> [--json]`
+
+Moves the project to Linear's trash; its issues stay, without a project.
+Prints `Deleted project <name> (id <id>); it is in Linear's trash`.
+
+## `linear-tui milestone list <project> [--json]`
+
+The project's milestones, as `project show` lists them.
+
+## `linear-tui milestone create <project> --name <text> [--description <text>] [--target <date>] [--json]`
+
+## `linear-tui milestone update <project> <milestone> [--name <text>] [--description <text>] [--target <date|none>] [--json]`
+
+## `linear-tui milestone delete <project> <milestone> [--json]`
+
+A `<milestone>` is its name, in any case, or its id, within the project.
+`create` prints `Created milestone Beta — target 2026-11-01 (id …) in
+<project>`; `update` one line per change; `delete` `Deleted milestone <name>
+of <project>`. A deleted milestone's issues stay in the project.
+
+## `linear-tui team list [--json]`, `linear-tui team show <key> [--json]`
+
+The teams you are in; and one team's workflow states (in board order, with
+their category), members (with email), and labels (the team's and the
+workspace's) — what `issue update` and `issue status` resolve names against.
+
+## `linear-tui cycle list --team <key> [--json]`
+
+A team's cycles with their dates and progress, `← current` on the one under
+way.
+
+## `linear-tui view list [--team <key>] [--json]`
+
+The saved views on the workspace's Views page, or a team's: issue views and
+project views, each marked shared or personal.
+
+## `linear-tui favorite list [--json]`
+
+Your Favorites in Linear's order, indented inside a folder, each with what
+it leads to and the command that reads it:
+
+```markdown
+- Forecast v2 (project) — `linear-tui project show "Forecast v2"`
+- Open bugs (view) — `linear-tui issue list --view "Open bugs"`
+```

@@ -5,7 +5,7 @@
 //! | Module | Aggregate | Use cases |
 //! | --- | --- | --- |
 //! | [`issue`] | an issue, with its comments | list, page, narrow, search, read, change, edit, comment, reply, edit and delete a comment, create, copy, open |
-//! | [`project`] | a project | list a team's or a view's, open |
+//! | [`project`] | a project, with its milestones | list a team's or a view's, find by name, read, create, change, delete, add, change, and delete milestones, open |
 //! | [`cycle`] | a cycle | list a team's |
 //! | [`team`] | a team, its states, members, and labels | pick at startup, switch, know its states, members, and labels |
 //! | [`view`] | a saved view | list, pick those a Views page shows |
@@ -167,6 +167,15 @@ pub enum Refusal {
     /// An issue needs a title.
     #[error("A title is required")]
     TitleRequired,
+    /// A project or milestone needs a name.
+    #[error("A name is required")]
+    NameRequired,
+    /// A project belongs to at least one team.
+    #[error("A project needs at least one team")]
+    TeamRequired,
+    /// A target date before the start date.
+    #[error("The target date {target} is before the start date {start}")]
+    EndsBeforeItStarts { start: String, target: String },
     /// An edit that changes nothing.
     #[error("Nothing to change")]
     NothingToChange,
