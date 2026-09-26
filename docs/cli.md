@@ -189,15 +189,20 @@ view nor a worktree issue, the command fails.
 
 ### someone — 2026-09-24T10:00:00.000Z
 
+- Id: 3f2c…
+
 …
 
 #### ↳ me — 2026-09-24T11:00:00.000Z
+
+- Id: 9a41…
 
 …
 ```
 
 A field without a value is left out. Comments run oldest first, each reply
-(`#### ↳`) right after the comment it answers.
+(`#### ↳`) right after the comment it answers. Each comment's `- Id:` is what
+`issue comment --reply-to`, `comment edit`, and `comment delete` take.
 
 `--json` gives `id`, `identifier`, `title`, `url`, `state` (`{ name, type }`,
 `type` being Linear's category: `triage`, `backlog`, `unstarted`, `started`,
@@ -208,17 +213,71 @@ A field without a value is left out. Comments run oldest first, each reply
 `description`, and `comments` (`{ id, author, created_at, parent_id, body }`,
 in the order above).
 
-## `linear-tui issue create --team <key> --title <text> [--description <text>] [--priority <level>] [--json]`
+## `linear-tui issue create --team <key> --title <text> [fields] [--json]`
 
-`--team` is a team key or name, in any case. `--priority` is `urgent`, `high`,
-`medium`, `low`, or `none` (the default). Prints `Created ENG-44 <title>` and
-the URL on the next line; `--json` prints the new issue as `issue show --json`
-does.
+`--team` is a team key or name, in any case. The fields are those of
+`issue update` below, without `--unlabel` and `none`: `--description`,
+`--priority` (`none` by default), `--assignee`, `--estimate`, `--label`
+(repeatable), `--project`, `--cycle`, `--parent`, each resolved in that team.
+Prints `Created ENG-44 <title>` and the URL on the next line; `--json` prints
+the new issue as `issue show --json` does.
 
-## `linear-tui issue comment <ID> <body> [--json]`
+## `linear-tui issue update <ID> [fields] [--json]`
 
-Posts `<body>` (Markdown) as a comment. Prints `Commented on ENG-42`; `--json`
-prints `{ "issue": "ENG-42", "commented": true }`.
+Changes any of the issue's fields at once:
+
+| Option | Value |
+| --- | --- |
+| `--title <text>` | the new title |
+| `--description <text>` | the new description, Markdown; `-` reads the whole body from stdin |
+| `--priority <level>` | `urgent`, `high`, `medium`, `low`, or `none` |
+| `--assignee <who>` | `me`, a member of the team by name, display name, or email, or `none` |
+| `--estimate <n>` | a whole number, or `none` |
+| `--label <name>` | a label to add; repeatable |
+| `--unlabel <name>` | a label to remove; repeatable |
+| `--project <name>` | a project of the team, or `none` |
+| `--cycle <name>` | a cycle of the team by name or number, `current` for the one under way, or `none` |
+| `--parent <ID>` | the parent issue, or `none` |
+
+At least one is required. Names resolve in the **issue's own team** (labels:
+the team's and the workspace's), in any case. A name that matches nothing
+fails and lists what is valid; one that matches more than one thing fails and
+lists the candidates. An issue cannot be its own parent, nor a label both added
+and removed.
+
+Prints one line per field changed, in the order `issue show` lists them:
+
+```text
+ENG-42: priority High → Low
+ENG-42: labels UI → UI, Bug
+ENG-42: description rewritten
+```
+
+`--json` prints `{ "issue": "ENG-42", "changes": [{ "field": "priority",
+"from": "High", "to": "Low" }, …] }`; `from` and `to` are names (labels: a
+list of names), or `null` for none.
+
+## `linear-tui issue comment <ID> <body> [--reply-to <comment-id>] [--json]`
+
+Posts `<body>` (Markdown) as a comment, or with `--reply-to` as a reply in
+that comment's thread; Linear's threads are one level deep, so a reply to a
+reply goes to the thread's first comment. Prints `Commented on ENG-42 (comment
+<id>)`, or `Replied on ENG-42 (comment <id>, in the thread of <id>)`; `--json`
+prints `{ "issue": "ENG-42", "commented": true, "id", "url", "parent_id" }`.
+
+## `linear-tui issue comment edit <ID> <comment-id> <body> [--json]`
+
+Replaces the comment's body. Prints `Edited comment <id> on ENG-42`; `--json`
+prints `{ "issue": "ENG-42", "comment": "<id>", "edited": true }`.
+
+## `linear-tui issue comment delete <ID> <comment-id> [--json]`
+
+Deletes the comment. Prints `Deleted comment <id> on ENG-42`; `--json` prints
+`{ "issue": "ENG-42", "comment": "<id>", "deleted": true }`.
+
+Linear lets only a comment's author edit or delete it, so someone else's fails
+before anything is sent, naming who wrote it; so does a comment id that is not
+on the issue.
 
 ## `linear-tui issue status <ID> <state> [--json]`
 

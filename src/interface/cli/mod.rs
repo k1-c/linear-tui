@@ -1,7 +1,7 @@
 //! The `linear-tui <command>` subcommands, which run without the TUI.
 //!
 //! Besides signing in, these are how an agent reads what the user is looking
-//! at (`context`) and acts on Linear itself (`issue …`), with the same
+//! at (`context`) and reads, changes, and comments on issues (`issue …`), with the same
 //! credentials and the same request code as the TUI. Output is meant for
 //! agents first: plain, stable Markdown by default, JSON with `--json`, and
 //! errors on stderr with a non-zero exit. The contract is `docs/cli.md`.
@@ -22,6 +22,7 @@ mod context;
 mod headless;
 mod issue;
 mod paths;
+mod resolve;
 mod tui;
 
 pub use headless::Linear;
@@ -80,8 +81,18 @@ For agents and scripts (Markdown by default, --json for JSON):
   linear-tui issue show <ID> [--json]
                                  An issue with its description and comments
   linear-tui issue create --team <key> --title <text> [--description <text>]
-                          [--priority <urgent|high|medium|low|none>] [--json]
-  linear-tui issue comment <ID> <body> [--json]
+                          [--priority <urgent|high|medium|low|none>]
+                          [--assignee <me|name|email>] [--estimate <n>]
+                          [--label <name>]... [--project <name>]
+                          [--cycle <name|current>] [--parent <ID>] [--json]
+  linear-tui issue update <ID> [--title <text>] [--description <text>]
+                          [--priority <level>] [--assignee <me|name|email|none>]
+                          [--estimate <n|none>] [--label <name>]... [--unlabel <name>]...
+                          [--project <name|none>] [--cycle <name|current|none>]
+                          [--parent <ID|none>] [--json]
+  linear-tui issue comment <ID> <body> [--reply-to <comment-id>] [--json]
+  linear-tui issue comment edit <ID> <comment-id> <body> [--json]
+  linear-tui issue comment delete <ID> <comment-id> [--json]
   linear-tui issue status <ID> <state> [--json]
   linear-tui tui screen [--json]
                                  The screen of the linear-tui running here

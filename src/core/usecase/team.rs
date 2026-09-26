@@ -4,7 +4,8 @@
 //! [`pick_initial`] chooses the team at startup and [`switch`] moves to
 //! another. [`ensure_context`] fetches a team's states and members — what
 //! its issues can be moved to and assigned to — and [`context_arrived`] /
-//! [`context_failed`] follow the answer. [`load`] asks for the teams.
+//! [`context_failed`] follow the answer. [`load`] asks for the teams, and
+//! [`load_labels`] for the labels a team's issues can carry.
 
 use crate::core::entity::{Team, TeamId, User, WorkflowState};
 use crate::core::store::{IssueSource, Store, TeamContext};
@@ -16,12 +17,21 @@ pub enum Request {
     Teams,
     /// A team's workflow states and members.
     Context { team_id: TeamId },
+    /// The labels a team's issues can carry: the team's own and the
+    /// workspace's.
+    Labels { team_id: TeamId },
 }
 
 /// **Know the teams** the user belongs to. Asked for as linear-tui starts;
 /// every team page waits on the answer.
 pub fn load() -> Request {
     Request::Teams
+}
+
+/// **Know the labels a team's issues can carry**: the team's own, and the
+/// workspace's, which every team shares.
+pub fn load_labels(team_id: TeamId) -> Request {
+    Request::Labels { team_id }
 }
 
 /// **Which team linear-tui opens on.**
@@ -116,6 +126,17 @@ mod tests {
     #[test]
     fn the_teams_are_asked_for() {
         assert_eq!(load(), Request::Teams);
+    }
+
+    /// A team's labels are asked of Linear by the team.
+    #[test]
+    fn a_teams_labels_are_asked_for() {
+        assert_eq!(
+            load_labels(TeamId::from("t")),
+            Request::Labels {
+                team_id: "t".into()
+            }
+        );
     }
 
     /// The remembered team wins over the configured one.

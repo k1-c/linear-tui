@@ -66,9 +66,10 @@ fn the_headless_issue_commands_act_on_the_same_workspace() {
     assert!(shown.starts_with(&format!("# {id} {FOR_AGENT}")), "{shown}");
 
     let body = format!("From an agent, run {}", std::process::id());
-    assert_eq!(
-        tui.cli(&["issue", "comment", id, &body]).unwrap().trim(),
-        format!("Commented on {id}")
+    let commented = tui.cli(&["issue", "comment", id, &body]).unwrap();
+    assert!(
+        commented.starts_with(&format!("Commented on {id} (comment ")),
+        "{commented}"
     );
     let moved = tui.cli(&["issue", "status", id, "todo"]).unwrap();
     assert_eq!(moved.trim(), format!("{id}: Backlog → Todo"));

@@ -168,6 +168,16 @@ fn deserialize_team_members() {
     }
     let resp: TeamResp = serde_json::from_str(&fixture("team_members.json")).unwrap();
     assert_eq!(resp.team.members.nodes.len(), 2);
+    // An email is what `--assignee` can name someone by; not every member
+    // query asks for it.
+    let emails: Vec<_> = resp
+        .team
+        .members
+        .nodes
+        .iter()
+        .map(|u| u.email.as_deref())
+        .collect();
+    assert_eq!(emails, [Some("alice@example.com"), None]);
 }
 
 #[test]
@@ -324,6 +334,15 @@ fn deserialize_issue_detail_metadata() {
     assert!(comments[0].parent.is_none());
     assert_eq!(comments[1].parent.as_ref().unwrap().id, "comment-001");
     assert!(comments[1].edited_at.is_some());
+    // A comment's URL, when the query asks for it; older ones lack it.
+    assert!(
+        comments[0]
+            .url
+            .as_deref()
+            .unwrap()
+            .ends_with("#comment-001")
+    );
+    assert!(comments[1].url.is_none());
 }
 
 /// Every field added for the richer detail view is optional: older

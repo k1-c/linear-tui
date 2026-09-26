@@ -29,7 +29,9 @@ Codex asks you to review and trust the plugin's hook before it runs.
 **A SessionStart hook** (`hooks/session-start.sh`). When a session starts,
 resumes, or is cleared or compacted, it prints about a dozen lines that the
 agent receives as context: when to run `linear-tui context`, the `issue`
-commands, the rule that an issue is only moved when you ask, and that it can
+commands — reading, commenting and replying, editing and deleting its own
+comments, changing state, updating fields, filing — the rule that an issue is
+only moved or edited when you ask, and that it can
 work the running TUI — `linear-tui tui screen` to read it, `tui press`,
 `tui run`, `tui type`, and `tui open` to act, each answering with the new
 screen — to show you something or to check linear-tui by using it. Inside a
@@ -48,7 +50,8 @@ said. Context from a hook does none of that.
 **A `linear-tui` skill** (`skills/linear-tui/SKILL.md`), which the agent loads
 when you refer to something on your screen without naming it, or ask it to
 comment on, move, or file an issue. It explains how to read `linear-tui context`
-(numbered rows, `← cursor`, stale views), the `issue` commands, and working the
+(numbered rows, `← cursor`, stale views), the `issue` commands — `issue update`
+and comment ids included, so an agent need not reach for Linear's API — and working the
 TUI: reading the screen, pressing keys, running palette commands, typing, and
 `linear-tui --headless` when no linear-tui is open.
 

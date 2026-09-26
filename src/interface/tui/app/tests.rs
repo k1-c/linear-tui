@@ -409,12 +409,169 @@ fn a_completed_form_queues_a_create_request() {
     assert!(matches!(
         app.outbox.requests.front(),
         Some(Request::Issue(
-            crate::core::usecase::issue::Request::Create {
-                priority: Priority::Urgent,
-                ..
-            }
-        ))
+            crate::core::usecase::issue::Request::Create { draft, .. }
+        )) if draft.priority == Priority::Urgent
     ));
+}
+
+// ------------------------------------------------ editing an issue, its thread
+
+use crate::core::usecase::issue::Request as IssueRequest;
+
+/// An app on the detail view of ENG-1, whose thread has `c1` by me and `c2`
+/// by Ada. I am `me`.
+fn app_on_thread() -> App {
+    let mut app = app_with(vec![issue("1", "ENG-1", "Old title")]);
+    app.store.viewer_id = Some(UserId::from("me"));
+    app.open_selected();
+    let current = app.store.current_issue.as_mut().unwrap();
+    current.description = Some("Before".into());
+    current.comments = Some(
+        serde_json::from_str(
+            r#"{"nodes":[
+                {"id":"c1","body":"mine","createdAt":"2026-01-01T00:00:00.000Z","user":{"id":"me","name":"Me"}},
+                {"id":"c2","body":"hers","createdAt":"2026-01-02T00:00:00.000Z","user":{"id":"u2","name":"Ada"}}
+            ]}"#,
+        )
+        .unwrap(),
+    );
+    app.outbox.requests.clear();
+    app
+}
+
+fn last_issue_request(app: &App) -> Option<&IssueRequest> {
+    match app.outbox.requests.back() {
+        Some(Request::Issue(request)) => Some(request),
+        _ => None,
+    }
+}
+
+#[test]
+fn renaming_sends_the_new_title_and_an_unchanged_one_nothing() {
+    let mut app = app_on_thread();
+    app.start_rename();
+    assert_eq!(app.view.input_mode, InputMode::Title);
+    assert_eq!(app.view.title.value, "Old title");
+    app.submit_rename();
+    assert!(app.outbox.requests.is_empty());
+
+    app.start_rename();
+    app.view.title = Input::with("New title");
+    app.submit_rename();
+    assert!(matches!(
+        last_issue_request(&app),
+        Some(IssueRequest::Update { changes, .. }) if changes.title.as_deref() == Some("New title")
+    ));
+    assert_eq!(app.store.current_issue.as_ref().unwrap().title, "New title");
+}
+
+#[test]
+fn without_a_terminal_the_description_is_written_in_a_field() {
+    let mut app = app_on_thread();
+    app.start_description();
+    assert_eq!(app.view.input_mode, InputMode::Description);
+    assert_eq!(app.view.description.value, "Before");
+    app.view.description = Input::with("After");
+    app.submit_description();
+    assert!(matches!(
+        last_issue_request(&app),
+        Some(IssueRequest::Update { changes, .. }) if changes.description.as_deref() == Some("After")
+    ));
+}
+
+#[test]
+fn with_a_terminal_the_description_goes_to_the_editor() {
+    let mut app = app_on_thread();
+    app.external_editor = true;
+    app.start_description();
+    let job = app.outbox.editor.take().expect("an editor job");
+    assert_eq!(job.text, "Before");
+    assert_eq!(app.view.input_mode, InputMode::Normal);
+
+    app.description_edited(&job.issue_id, None);
+    app.description_edited(&job.issue_id, Some("Before\n".into()));
+    assert!(
+        app.outbox.requests.is_empty(),
+        "quit or unchanged: nothing sent"
+    );
+    app.description_edited(&job.issue_id, Some("After".into()));
+    assert!(matches!(
+        last_issue_request(&app),
+        Some(IssueRequest::Update { .. })
+    ));
+}
+
+#[test]
+fn only_my_comments_are_offered_to_edit_but_all_to_reply_to() {
+    let mut app = app_on_thread();
+    assert_eq!(app.pickable_comments(CommentAction::Edit).len(), 1);
+    assert_eq!(app.pickable_comments(CommentAction::Reply).len(), 2);
+    app.open_edit_comment_pick();
+    assert_eq!(app.view.popup, Popup::CommentPick(CommentAction::Edit));
+}
+
+#[test]
+fn an_edited_comment_is_sent_as_an_edit() {
+    let mut app = app_on_thread();
+    app.open_edit_comment_pick();
+    app.apply_popup();
+    assert_eq!(app.view.input_mode, InputMode::Comment);
+    assert_eq!(app.view.comment.value, "mine");
+    app.view.comment = Input::with("mine, fixed");
+    app.submit_comment();
+    assert_eq!(
+        last_issue_request(&app),
+        Some(&IssueRequest::EditComment {
+            issue_id: "1".into(),
+            comment_id: "c1".into(),
+            body: "mine, fixed".into(),
+        })
+    );
+    assert_eq!(app.view.comment_target, CommentTarget::New);
+}
+
+#[test]
+fn a_reply_is_posted_in_the_thread_picked() {
+    let mut app = app_on_thread();
+    app.open_reply_pick();
+    app.popup_pick(1);
+    app.view.comment = Input::with("thanks");
+    app.submit_comment();
+    assert!(matches!(
+        last_issue_request(&app),
+        Some(IssueRequest::Comment { parent_id: Some(p), .. }) if p == "c2"
+    ));
+}
+
+#[test]
+fn a_comment_picked_to_delete_is_deleted() {
+    let mut app = app_on_thread();
+    app.open_delete_comment_pick();
+    app.apply_popup();
+    assert!(matches!(
+        last_issue_request(&app),
+        Some(IssueRequest::DeleteComment { comment_id, .. }) if comment_id == "c1"
+    ));
+}
+
+#[test]
+fn with_no_comments_of_mine_the_picker_says_so() {
+    let mut app = app_on_thread();
+    app.store
+        .current_issue
+        .as_mut()
+        .unwrap()
+        .comments
+        .as_mut()
+        .unwrap()
+        .nodes
+        .retain(|c| c.id == "c2");
+    app.open_delete_comment_pick();
+    assert_eq!(app.view.popup, Popup::None);
+    assert_eq!(
+        app.view.status_message.as_deref(),
+        Some("No comments of yours here")
+    );
 }
 
 #[test]

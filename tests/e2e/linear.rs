@@ -173,6 +173,8 @@ pub mod titles {
     pub const FOR_ASSIGNEE: &str = "E2E assignee change";
     pub const FOR_COMMENT: &str = "E2E comment target";
     pub const FOR_AGENT: &str = "E2E agent target";
+    pub const FOR_UPDATE: &str = "E2E update target";
+    pub const FOR_THREAD: &str = "E2E thread target";
     pub const SEEDED_COMMENT: &str = "Reproduced on Android too.";
     pub const PROJECT: &str = "Forecast v2";
     pub const ISSUE_VIEW: &str = "Open bugs";
@@ -399,6 +401,11 @@ pub fn seed_a(linear: &Linear, account: &Account) -> Result<Seeded, String> {
         json!({ "stateId": state("Backlog")?, "priority": 3, "labelIds": [feature] }),
     )?;
     create(FOR_AGENT, json!({ "stateId": state("Backlog")? }))?;
+    create(
+        FOR_UPDATE,
+        json!({ "stateId": state("Todo")?, "priority": 2 }),
+    )?;
+    create(FOR_THREAD, json!({ "stateId": state("Todo")? }))?;
     create(FOR_ASSIGNEE, json!({ "stateId": state("Todo")? }))?;
     create(FOR_PRIORITY, json!({ "stateId": state("Todo")? }))?;
     create(FOR_STATUS, json!({ "stateId": state("Todo")? }))?;

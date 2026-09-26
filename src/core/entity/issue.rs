@@ -286,6 +286,9 @@ pub struct Comment {
     /// Set on a reply; the detail view nests it under the comment it answers.
     #[serde(default)]
     pub parent: Option<Ref<CommentId>>,
+    /// Permalink to the comment on linear.app.
+    #[serde(default)]
+    pub url: Option<String>,
 }
 
 /// What an issue list is narrowed to, besides its preset and search text.

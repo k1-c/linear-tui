@@ -40,6 +40,10 @@ async fn run_request(client: &LinearClient, req: &Request, per_page: u32) -> Res
             })
         }
         Request::Team(team::Request::Teams) => Ok(Message::Teams(client.teams().await?)),
+        Request::Team(team::Request::Labels { team_id }) => Ok(Message::Labels {
+            team_id: team_id.clone(),
+            labels: client.labels(team_id).await?,
+        }),
         Request::Team(team::Request::Context { team_id }) => {
             // Independent queries — fetch them concurrently.
             let (states, members) = tokio::join!(
@@ -163,19 +167,35 @@ async fn issue(
                 .await?;
             Message::Mutated("Assignee updated")
         }
-        R::Comment { issue_id, body } => {
-            client.create_comment(issue_id, body).await?;
-            Message::Mutated("Comment posted")
+        R::Update { issue_id, changes } => {
+            client.edit_issue(issue_id, changes).await?;
+            Message::Mutated("Issue updated")
         }
-        R::Create {
-            team_id,
-            title,
-            description,
-            priority,
+        R::Comment {
+            issue_id,
+            body,
+            parent_id,
         } => {
-            let issue = client
-                .create_issue(team_id, title, description.as_deref(), *priority)
+            let comment = client
+                .create_comment(issue_id, body, parent_id.as_ref())
                 .await?;
+            Message::CommentPosted {
+                issue_id: issue_id.clone(),
+                comment: Box::new(comment),
+            }
+        }
+        R::EditComment {
+            comment_id, body, ..
+        } => {
+            client.update_comment(comment_id, body).await?;
+            Message::Mutated("Comment edited")
+        }
+        R::DeleteComment { comment_id, .. } => {
+            client.delete_comment(comment_id).await?;
+            Message::Mutated("Comment deleted")
+        }
+        R::Create { team_id, draft } => {
+            let issue = client.create_issue(team_id, draft).await?;
             Message::IssueCreated {
                 team_id: team_id.clone(),
                 issue: Box::new(issue),

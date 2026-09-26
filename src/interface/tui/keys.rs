@@ -42,6 +42,10 @@ pub enum Ctx {
     IssueTitle,
     IssueDescription,
     IssuePriority,
+    /// Renaming an issue.
+    Rename,
+    /// Rewriting an issue's description in linear-tui's own field.
+    Describe,
 }
 
 impl From<Screen> for Ctx {
@@ -113,13 +117,29 @@ const NESTED: &[Ctx] = &[IssueDetail, ProjectDetail, CycleDetail];
 /// Team pages, where the team can be switched.
 const TEAM_PAGES: &[Ctx] = &[IssueList, ProjectList, CycleList, Sidebar];
 /// Text fields.
-const TEXT: &[Ctx] = &[Search, Comment, Note, IssueTitle, IssueDescription];
+const TEXT: &[Ctx] = &[
+    Search,
+    Comment,
+    Note,
+    IssueTitle,
+    IssueDescription,
+    Rename,
+    Describe,
+];
 /// Multi-line text fields.
-const MULTILINE: &[Ctx] = &[Comment, Note, IssueDescription];
+const MULTILINE: &[Ctx] = &[Comment, Note, IssueDescription, Describe];
 /// The new-issue form, whichever field has focus.
 const FORM: &[Ctx] = &[IssueTitle, IssueDescription, IssuePriority];
 /// Anything submitted with Ctrl+Enter.
-const SUBMITTABLE: &[Ctx] = &[Comment, Note, IssueTitle, IssueDescription, IssuePriority];
+const SUBMITTABLE: &[Ctx] = &[
+    Comment,
+    Note,
+    IssueTitle,
+    IssueDescription,
+    IssuePriority,
+    Rename,
+    Describe,
+];
 /// Every input mode that Esc abandons.
 const EDITING: &[Ctx] = &[
     Search,
@@ -128,6 +148,8 @@ const EDITING: &[Ctx] = &[
     IssueTitle,
     IssueDescription,
     IssuePriority,
+    Rename,
+    Describe,
 ];
 
 /// Which modifiers a [`Key`] requires.
@@ -727,6 +749,15 @@ pub static BINDINGS: &[Binding] = &[
     bind(&[plain('i')], ISSUE_SCREENS, App::assign_to_me)
         .help(Section::IssueActions, "i", "Assign to me")
         .command("Assign to me", &["assignee", "self", "take"]),
+    // Rename — Linear: `r`.
+    bind(&[plain('r')], ISSUE_SCREENS, App::start_rename)
+        .help(Section::IssueActions, "r", "Rename issue")
+        .command("Rename issue", &["title", "edit"]),
+    // Linear edits the description in place, with no key to reach it; here
+    // it opens in $EDITOR (or a field, headless).
+    bind(&[plain('e')], ISSUE_SCREENS, App::start_description)
+        .help(Section::IssueActions, "e", "Edit description ($EDITOR)")
+        .command("Edit description", &["body", "editor", "markdown"]),
     // Add comment — Linear: Ctrl+M. A legacy terminal reports Ctrl+M as
     // Enter, so plain `m` is accepted too (Linear leaves `m` for relations,
     // which this client does not support).
@@ -734,6 +765,16 @@ pub static BINDINGS: &[Binding] = &[
         .help(Section::IssueActions, "m", "Add comment (Ctrl+M)")
         .hint_on(&[IssueDetail], 21, "m", "comment")
         .command("Add comment", &["reply", "message"]),
+    // Linear reaches these from a comment's own menu, with no shortcut.
+    palette_only(&[IssueDetail], App::open_reply_pick)
+        .command("Reply to comment\u{2026}", &["thread", "answer"])
+        .in_section(Section::IssueActions),
+    palette_only(&[IssueDetail], App::open_edit_comment_pick)
+        .command("Edit comment\u{2026}", &["change", "fix", "typo"])
+        .in_section(Section::IssueActions),
+    palette_only(&[IssueDetail], App::open_delete_comment_pick)
+        .command("Delete comment\u{2026}", &["remove"])
+        .in_section(Section::IssueActions),
     // --- Copy & open ---
     // Copy issue ID — Linear: Ctrl+.
     bind(
@@ -860,6 +901,8 @@ pub static BINDINGS: &[Binding] = &[
     bind(&[bare(KeyCode::Enter)], &[IssueTitle], |app| {
         app.new_issue_cycle_field(true)
     }),
+    // A title is one line: Enter saves it.
+    bind(&[bare(KeyCode::Enter)], &[Rename], App::submit_rename),
     bind(&[code(KeyCode::Tab)], FORM, |app| {
         app.new_issue_cycle_field(true)
     }),
@@ -884,6 +927,8 @@ pub fn context(app: &App) -> Ctx {
         InputMode::Search => Search,
         InputMode::Comment => Comment,
         InputMode::Note => Note,
+        InputMode::Title => Rename,
+        InputMode::Description => Describe,
         InputMode::NewIssue => match app.view.new_issue.as_ref().map(|form| form.field) {
             Some(FormField::Description) => IssueDescription,
             Some(FormField::Priority) => IssuePriority,
@@ -1202,6 +1247,7 @@ fn cancel(app: &mut App) {
         InputMode::Comment => app.cancel_comment(),
         InputMode::Note => app.cancel_note(),
         InputMode::NewIssue => app.cancel_new_issue(),
+        InputMode::Title | InputMode::Description => app.cancel_edit(),
         InputMode::Normal => {}
     }
 }
@@ -1211,6 +1257,8 @@ fn submit(app: &mut App) {
         InputMode::Comment => app.submit_comment(),
         InputMode::Note => app.submit_note(),
         InputMode::NewIssue => app.submit_new_issue(),
+        InputMode::Title => app.submit_rename(),
+        InputMode::Description => app.submit_description(),
         InputMode::Search | InputMode::Normal => {}
     }
 }
@@ -1221,6 +1269,8 @@ fn active_input(app: &mut App) -> Option<&mut Input> {
         InputMode::Search => Some(&mut app.list_mut().search),
         InputMode::Comment => Some(&mut app.view.comment),
         InputMode::Note => Some(&mut app.view.note),
+        InputMode::Title => Some(&mut app.view.title),
+        InputMode::Description => Some(&mut app.view.description),
         InputMode::NewIssue => app
             .view
             .new_issue

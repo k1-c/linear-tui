@@ -105,6 +105,130 @@ fn a_new_issue_is_filed_and_listed() {
     assert_eq!(issue["description"], "Written by the end-to-end run.");
 }
 
+/// Covers: issue::update, team::load_labels
+#[test]
+#[ignore = "touches real Linear workspaces; see tests/e2e/main.rs"]
+fn an_issue_is_edited_from_the_command_line_and_the_tui() {
+    let (account, seeded) = a();
+    let id = seeded.issue(FOR_UPDATE);
+    let tui = Tui::start(&account, "");
+    let out = tui
+        .cli(&[
+            "issue",
+            "update",
+            id,
+            "--priority",
+            "low",
+            "--label",
+            "Feature",
+            "--project",
+            PROJECT,
+            "--assignee",
+            "me",
+        ])
+        .unwrap_or_else(|e| panic!("issue update: {e}"));
+    assert!(out.contains(&format!("{id}: priority High → Low")), "{out}");
+    let issue = tui.issue(id);
+    assert_eq!(issue["priority"], "Low");
+    assert_eq!(issue["labels"], serde_json::json!(["Feature"]));
+    assert_eq!(issue["project"]["name"], PROJECT);
+    assert_eq!(issue["assignee"], seeded.viewer_name.as_str());
+    let unknown = tui
+        .cli(&["issue", "update", id, "--label", "No such label"])
+        .unwrap_err();
+    assert!(unknown.contains("no label No such label"), "{unknown}");
+
+    // Renamed, and the description rewritten, in the TUI; headless, the
+    // description is written in linear-tui's own field.
+    let renamed = format!("{FOR_UPDATE} (renamed)");
+    tui.open(id);
+    let field = tui.press("r");
+    assert_eq!(field.focus(), "title field");
+    tui.type_text(" (renamed)");
+    tui.press("<Enter>").expect(&renamed);
+    let field = tui.press("e");
+    assert_eq!(field.focus(), "description field");
+    tui.type_text("Written in the TUI.");
+    tui.press("<C-Enter>");
+    let issue = tui.issue(id);
+    assert_eq!(issue["title"], renamed.as_str());
+    assert_eq!(issue["description"], "Written in the TUI.");
+}
+
+/// Covers: issue::reply, issue::edit_comment, issue::delete_comment
+#[test]
+#[ignore = "touches real Linear workspaces; see tests/e2e/main.rs"]
+fn a_comment_is_replied_to_edited_and_deleted() {
+    let (account, seeded) = a();
+    let id = seeded.issue(FOR_THREAD);
+    let tui = Tui::start(&account, "");
+    let posted = tui
+        .cli(&[
+            "issue",
+            "comment",
+            id,
+            "Started by the end-to-end run",
+            "--json",
+        ])
+        .unwrap_or_else(|e| panic!("issue comment: {e}"));
+    let posted: serde_json::Value = serde_json::from_str(&posted).unwrap();
+    let root = posted["id"]
+        .as_str()
+        .expect("the new comment's id")
+        .to_string();
+    assert!(
+        posted["url"]
+            .as_str()
+            .is_some_and(|u| u.contains("linear.app"))
+    );
+
+    let reply = tui
+        .cli(&["issue", "comment", id, "A reply", "--reply-to", &root])
+        .unwrap_or_else(|e| panic!("reply: {e}"));
+    assert!(
+        reply.contains(&format!("in the thread of {root}")),
+        "{reply}"
+    );
+    tui.cli(&["issue", "comment", "edit", id, &root, "Edited by the run"])
+        .unwrap_or_else(|e| panic!("comment edit: {e}"));
+    let comments = tui.issue(id)["comments"].clone();
+    let comments = comments.as_array().unwrap();
+    assert!(
+        comments
+            .iter()
+            .any(|c| c["id"] == root.as_str() && c["body"] == "Edited by the run")
+    );
+    assert!(
+        comments
+            .iter()
+            .any(|c| c["parent_id"] == root.as_str() && c["body"] == "A reply")
+    );
+
+    // A reply from the TUI, through the comment picker.
+    tui.open(id);
+    let picker = tui.run("Reply to comment");
+    assert!(
+        picker
+            .overlay()
+            .is_some_and(|o| o.starts_with("reply to comment picker"))
+    );
+    tui.press("<Enter>");
+    tui.type_text("Replied in the TUI");
+    tui.press("<C-Enter>").expect("Replied in the TUI");
+
+    tui.cli(&["issue", "comment", "delete", id, &root])
+        .unwrap_or_else(|e| panic!("comment delete: {e}"));
+    let comments = tui.issue(id)["comments"].clone();
+    assert!(
+        !comments
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c["id"] == root.as_str()),
+        "{comments}"
+    );
+}
+
 /// Covers: issue::copy, issue::open_url, project::open_url
 #[test]
 #[ignore = "touches real Linear workspaces; see tests/e2e/main.rs"]

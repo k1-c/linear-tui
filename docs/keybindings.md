@@ -65,7 +65,16 @@ type there too. Until you type, they keep their single keys: `j` / `k` to move,
 | `Shift+1` … `Shift+4`, `Shift+0` | Set priority directly (Urgent → Low, None) |
 | `a` | Assign to someone |
 | `i` | Assign to me |
+| `r` | Rename the issue (`Enter` to save) |
+| `e` | Edit the description in `$VISUAL` / `$EDITOR` (`vi` when neither is set) |
 | `m` | Add a comment (`Ctrl+Enter` to send) |
+| `Ctrl+K` → *Reply to comment…* | Reply in a comment's thread, on the issue page |
+| `Ctrl+K` → *Edit comment…* / *Delete comment…* | Change or remove one of your comments, on the issue page |
+
+`e` lends the terminal to your editor and saves what you write when it exits;
+quitting with an error (Vim's `:cq`) leaves the description as it was. A
+headless instance (`linear-tui --headless`) has no terminal to lend, so `e`
+opens a field of its own there (`Ctrl+Enter` to save).
 
 ## Copy and open
 
@@ -127,7 +136,7 @@ Inside herdr, an issue row also shows the state of the agent working on it:
 
 ## Text fields
 
-Search, comments, notes, and the new-issue form accept readline-style editing:
+Search, comments, notes, renaming, and the new-issue form accept readline-style editing:
 `Ctrl+w` (delete a word), `Ctrl+u` / `Ctrl+k` (delete to the start / end),
 `Ctrl+a` / `Ctrl+e` (jump to the start / end), and the arrow keys. In multi-line
 fields `Enter` breaks the line and `Ctrl+Enter` (or `Alt+Enter`) submits; `Esc`
@@ -142,7 +151,7 @@ actions have no meaning here. Where they differ:
 | --- | --- | --- |
 | `Ctrl+.`, `Ctrl+Shift+.`, `Ctrl+Shift+,`, `Ctrl+M` | also `y`, `b`, `Y`, `m` | Legacy terminals cannot distinguish `Ctrl`+punctuation, and `Ctrl+M` *is* `Enter`. The originals work in terminals supporting the [kitty keyboard protocol](https://sw.kovidgoyal.net/kitty/keyboard-protocol/) (kitty, Ghostty, WezTerm, foot, Alacritty), which is enabled automatically when available. |
 | `Cmd+K` (command menu) | `Ctrl+K` | A terminal never receives `Cmd`. `Ctrl+K` is what Linear uses outside macOS; inside a text field it keeps its readline meaning (delete to the end). |
-| `r` (rename issue) | *(unbound)* | Renaming isn't supported yet; refreshing uses the terminal's `Ctrl+r` instead. |
+| — | `e` | Linear edits a description in place, with no key to reach it; a terminal hands it to your editor. |
 | `j` / `k` (next / previous issue in the issue view) | `J` / `K` | In the detail view `j`/`k` scroll the text, which a terminal cannot do with a trackpad. |
 | Display options menu (grouping, collapsing) | `D`, `z`, `Z`, `Shift+Tab` | Linear keeps these behind a menu with no shortcut; the keys are ones Linear leaves free. |
 | Double-click to open | click the selected row again | Terminals do not report double-clicks. |

@@ -11,6 +11,14 @@ pub struct Input {
 }
 
 impl Input {
+    /// A field holding `text`, the cursor at its end.
+    pub fn with(text: &str) -> Self {
+        Self {
+            value: text.to_string(),
+            cursor: text.len(),
+        }
+    }
+
     pub fn clear(&mut self) {
         self.value.clear();
         self.cursor = 0;

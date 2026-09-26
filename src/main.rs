@@ -349,16 +349,60 @@ impl TerminalGuard {
 
         Ok(Self { enhanced_keys })
     }
-}
 
-impl Drop for TerminalGuard {
-    fn drop(&mut self) {
+    /// Hand the terminal back as it was, for a program of the user's.
+    fn suspend(&self) {
         if self.enhanced_keys {
             let _ = execute!(io::stdout(), PopKeyboardEnhancementFlags);
         }
         let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         let _ = disable_raw_mode();
     }
+
+    /// Take the terminal again after [`Self::suspend`].
+    fn resume(&self) -> Result<()> {
+        enable_raw_mode()?;
+        execute!(io::stdout(), EnterAlternateScreen, EnableMouseCapture)?;
+        if self.enhanced_keys {
+            execute!(
+                io::stdout(),
+                PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+            )?;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for TerminalGuard {
+    fn drop(&mut self) {
+        self.suspend();
+    }
+}
+
+/// Write a description in `$EDITOR`, lending it the terminal, and hand what
+/// was saved to the app.
+fn edit_in_editor<B>(
+    runtime: &mut Runtime,
+    guard: &TerminalGuard,
+    terminal: &mut Terminal<B>,
+    job: app::EditorJob,
+) -> Result<()>
+where
+    B: Backend,
+    B::Error: Send + Sync + 'static,
+{
+    guard.suspend();
+    let edited = infra::editor::edit(&job.text);
+    guard.resume()?;
+    terminal.clear()?;
+    match edited {
+        Ok(text) => runtime.app.description_edited(&job.issue_id, text),
+        Err(e) => runtime
+            .app
+            .set_error(format!("Could not open your editor: {e:#}")),
+    }
+    runtime.touch();
+    Ok(())
 }
 
 /// Whether a session is over: the user quit, or picked another workspace.
@@ -379,11 +423,13 @@ where
 
 /// The TUI in this terminal, until the user quits.
 async fn run_in_terminal(runtime: &mut Runtime, switcher: &mut Switcher) -> Result<()> {
-    let _guard = TerminalGuard::enter()?;
+    let guard = TerminalGuard::enter()?;
     let mut terminal = Terminal::new(CrosstermBackend::new(io::stdout()))?;
     terminal.hide_cursor()?;
 
     loop {
+        // There is a terminal to lend $EDITOR, in every session.
+        runtime.app.external_editor = true;
         loop {
             runtime.send_queued(Instant::now());
             runtime.draw(&mut terminal)?;
@@ -398,6 +444,10 @@ async fn run_in_terminal(runtime: &mut Runtime, switcher: &mut Switcher) -> Resu
 
             moved |= event::poll_and_handle(&mut runtime.app)?;
             moved |= runtime.serve_control();
+            if let Some(job) = runtime.app.outbox.editor.take() {
+                edit_in_editor(runtime, &guard, &mut terminal, job)?;
+                moved = true;
+            }
             runtime.settle(moved, Instant::now());
 
             if session_over(runtime, &mut terminal)? {

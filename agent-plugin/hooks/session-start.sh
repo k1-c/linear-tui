@@ -25,11 +25,16 @@ on their screen, the open issue, and the list with the row under their cursor.
 
 Act on Linear through linear-tui's CLI, which uses the user's own credentials:
 - `linear-tui issue show <ID>` — fields, description, sub-issues, comments
-- `linear-tui issue comment <ID> <body>` — `-` as the body reads it from stdin
+- `linear-tui issue comment <ID> <body>` — `-` as the body reads it from stdin;
+  `--reply-to <comment-id>` replies in a thread; `issue comment edit|delete
+  <ID> <comment-id>` fixes or removes your own comment
 - `linear-tui issue status <ID> <state>` — a state name of the issue's team
+- `linear-tui issue update <ID> [--title] [--description -] [--priority]
+  [--assignee] [--estimate] [--label]... [--unlabel]... [--project] [--cycle]
+  [--parent]` — `none` empties a field
 - `linear-tui issue create --team <key> --title <text> [--description <text>]`
 Add `--json` for JSON. Without an instruction to change an issue, only comment;
-move it (to Done or anywhere else) only when asked.
+move or edit it (to Done, a new title, anything else) only when asked.
 
 To show the user something, or check linear-tui by using it, work the running
 TUI: `linear-tui tui screen` reads it, `tui press <keys>`, `tui run <command>`,

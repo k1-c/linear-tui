@@ -1,6 +1,6 @@
 ---
 name: linear-tui
-description: Resolve what the user is looking at in linear-tui, act on Linear through the linear-tui CLI, and work the running TUI itself. Use when the user refers to an issue or list on their screen without naming it ("this issue", "the one I have open", "the top three", "この issue", "今見てるやつ", "上の 3 つ"), asks to comment on, move, or file a Linear issue, or pastes notes that came from linear-tui.
+description: Resolve what the user is looking at in linear-tui, act on Linear through the linear-tui CLI, and work the running TUI itself. Use when the user refers to an issue or list on their screen without naming it ("this issue", "the one I have open", "the top three", "この issue", "今見てるやつ", "上の 3 つ"), asks to comment on, move, edit, or file a Linear issue, or pastes notes that came from linear-tui.
 ---
 
 # linear-tui
@@ -30,11 +30,18 @@ the context starts with that issue. Use `--json` when you need exact fields.
 | --- | --- |
 | Read an issue | `linear-tui issue show ENG-42` |
 | Comment | `linear-tui issue comment ENG-42 -` (body on stdin) |
+| Reply in a thread | `linear-tui issue comment ENG-42 - --reply-to <comment-id>` |
+| Fix or remove your comment | `linear-tui issue comment edit ENG-42 <comment-id> -`, `… comment delete ENG-42 <comment-id>` |
 | Change its state | `linear-tui issue status ENG-42 "In Review"` |
-| File an issue | `linear-tui issue create --team ENG --title "…" --description -` |
+| Edit it | `linear-tui issue update ENG-42 --title "…" --description - --priority low --assignee me --estimate 3 --label Bug --unlabel UI --project "…" --cycle current --parent ENG-30` (any of them; `none` empties a field) |
+| File an issue | `linear-tui issue create --team ENG --title "…" --description -` (and the same fields as `update`) |
 
-`<ID>` may be an identifier in any case or an issue URL. Errors go to stderr
-with a non-zero exit; an unknown state lists the team's states.
+`<ID>` may be an identifier in any case or an issue URL. `issue show` gives
+each comment an `- Id:` line to address an edit or reply at. Errors go to
+stderr with a non-zero exit; an unknown name lists what is valid, an
+ambiguous one the candidates. Only a comment's author can edit or delete it.
+Never call Linear's API directly, or drive the TUI to type a long body: these
+commands take Markdown on stdin.
 
 ## Work the TUI itself
 
@@ -57,7 +64,9 @@ user's would, so the rules below hold here too.
 ## Rules
 
 - Without an instruction to change an issue, only comment on it.
-- Move an issue — to Done or anywhere else — only when the user asks.
+- Move or edit an issue — to Done, a new title, anything else — only when
+  the user asks.
+- Edit or delete only the comments you were asked to.
 - Quote the identifier (`ENG-42`) when you report what you did.
 
 The full output formats are in `docs/cli.md` of the linear-tui repository.

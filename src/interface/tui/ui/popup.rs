@@ -9,7 +9,7 @@ use ratatui::{
 use super::widgets::{avatar, centered_rect, priority_glyph, state_glyph, user_name};
 use crate::config::Theme;
 use crate::core::entity::Priority;
-use crate::interface::tui::app::{App, FilterKind, Popup};
+use crate::interface::tui::app::{App, CommentAction, FilterKind, Popup};
 use crate::interface::tui::grouping::GroupBy;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
@@ -21,6 +21,7 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         Popup::PriorityChange(_) => draw_priority_change(f, app),
         Popup::AssigneeChange(_) => draw_assignee_change(f, app),
         Popup::GroupBy => draw_group_by(f, app),
+        Popup::CommentPick(action) => draw_comment_pick(f, app, action),
         Popup::Palette => super::palette::draw(f, app),
         Popup::None => {}
     }
@@ -131,6 +132,36 @@ fn numbered_item(
         spans.push(Span::styled("  \u{2713}", Style::default().fg(th.success)));
     }
     ListItem::new(Line::from(spans))
+}
+
+/// The open issue's comments to pick from: who wrote each, and its first
+/// line.
+fn draw_comment_pick(f: &mut Frame, app: &mut App, action: CommentAction) {
+    let th = app.theme;
+    let num = numbering(app);
+    let items: Vec<ListItem> = app
+        .pickable_comments(action)
+        .into_iter()
+        .enumerate()
+        .map(|(i, comment)| {
+            let author = comment
+                .user
+                .as_ref()
+                .map_or("someone".to_string(), |u| user_name(u).to_string());
+            let first = comment.body.lines().find(|l| !l.trim().is_empty());
+            numbered_item(
+                num(i),
+                vec![Span::styled(
+                    format!("{author}: "),
+                    Style::default().fg(th.text_dim),
+                )],
+                first.unwrap_or_default().trim(),
+                false,
+                &th,
+            )
+        })
+        .collect();
+    render_popup_list(f, app, action.title(), items, None, 72);
 }
 
 fn draw_team_select(f: &mut Frame, app: &mut App) {

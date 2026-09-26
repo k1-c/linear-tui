@@ -225,6 +225,12 @@ pub fn draw(f: &mut Frame, app: &mut App, cache: &mut Cache) {
     if app.view.input_mode == InputMode::Note {
         note::draw(f, app);
     }
+    if matches!(
+        app.view.input_mode,
+        InputMode::Title | InputMode::Description
+    ) {
+        note::draw_edit(f, app);
+    }
     if app.view.show_help {
         draw_help(f, app);
     }

@@ -71,6 +71,16 @@ pub enum Message {
         team_id: TeamId,
         issue: Box<Issue>,
     },
+    /// The labels a team's issues can carry.
+    Labels {
+        team_id: TeamId,
+        labels: Vec<Label>,
+    },
+    /// A comment or reply is posted; Linear gives back its id and URL.
+    CommentPosted {
+        issue_id: IssueId,
+        comment: Box<Comment>,
+    },
     /// A mutation succeeded; carries the status line to show.
     Mutated(&'static str),
     /// A request failed. Carries the request itself, so the failure can be
@@ -97,7 +107,10 @@ pub fn failure(request: &Request) -> &'static str {
             issue::Request::SetStatus { .. } => "Failed to update status",
             issue::Request::SetPriority { .. } => "Failed to update priority",
             issue::Request::SetAssignee { .. } => "Failed to update assignee",
+            issue::Request::Update { .. } => "Failed to update issue",
             issue::Request::Comment { .. } => "Failed to post comment",
+            issue::Request::EditComment { .. } => "Failed to edit comment",
+            issue::Request::DeleteComment { .. } => "Failed to delete comment",
             issue::Request::Create { .. } => "Failed to create issue",
             issue::Request::OpenInBrowser(_) => "Failed to open browser",
         },
@@ -109,6 +122,7 @@ pub fn failure(request: &Request) -> &'static str {
         Request::Cycle(cycle::Request::TeamCycles { .. }) => "Failed to load cycles",
         Request::Team(team::Request::Teams) => "Failed to load teams",
         Request::Team(team::Request::Context { .. }) => "Failed to load team context",
+        Request::Team(team::Request::Labels { .. }) => "Failed to load labels",
         Request::View(view::Request::Views) => "Failed to load views",
         Request::Favorite(favorite::Request::Favorites) => "Failed to load favorites",
         Request::Favorite(favorite::Request::OpenInBrowser(_)) => "Failed to open browser",
@@ -220,19 +234,43 @@ mod tests {
                 "Failed to update assignee",
             ),
             (
+                issue::Request::Update {
+                    issue_id: "i".into(),
+                    changes: Default::default(),
+                }
+                .into(),
+                "Failed to update issue",
+            ),
+            (
                 issue::Request::Comment {
                     issue_id: "i".into(),
                     body: "b".into(),
+                    parent_id: None,
                 }
                 .into(),
                 "Failed to post comment",
             ),
             (
+                issue::Request::EditComment {
+                    issue_id: "i".into(),
+                    comment_id: "c".into(),
+                    body: "b".into(),
+                }
+                .into(),
+                "Failed to edit comment",
+            ),
+            (
+                issue::Request::DeleteComment {
+                    issue_id: "i".into(),
+                    comment_id: "c".into(),
+                }
+                .into(),
+                "Failed to delete comment",
+            ),
+            (
                 issue::Request::Create {
                     team_id: team(),
-                    title: "t".into(),
-                    description: None,
-                    priority: Default::default(),
+                    draft: Default::default(),
                 }
                 .into(),
                 "Failed to create issue",
@@ -273,6 +311,10 @@ mod tests {
             (
                 team::Request::Context { team_id: team() }.into(),
                 "Failed to load team context",
+            ),
+            (
+                team::Request::Labels { team_id: team() }.into(),
+                "Failed to load labels",
             ),
             (view::Request::Views.into(), "Failed to load views"),
             (

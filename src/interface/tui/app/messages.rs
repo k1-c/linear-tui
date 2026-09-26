@@ -191,6 +191,17 @@ impl App {
                     self.restore_issue_selection(Some(&id));
                 }
             }
+            // Kept for nothing yet: the labels are asked for by the
+            // headless commands.
+            Message::Labels { .. } => {}
+            Message::CommentPosted { issue_id, .. } => {
+                self.set_status("Comment posted");
+                // Its thread was dropped when it was sent; read it back if it
+                // is still the one on screen.
+                if self.store.current_issue.as_ref().map(|i| &i.id) == Some(&issue_id) {
+                    self.queue_detail_fetches();
+                }
+            }
             Message::Mutated(what) => {
                 self.set_status(what);
                 // A posted comment clears the cached thread; pull it back in.

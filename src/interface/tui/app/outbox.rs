@@ -12,6 +12,8 @@ pub struct Outbox {
     pub inflight: usize,
     /// Text the main loop should push to the system clipboard via OSC 52.
     pub clipboard: Option<String>,
+    /// A description the main loop should open in `$EDITOR`.
+    pub editor: Option<super::EditorJob>,
 }
 
 impl Outbox {

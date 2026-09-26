@@ -111,6 +111,8 @@ fn focus(app: &App, ctx: keys::Ctx) -> String {
         InputMode::Search => "search field",
         InputMode::Comment => "comment field",
         InputMode::Note => "note field",
+        InputMode::Title => "title field",
+        InputMode::Description => "description field",
         InputMode::NewIssue => match ctx {
             keys::Ctx::IssueDescription => "new issue: description",
             keys::Ctx::IssuePriority => "new issue: priority",
@@ -149,6 +151,7 @@ fn overlay(app: &App) -> Option<String> {
         Popup::StatusChange(_) => picker("status"),
         Popup::PriorityChange(_) => picker("priority"),
         Popup::AssigneeChange(_) => picker("assignee"),
+        Popup::CommentPick(action) => picker(&action.title().to_lowercase()),
     })
 }
 
