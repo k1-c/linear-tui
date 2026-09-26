@@ -2,6 +2,46 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1] - 2026-09-26
+
+### Documentation
+
+- Describe the layers and how to write the use case layer
+- **e2e**: Run the end-to-end tests locally from mise.local.toml
+- Cover working the TUI in the indexes, plugin, and troubleshooting ([#89](https://github.com/k1-c/linear-tui/pull/89))
+
+### Miscellaneous
+
+- Ignore Claude Code worktrees
+- **e2e**: Run the end-to-end tests on demand, not on every pull request ([#94](https://github.com/k1-c/linear-tui/pull/94))
+- **release**: Serialize release-plz runs and squash-merge every PR ([#95](https://github.com/k1-c/linear-tui/pull/95))
+
+### Refactoring
+
+- Layer the crate into entities, use cases, and adapters
+- Group src into one directory per layer
+- Group the layers into core, interface, and infra
+- **usecase**: Move workspace switching into the use case layer ([#91](https://github.com/k1-c/linear-tui/pull/91))
+- **cli**: Run the subcommands against a Host port ([#92](https://github.com/k1-c/linear-tui/pull/92))
+
+### Styling
+
+- Format the merged imports
+
+### Testing
+
+- **usecase**: Check that the use case layer reads as the specification
+- **e2e**: Read an empty team variable as no choice
+- **core**: Cover the rules the core left untested ([#90](https://github.com/k1-c/linear-tui/pull/90))
+- **e2e**: Stop the run with its reason when Linear rate limits ([#96](https://github.com/k1-c/linear-tui/pull/96))
+
+### Build
+
+- Add a coverage task with cargo-llvm-cov
+- Include store and entity in the coverage summary
+
+
+
 ## [0.9.0] - 2026-09-25
 
 ### Documentation
