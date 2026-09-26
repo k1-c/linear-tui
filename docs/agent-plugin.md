@@ -50,8 +50,10 @@ said. Context from a hook does none of that.
 **A `linear-tui` skill** (`skills/linear-tui/SKILL.md`), which the agent loads
 when you refer to something on your screen without naming it, or ask it to
 comment on, move, or file an issue. It explains how to read `linear-tui context`
-(numbered rows, `← cursor`, stale views), the `issue` commands — `issue update`
-and comment ids included, so an agent need not reach for Linear's API — and working the
+(numbered rows, `← cursor`, stale views), the `issue` commands — `issue list`,
+`issue update`, and comment ids included — the `project`, `milestone`, `team`,
+`cycle`, `view`, and `favorite` commands, so an agent can do whatever the TUI
+does without reaching for Linear's API, and working the
 TUI: reading the screen, pressing keys, running palette commands, typing, and
 `linear-tui --headless` when no linear-tui is open.
 

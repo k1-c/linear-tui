@@ -76,6 +76,19 @@ pub enum Message {
         team_id: TeamId,
         labels: Vec<Label>,
     },
+    /// The projects with a name, in any case.
+    ProjectsFound {
+        name: String,
+        projects: Vec<Project>,
+    },
+    /// One project, with its teams and milestones.
+    ProjectDetail(Box<Project>),
+    ProjectStatuses(Vec<ProjectStatus>),
+    ProjectCreated(Box<Project>),
+    MilestoneCreated {
+        project_id: ProjectId,
+        milestone: Box<Milestone>,
+    },
     /// A comment or reply is posted; Linear gives back its id and URL.
     CommentPosted {
         issue_id: IssueId,
@@ -118,6 +131,15 @@ pub fn failure(request: &Request) -> &'static str {
             project::Request::TeamProjects { .. } => "Failed to load projects",
             project::Request::ViewProjects { .. } => "Failed to load view projects",
             project::Request::OpenInBrowser(_) => "Failed to open browser",
+            project::Request::Find { .. } => "Failed to find the project",
+            project::Request::Detail { .. } => "Failed to load the project",
+            project::Request::Statuses => "Failed to load project statuses",
+            project::Request::Create { .. } => "Failed to create project",
+            project::Request::Update { .. } => "Failed to update project",
+            project::Request::Delete { .. } => "Failed to delete project",
+            project::Request::CreateMilestone { .. } => "Failed to create milestone",
+            project::Request::UpdateMilestone { .. } => "Failed to update milestone",
+            project::Request::DeleteMilestone { .. } => "Failed to delete milestone",
         },
         Request::Cycle(cycle::Request::TeamCycles { .. }) => "Failed to load cycles",
         Request::Team(team::Request::Teams) => "Failed to load teams",
@@ -298,6 +320,66 @@ mod tests {
             (
                 project::Request::OpenInBrowser("u".into()).into(),
                 "Failed to open browser",
+            ),
+            (
+                project::Request::Find { name: "p".into() }.into(),
+                "Failed to find the project",
+            ),
+            (
+                project::Request::Detail {
+                    project_id: "p".into(),
+                }
+                .into(),
+                "Failed to load the project",
+            ),
+            (
+                project::Request::Statuses.into(),
+                "Failed to load project statuses",
+            ),
+            (
+                project::Request::Create {
+                    draft: Default::default(),
+                }
+                .into(),
+                "Failed to create project",
+            ),
+            (
+                project::Request::Update {
+                    project_id: "p".into(),
+                    changes: Default::default(),
+                }
+                .into(),
+                "Failed to update project",
+            ),
+            (
+                project::Request::Delete {
+                    project_id: "p".into(),
+                }
+                .into(),
+                "Failed to delete project",
+            ),
+            (
+                project::Request::CreateMilestone {
+                    project_id: "p".into(),
+                    draft: Default::default(),
+                }
+                .into(),
+                "Failed to create milestone",
+            ),
+            (
+                project::Request::UpdateMilestone {
+                    milestone_id: "m".into(),
+                    changes: Default::default(),
+                }
+                .into(),
+                "Failed to update milestone",
+            ),
+            (
+                project::Request::DeleteMilestone {
+                    milestone_id: "m".into(),
+                }
+                .into(),
+                "Failed to delete milestone",
             ),
             (
                 cycle::Request::TeamCycles {

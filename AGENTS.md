@@ -107,12 +107,16 @@ wires the two outer layers together, and what every outer layer is handed.
   - `cli/` — the headless commands for agents (`docs/cli.md`), against
     the `Host` port in `mod.rs` (Linear, the recorded views, the clock) —
     `context.rs` renders the view snapshot, `tui.rs` works the running TUI
-    (`linear-tui tui …`), `issue.rs` shows, creates, updates, comments on,
-    and moves issues, and edits and deletes comments, through
-    `headless.rs`'s `Linear` port, which `commands.rs` backs with
-    `dispatch::execute_request`; `resolve.rs` turns the names typed into
-    members, labels, projects, cycles, and parents; `args.rs` parses their
-    arguments
+    (`linear-tui tui …`), `issue.rs` lists, searches, shows, creates,
+    updates, comments on, and moves issues, and edits and deletes comments;
+    `project.rs` lists, shows, creates, updates, and deletes projects and
+    their milestones; `browse.rs` lists teams (and shows one), cycles, saved
+    views, and favorites — all through `headless.rs`'s `Linear` port, which
+    `commands.rs` backs with `dispatch::execute_request`; `resolve.rs` turns
+    the names typed into teams, members, labels, projects, milestones,
+    statuses, cycles, views, and parents; `args.rs` parses their arguments.
+    Each command names the use cases it serves on a `Covers:` line, and
+    `mod.rs` lists, with the reason, those no command needs
 - `src/infra/` — the systems linear-tui calls on:
   - `linear/` — Linear's GraphQL client (`client.rs`, `error.rs`;
     `decode_tests.rs` checks decoding against `tests/fixtures/`) and
@@ -131,8 +135,9 @@ wires the two outer layers together, and what every outer layer is handed.
     binding marked `.herdr_only()` neither answers nor is listed unless
     `App::herdr` is set
 - `tests/` — `architecture.rs` (the layers depend inwards),
-  `usecase_spec.rs` (the use case layer reads as the specification, and
-  every use case has an end-to-end scenario), `e2e/` (the real binary,
+  `usecase_spec.rs` (the use case layer reads as the specification, every
+  use case can be done from the command line, and every use case has an
+  end-to-end scenario), `e2e/` (the real binary,
   headless, against two real Linear test workspaces it empties and seeds;
   `#[ignore]`d — `mise run e2e`, and `.github/workflows/e2e.yml`; see
   `docs/development.md`), and `fixtures/` — API responses for the decoding

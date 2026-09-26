@@ -15,8 +15,8 @@
 //!
 //! **Changes.** [`set_status`], [`set_priority`], [`set_assignee`],
 //! [`assign_to_me`], and [`update`] for any of its fields at once — title,
-//! description, priority, assignee, estimate, labels, project, cycle,
-//! parent; [`create`] (and [`created`] once Linear has it). A change is
+//! description, priority, assignee, estimate, labels, project and its
+//! milestone, cycle, parent; [`create`] (and [`created`] once Linear has it). A change is
 //! optimistic: every copy of the issue on screen shows it at once, and the
 //! returned request asks Linear to make it real. Should Linear refuse,
 //! [`change_refused`] reads the issue back.
@@ -26,11 +26,12 @@
 
 use super::{Open, Refusal};
 use crate::core::entity::{
-    Comment, Connection, Cycle, Issue, IssueFilter, IssueRef, Label, Page, Preset, Priority,
-    Project, User, WorkflowState,
+    Comment, Connection, Cycle, Issue, IssueFilter, IssueRef, Label, Milestone, Page, Preset,
+    Priority, Project, User, WorkflowState,
 };
 use crate::core::entity::{
-    CommentId, CustomViewId, CycleId, IssueId, LabelId, ProjectId, TeamId, UserId, WorkflowStateId,
+    CommentId, CustomViewId, CycleId, IssueId, LabelId, MilestoneId, ProjectId, TeamId, UserId,
+    WorkflowStateId,
 };
 use crate::core::store::{IssueSource, List, ListOf, Store};
 
@@ -158,6 +159,7 @@ pub struct Changes {
     pub added_label_ids: Vec<LabelId>,
     pub removed_label_ids: Vec<LabelId>,
     pub project_id: Option<Option<ProjectId>>,
+    pub milestone_id: Option<Option<MilestoneId>>,
     pub cycle_id: Option<Option<CycleId>>,
     pub parent_id: Option<Option<IssueId>>,
 }
@@ -175,6 +177,8 @@ pub struct Edit {
     pub add_labels: Vec<Label>,
     pub remove_labels: Vec<Label>,
     pub project: Option<Option<Project>>,
+    /// A milestone of the project the issue is in, or is moved to.
+    pub milestone: Option<Option<Milestone>>,
     pub cycle: Option<Option<Cycle>>,
     pub parent: Option<Option<IssueRef>>,
 }
@@ -190,6 +194,7 @@ impl Edit {
             && self.add_labels.is_empty()
             && self.remove_labels.is_empty()
             && self.project.is_none()
+            && self.milestone.is_none()
             && self.cycle.is_none()
             && self.parent.is_none()
     }
@@ -432,14 +437,17 @@ pub fn assign_to_me(store: &mut Store, issue_id: &IssueId) -> Result<Request, Re
 }
 
 /// **Edit an issue**: any of its title, description, priority, assignee,
-/// estimate, labels, project, cycle, and parent at once — renaming it
-/// (`r`), rewriting its description (`e`), or `linear-tui issue update`.
+/// estimate, labels, project and milestone, cycle, and parent at once —
+/// renaming it (`r`), rewriting its description (`e`), or `linear-tui issue
+/// update`.
 ///
 /// An edit that changes nothing is refused, and so is an empty title, an
 /// issue made its own parent, and a label named both to add and to remove.
 /// Every copy of the issue shows the edit at once: a label already on the
-/// issue is not added twice, and one it lacks is not removed. Fields the
-/// edit leaves out are left alone.
+/// issue is not added twice, and one it lacks is not removed. A milestone
+/// belongs to a project, so moving the issue to another project, or out of
+/// one, takes it out of its milestone unless the edit names a new one.
+/// Fields the edit leaves out are left alone.
 pub fn update(store: &mut Store, issue_id: &IssueId, edit: Edit) -> Result<Request, Refusal> {
     if edit.is_empty() {
         return Err(Refusal::NothingToChange);
@@ -480,6 +488,10 @@ pub fn update(store: &mut Store, issue_id: &IssueId, edit: Edit) -> Result<Reque
                 .project
                 .as_ref()
                 .map(|p| p.as_ref().map(|p| p.id.clone())),
+            milestone_id: edit
+                .milestone
+                .as_ref()
+                .map(|m| m.as_ref().map(|m| m.id.clone())),
             cycle_id: edit
                 .cycle
                 .as_ref()
@@ -525,7 +537,14 @@ fn apply(issue: &mut Issue, edit: &Edit) {
         }
     }
     if let Some(project) = &edit.project {
+        let moved = project.as_ref().map(|p| &p.id) != issue.project.as_ref().map(|p| &p.id);
+        if moved {
+            issue.project_milestone = None;
+        }
         issue.project = project.clone();
+    }
+    if let Some(milestone) = &edit.milestone {
+        issue.project_milestone = milestone.clone();
     }
     if let Some(cycle) = &edit.cycle {
         issue.cycle = cycle.clone();
@@ -693,6 +712,8 @@ pub struct Draft {
     pub estimate: Option<u32>,
     pub label_ids: Vec<LabelId>,
     pub project_id: Option<ProjectId>,
+    /// A milestone of `project_id`.
+    pub milestone_id: Option<MilestoneId>,
     pub cycle_id: Option<CycleId>,
     pub parent_id: Option<IssueId>,
 }
@@ -1256,6 +1277,57 @@ mod tests {
             store.issue(&id()).unwrap().assignee.as_ref().unwrap().name,
             "u"
         );
+    }
+
+    fn milestone(id: &str) -> Milestone {
+        serde_json::from_str(&format!(r#"{{"id":"{id}","name":"{id}"}}"#)).unwrap()
+    }
+
+    fn project(id: &str) -> Project {
+        serde_json::from_str(&format!(r#"{{"id":"{id}","name":"{id}"}}"#)).unwrap()
+    }
+
+    /// A milestone is set everywhere at once and asked of Linear.
+    #[test]
+    fn a_milestone_is_set_everywhere_at_once() {
+        let mut store = store_with_issue();
+        let edit = Edit {
+            project: Some(Some(project("p"))),
+            milestone: Some(Some(milestone("beta"))),
+            ..Edit::default()
+        };
+        let Ok(Request::Update { changes, .. }) = update(&mut store, &id(), edit) else {
+            panic!("expected an update");
+        };
+        assert_eq!(changes.milestone_id, Some(Some(MilestoneId::from("beta"))));
+        for issue in copies(&store) {
+            assert_eq!(issue.project_milestone.as_ref().unwrap().name, "beta");
+        }
+    }
+
+    /// Moving an issue to another project takes it out of its milestone,
+    /// unless the edit names a new one; staying in the project keeps it.
+    #[test]
+    fn another_project_takes_the_issue_out_of_its_milestone() {
+        let mut store = store_with_issue();
+        let into_beta = Edit {
+            project: Some(Some(project("p"))),
+            milestone: Some(Some(milestone("beta"))),
+            ..Edit::default()
+        };
+        update(&mut store, &id(), into_beta).unwrap();
+        let same = Edit {
+            project: Some(Some(project("p"))),
+            ..Edit::default()
+        };
+        update(&mut store, &id(), same).unwrap();
+        assert!(store.issue(&id()).unwrap().project_milestone.is_some());
+        let elsewhere = Edit {
+            project: Some(Some(project("q"))),
+            ..Edit::default()
+        };
+        update(&mut store, &id(), elsewhere).unwrap();
+        assert!(store.issue(&id()).unwrap().project_milestone.is_none());
     }
 
     // ---------------------------------------------------------- create

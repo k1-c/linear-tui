@@ -188,6 +188,87 @@ fn named_use_cases(text: &str) -> Vec<String> {
         .collect()
 }
 
+/// The use cases named on the `Covers:` lines of `text`, each with the doc
+/// lines continuing it.
+fn covers_lines(text: &str) -> Vec<String> {
+    let mut covered = Vec::new();
+    let mut in_covers = false;
+    for line in text.lines() {
+        let doc = line
+            .trim_start()
+            .trim_start_matches("///")
+            .trim_start_matches("//!");
+        let is_doc = line.trim_start().starts_with("///") || line.trim_start().starts_with("//!");
+        if let Some(rest) = doc.trim_start().strip_prefix("Covers:") {
+            in_covers = true;
+            covered.extend(named_use_cases(rest));
+        } else if in_covers && is_doc && !doc.trim().is_empty() {
+            covered.extend(named_use_cases(doc));
+        } else {
+            in_covers = false;
+        }
+    }
+    covered
+}
+
+/// The use cases listed after `heading` in `text`, up to the first blank
+/// line: the ones exempted, each with its reason.
+fn exempted(text: &str, heading: &str, file: &str) -> Vec<String> {
+    let rest = text
+        .split(heading)
+        .nth(1)
+        .unwrap_or_else(|| panic!("{file} lists under {heading:?} what is exempt, and why"));
+    named_use_cases(rest.split("\n\n").next().unwrap_or_default())
+}
+
+/// Every use case of the layer, as `module::function`.
+fn all_use_cases() -> Vec<String> {
+    let mut all = Vec::new();
+    for module in modules().iter().filter(|m| m.name != "mod") {
+        let (code, _) = module.split();
+        for (name, _) in use_cases(code) {
+            all.push(format!("{}::{name}", module.name));
+        }
+    }
+    all
+}
+
+/// Each use case can be carried out from the command line, headless: a
+/// subcommand names it on its `Covers:` line (in `src/interface/cli/`, or
+/// `src/commands.rs` for `linear-tui auth …`), or it is listed under "Not
+/// from the command line" in `src/interface/cli/mod.rs` with the reason.
+/// Working the running TUI (`linear-tui tui …`) does not count: an agent
+/// should not need a TUI open to do what a person can.
+#[test]
+fn each_use_case_can_be_done_from_the_command_line() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut covered = Vec::new();
+    let cli = root.join("interface/cli");
+    for entry in std::fs::read_dir(&cli).unwrap().flatten() {
+        let text = std::fs::read_to_string(entry.path()).unwrap();
+        covered.extend(covers_lines(&text));
+        if entry.file_name() == "mod.rs" {
+            covered.extend(exempted(
+                &text,
+                "Not from the command line:",
+                "src/interface/cli/mod.rs",
+            ));
+        }
+    }
+    covered.extend(covers_lines(
+        &std::fs::read_to_string(root.join("commands.rs")).unwrap(),
+    ));
+    let missing: Vec<String> = all_use_cases()
+        .into_iter()
+        .filter(|u| !covered.contains(u))
+        .collect();
+    assert!(
+        missing.is_empty(),
+        "use cases no subcommand covers (add one with a `Covers:` line, or list the reason \
+         under \"Not from the command line\" in src/interface/cli/mod.rs): {missing:?}"
+    );
+}
+
 /// Each use case is run end to end by at least one scenario in
 /// `tests/e2e/` (on its `Covers:` line), or is listed there under "Not end
 /// to end" with the reason.
@@ -197,32 +278,9 @@ fn each_use_case_has_an_end_to_end_scenario() {
     let mut covered = Vec::new();
     for entry in std::fs::read_dir(&dir).unwrap().flatten() {
         let text = std::fs::read_to_string(entry.path()).unwrap();
-        // A `Covers:` line and the doc lines continuing it.
-        let mut in_covers = false;
-        for line in text.lines() {
-            let doc = line
-                .trim_start()
-                .trim_start_matches("///")
-                .trim_start_matches("//!");
-            let is_doc =
-                line.trim_start().starts_with("///") || line.trim_start().starts_with("//!");
-            if let Some(rest) = doc.trim_start().strip_prefix("Covers:") {
-                in_covers = true;
-                covered.extend(named_use_cases(rest));
-            } else if in_covers && is_doc && !doc.trim().is_empty() {
-                covered.extend(named_use_cases(doc));
-            } else {
-                in_covers = false;
-            }
-        }
+        covered.extend(covers_lines(&text));
         if entry.file_name() == "main.rs" {
-            let exempt = text
-                .split("Not end to end:")
-                .nth(1)
-                .expect("tests/e2e/main.rs lists what is not end to end");
-            covered.extend(named_use_cases(
-                exempt.split("\n\n").next().unwrap_or_default(),
-            ));
+            covered.extend(exempted(&text, "Not end to end:", "tests/e2e/main.rs"));
         }
     }
     let mut missing = Vec::new();

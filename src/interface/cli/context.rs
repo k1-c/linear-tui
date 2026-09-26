@@ -14,6 +14,9 @@ use crate::core::entity::Organization;
 use crate::core::entity::snapshot::{self as snap, Destination, ViewSnapshot};
 use crate::core::entity::timestamp;
 
+/// `context`: the view on the user's screen.
+///
+/// Covers: instance::to_report
 pub fn run(args: &[String], host: &impl Host) -> Result<()> {
     let args = Args::parse(args, &["json"], &["workspace"])?;
     args.positionals::<0>("linear-tui context [--json] [--workspace <path>]")?;

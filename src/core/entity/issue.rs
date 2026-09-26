@@ -241,11 +241,16 @@ pub struct IssueRef {
     pub state: Option<WorkflowState>,
 }
 
+/// A milestone of a project: a stage its issues can be filed under.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Deserialize)]
 pub struct Milestone {
     pub id: MilestoneId,
     pub name: String,
+    #[serde(default, rename = "targetDate")]
+    pub target_date: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
 }
 
 #[allow(dead_code)]

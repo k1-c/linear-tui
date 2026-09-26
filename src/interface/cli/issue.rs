@@ -1,4 +1,5 @@
-//! `linear-tui issue show / create / update / comment / status`.
+//! `linear-tui issue list / search / show / create / update / comment /
+//! status`.
 
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -6,19 +7,22 @@ use serde_json::{Value, json};
 use super::args::{Args, text_or_stdin};
 use super::resolve;
 use super::{Host, Linear};
-use crate::core::entity::{Comment, Issue, Priority, Team, User, WorkflowState};
-use crate::core::entity::{IssueId, UserId};
+use crate::core::entity::{Comment, Issue, IssueFilter, Milestone, Page, Preset, Priority};
+use crate::core::entity::{IssueId, ProjectId, User, UserId, WorkflowState};
 use crate::core::message::Message;
+use crate::core::store::IssueSource;
 use crate::core::store::Store;
 use crate::core::usecase;
 use crate::core::usecase::issue::Edit;
 
 pub async fn run(args: &[String], host: &impl Host) -> Result<()> {
     let Some((command, rest)) = args.split_first() else {
-        bail!("Usage: linear-tui issue <show|create|update|comment|status> …");
+        bail!("Usage: linear-tui issue <list|search|show|create|update|comment|status> …");
     };
     let linear = host.linear().await?;
     let out = match command.as_str() {
+        "list" => list(&linear, rest, host.now()).await?,
+        "search" => search(&linear, rest).await?,
         "show" => show(&linear, rest).await?,
         "create" => create(&linear, rest, host.now()).await?,
         "update" => update(&linear, rest, host.now()).await?,
@@ -31,7 +35,7 @@ pub async fn run(args: &[String], host: &impl Host) -> Result<()> {
 }
 
 /// What was asked for, as Markdown or as JSON.
-fn output(args: &Args, markdown: String, value: Value) -> String {
+pub(super) fn output(args: &Args, markdown: String, value: Value) -> String {
     if args.flag("json") {
         serde_json::to_string_pretty(&value).unwrap_or_default()
     } else {
@@ -39,6 +43,231 @@ fn output(args: &Args, markdown: String, value: Value) -> String {
     }
 }
 
+const LIST_USAGE: &str = "linear-tui issue list (--team <key> [--preset active|backlog|all] \
+    | --mine | --view <name> | --project <name> | --cycle <name|current> --team <key>) \
+    [--status <name>] [--priority <level>] [--query <text>] [--limit <n>] [--json]";
+
+/// How many pages a list reads at most, whatever `--limit` says.
+const MOST_PAGES: usize = 10;
+
+/// `issue list`: one of the lists the TUI shows, read afresh, narrowed as
+/// the TUI narrows it.
+///
+/// Covers: issue::open_team_issues, issue::open_my_issues,
+/// issue::open_view_issues, issue::open_project_issues,
+/// issue::open_cycle_issues, issue::next_page, issue::reload,
+/// issue::take_page, issue::matches
+async fn list(linear: &impl Linear, args: &[String], now: u64) -> Result<String> {
+    let args = Args::parse(
+        args,
+        &["json", "mine"],
+        &[
+            "team", "preset", "view", "project", "cycle", "status", "priority", "query", "limit",
+        ],
+    )?;
+    args.positionals::<0>(LIST_USAGE)?;
+    let limit: usize = match args.value("limit") {
+        Some(n) => n
+            .parse()
+            .ok()
+            .filter(|n| *n > 0)
+            .with_context(|| format!("not a limit: {n} (a positive number)"))?,
+        None => 50,
+    };
+    let mut store = Store::default();
+    let mut preset = Preset::All;
+    let (source, open, heading) = if args.flag("mine") {
+        store.viewer_id = Some(viewer(linear).await?);
+        let open = usecase::issue::open_my_issues(&mut store)?;
+        (IssueSource::My, open, "My issues".to_string())
+    } else if let Some(name) = args.value("view") {
+        let view = resolve::view(linear, name, true).await?;
+        let open = usecase::issue::open_view_issues(&mut store, view.id.clone());
+        (IssueSource::View, open, format!("View “{}”", view.name))
+    } else if let Some(name) = args.value("project") {
+        let project = resolve::project(linear, name).await?;
+        let open = usecase::issue::open_project_issues(&mut store, project.id.clone());
+        (
+            IssueSource::Project,
+            open,
+            format!("Project {}", project.name),
+        )
+    } else if let Some(team) = args.value("team") {
+        let team = resolve::one_team(linear, team).await?;
+        if let Some(name) = args.value("cycle") {
+            let fields = resolve::InTeam::new(linear, team.id.clone());
+            let cycle = fields
+                .cycle(name, now)
+                .await?
+                .context("--cycle names a cycle to list; none is none")?;
+            let open = usecase::issue::open_cycle_issues(&mut store, cycle.id.clone());
+            (
+                IssueSource::Cycle,
+                open,
+                format!("{} {}", team.name, cycle.label()),
+            )
+        } else {
+            preset = match args.value("preset") {
+                Some(p) => parse_preset(p)?,
+                None => Preset::Active,
+            };
+            let open = usecase::issue::open_team_issues(&mut store, team.id.clone(), preset);
+            let heading = format!("{} issues, {}", team.name, preset.label());
+            (IssueSource::Team, open, heading)
+        }
+    } else {
+        bail!("Usage: {LIST_USAGE}");
+    };
+    if args.value("preset").is_some() && source != IssueSource::Team {
+        preset = parse_preset(args.value("preset").unwrap_or_default())?;
+    }
+    let filter = IssueFilter {
+        status: args.value("status").map(String::from),
+        priority: args.value("priority").map(resolve::priority).transpose()?,
+    };
+    let query = args.value("query").unwrap_or_default().to_lowercase();
+
+    // A fresh read, whatever was there: the first page, then on.
+    let mut request = open
+        .request()
+        .or_else(|| usecase::issue::reload(&mut store, source));
+    let mut pages = 0;
+    while let Some(asked) = request.take() {
+        let page = issue_page(linear.run(asked).await?)?;
+        let of = store.issues[source]
+            .of
+            .clone()
+            .context("the list forgot what it lists")?;
+        usecase::issue::take_page(&mut store, source, &of, page);
+        pages += 1;
+        let shown = shown(&store, source, preset, &filter, &query).len();
+        if shown < limit && pages < MOST_PAGES {
+            request = usecase::issue::next_page(&mut store, source);
+        }
+    }
+    let rows = &store.issues[source];
+    let mut issues = shown(&store, source, preset, &filter, &query);
+    let more = issues.len() > limit || rows.page_info.has_next_page;
+    issues.truncate(limit);
+    Ok(output(
+        &args,
+        render_rows(&heading, &issues, more),
+        json!({
+            "list": heading,
+            "issues": issues.iter().map(|i| issue_json(i)).collect::<Vec<_>>(),
+            "more": more,
+        }),
+    ))
+}
+
+/// The issues of a list the preset, filter, and query leave. A status is
+/// named in any case.
+fn shown<'a>(
+    store: &'a Store,
+    source: IssueSource,
+    preset: Preset,
+    filter: &IssueFilter,
+    query: &str,
+) -> Vec<&'a Issue> {
+    let items = &store.issues[source].items;
+    let mut filter = filter.clone();
+    if let Some(wanted) = &filter.status
+        && let Some(state) = items
+            .iter()
+            .filter_map(|i| i.state.as_ref())
+            .find(|s| s.name.eq_ignore_ascii_case(wanted))
+    {
+        filter.status = Some(state.name.clone());
+    }
+    items
+        .iter()
+        .filter(|i| usecase::issue::matches(i, preset, &filter, query))
+        .collect()
+}
+
+fn parse_preset(text: &str) -> Result<Preset> {
+    Preset::all()
+        .iter()
+        .copied()
+        .find(|p| {
+            p.label()
+                .split_whitespace()
+                .next()
+                .is_some_and(|w| w.eq_ignore_ascii_case(text.trim()))
+        })
+        .with_context(|| format!("no preset {text} (choices: active, backlog, all)"))
+}
+
+/// The page of issues in an answer to a list request.
+fn issue_page(message: Message) -> Result<Page<Issue>> {
+    Ok(match message {
+        Message::Issues { page, .. }
+        | Message::MyIssues(page)
+        | Message::ViewIssues { page, .. }
+        | Message::ProjectIssues { page, .. }
+        | Message::CycleIssues { page, .. } => page,
+        _ => bail!("unexpected answer to a list request"),
+    })
+}
+
+/// A list of issues, one line each: `- ENG-42 Title — State · Priority ·
+/// assignee`.
+pub(super) fn render_rows(heading: &str, issues: &[&Issue], more: bool) -> String {
+    let count = if more {
+        format!("first {}", issues.len())
+    } else {
+        issues.len().to_string()
+    };
+    let mut out = format!("# {heading} ({count})\n\n");
+    if issues.is_empty() {
+        out.push_str("(none)\n");
+    }
+    for issue in issues {
+        let mut facts = Vec::new();
+        facts.extend(issue.state.as_ref().map(|s| s.name.clone()));
+        if issue.priority != Priority::None {
+            facts.push(issue.priority.label().to_string());
+        }
+        facts.extend(issue.assignee.as_ref().map(|u| user_name(u).to_string()));
+        let facts = if facts.is_empty() {
+            String::new()
+        } else {
+            format!(" — {}", facts.join(" · "))
+        };
+        out.push_str(&format!("- {} {}{facts}\n", issue.identifier, issue.title));
+    }
+    out
+}
+
+/// `issue search`: Linear's full-text search, in one team or everywhere.
+///
+/// Covers: issue::search
+async fn search(linear: &impl Linear, args: &[String]) -> Result<String> {
+    let args = Args::parse(args, &["json"], &["team"])?;
+    let [term] = args.positionals::<1>("linear-tui issue search <text> [--team <key>] [--json]")?;
+    let team = match args.value("team") {
+        Some(key) => Some(resolve::one_team(linear, key).await?),
+        None => None,
+    };
+    let request = usecase::issue::search(term.trim(), team.as_ref().map(|t| t.id.clone()))
+        .context("Nothing to search for")?;
+    let Message::SearchResults { issues, .. } = linear.run(request).await? else {
+        bail!("unexpected answer to a search");
+    };
+    let heading = format!("Search for “{}”", term.trim());
+    let rows: Vec<&Issue> = issues.iter().collect();
+    Ok(output(
+        &args,
+        render_rows(&heading, &rows, false),
+        json!({ "search": term.trim(), "issues": rows.iter().map(|i| issue_json(i)).collect::<Vec<_>>() }),
+    ))
+}
+
+/// `issue show`: the issue with its description, sub-issues, and thread;
+/// its identifier, URL, and branch name among its fields.
+///
+/// Covers: issue::open, issue::take_detail, issue::refresh, issue::copy,
+/// issue::open_url
 async fn show(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(args, &["json", "md"], &[])?;
     let [key] = args.positionals::<1>("linear-tui issue show <ID> [--json]")?;
@@ -54,26 +283,55 @@ const FIELDS: &[&str] = &[
     "estimate",
     "label",
     "project",
+    "milestone",
     "cycle",
     "parent",
 ];
 
+/// The milestone `wanted` names, in the project with id `project`: the one
+/// the issue is given, or is already in.
+async fn milestone_in(
+    linear: &impl Linear,
+    project: Option<&ProjectId>,
+    wanted: &str,
+) -> Result<Option<Milestone>> {
+    if resolve::is_none(wanted) {
+        return Ok(None);
+    }
+    let Some(project) = project else {
+        bail!("an issue outside a project has no milestones: name its --project too");
+    };
+    let project = resolve::project_detail(linear, project).await?;
+    resolve::milestone(&project, wanted)
+}
+
+/// `issue create`.
+///
+/// Covers: issue::create, team::load
 async fn create(linear: &impl Linear, args: &[String], now: u64) -> Result<String> {
     let mut valued = vec!["team", "title"];
     valued.extend_from_slice(FIELDS);
     let args = Args::parse(args, &["json"], &valued)?;
     let usage = "linear-tui issue create --team <key> --title <text> [--description <text>|-] \
                  [--priority <level>] [--assignee <me|name|email>] [--estimate <n>] \
-                 [--label <name>]... [--project <name>] [--cycle <name|current>] [--parent <ID>]";
+                 [--label <name>]... [--project <name>] [--milestone <name>] \
+                 [--cycle <name|current>] [--parent <ID>]";
     args.positionals::<0>(usage)?;
     let (Some(team), Some(title)) = (args.value("team"), args.value("title")) else {
         bail!("Usage: {usage}");
     };
-    let Message::Teams(teams) = linear.run(usecase::team::load()).await? else {
-        bail!("unexpected answer to a teams request");
+    let team = resolve::one_team(linear, team).await?;
+    let mut fields = resolve::InTeam::new(linear, team.id.clone());
+    let project_id = match args.value("project") {
+        Some(name) => fields.project(name).await?.map(|p| p.id),
+        None => None,
     };
-    let team = find_team(&teams, team)?;
-    let mut fields = resolve::Team::new(linear, team.id.clone());
+    let milestone_id = match args.value("milestone") {
+        Some(name) => milestone_in(linear, project_id.as_ref(), name)
+            .await?
+            .map(|m| m.id),
+        None => None,
+    };
     let draft = usecase::issue::Draft {
         title: text_or_stdin(title)?,
         description: args.value("description").map(text_or_stdin).transpose()?,
@@ -97,10 +355,8 @@ async fn create(linear: &impl Linear, args: &[String], now: u64) -> Result<Strin
             .into_iter()
             .map(|l| l.id)
             .collect(),
-        project_id: match args.value("project") {
-            Some(name) => fields.project(name).await?.map(|p| p.id),
-            None => None,
-        },
+        project_id,
+        milestone_id,
         cycle_id: match args.value("cycle") {
             Some(name) => fields.cycle(name, now).await?.map(|c| c.id),
             None => None,
@@ -126,8 +382,13 @@ async fn create(linear: &impl Linear, args: &[String], now: u64) -> Result<Strin
 const UPDATE_USAGE: &str = "linear-tui issue update <ID> [--title <text>] [--description <text>|-] \
     [--priority <urgent|high|medium|low|none>] [--assignee <me|name|email|none>] \
     [--estimate <n|none>] [--label <name>]... [--unlabel <name>]... [--project <name|none>] \
-    [--cycle <name|current|none>] [--parent <ID|none>] [--json]";
+    [--milestone <name|none>] [--cycle <name|current|none>] [--parent <ID|none>] [--json]";
 
+/// `issue update`: any fields at once, a priority or an assignee (`me`)
+/// among them.
+///
+/// Covers: issue::update, issue::set_priority, issue::set_assignee,
+/// issue::assign_to_me
 async fn update(linear: &impl Linear, args: &[String], now: u64) -> Result<String> {
     let mut valued = vec!["title", "unlabel"];
     valued.extend_from_slice(FIELDS);
@@ -143,7 +404,20 @@ async fn update(linear: &impl Linear, args: &[String], now: u64) -> Result<Strin
         .as_ref()
         .map(|t| t.id.clone())
         .with_context(|| format!("Linear did not say which team {} is in", issue.identifier))?;
-    let mut fields = resolve::Team::new(linear, team_id);
+    let mut fields = resolve::InTeam::new(linear, team_id);
+    let project = match args.value("project") {
+        Some(name) => Some(fields.project(name).await?),
+        None => None,
+    };
+    // A milestone of the project the issue is moved to, or else of its own.
+    let milestone_project = match &project {
+        Some(moved) => moved.as_ref().map(|p| p.id.clone()),
+        None => issue.project.as_ref().map(|p| p.id.clone()),
+    };
+    let milestone = match args.value("milestone") {
+        Some(name) => Some(milestone_in(linear, milestone_project.as_ref(), name).await?),
+        None => None,
+    };
     let edit = Edit {
         title: args.value("title").map(text_or_stdin).transpose()?,
         description: args.value("description").map(text_or_stdin).transpose()?,
@@ -155,10 +429,8 @@ async fn update(linear: &impl Linear, args: &[String], now: u64) -> Result<Strin
         estimate: args.value("estimate").map(resolve::estimate).transpose()?,
         add_labels: fields.labels(&args.all("label")).await?,
         remove_labels: fields.labels(&args.all("unlabel")).await?,
-        project: match args.value("project") {
-            Some(name) => Some(fields.project(name).await?),
-            None => None,
-        },
+        project,
+        milestone,
         cycle: match args.value("cycle") {
             Some(name) => Some(fields.cycle(name, now).await?),
             None => None,
@@ -258,6 +530,13 @@ fn describe_changes(issue: &Issue, edit: &Edit) -> Vec<Change> {
             json!(project.as_ref().map(|p| &p.name)),
         );
     }
+    if let Some(milestone) = &edit.milestone {
+        push(
+            "milestone",
+            json!(issue.project_milestone.as_ref().map(|m| &m.name)),
+            json!(milestone.as_ref().map(|m| &m.name)),
+        );
+    }
     if let Some(cycle) = &edit.cycle {
         push(
             "cycle",
@@ -284,6 +563,9 @@ fn describe_changes(issue: &Issue, edit: &Edit) -> Vec<Change> {
 const COMMENT_USAGE: &str = "linear-tui issue comment <ID> <body|-> [--reply-to <comment-id>] \
     | comment edit <ID> <comment-id> <body|-> | comment delete <ID> <comment-id>";
 
+/// `issue comment`, and `issue comment edit` and `delete`.
+///
+/// Covers: issue::comment, issue::reply
 async fn comment(linear: &impl Linear, args: &[String]) -> Result<String> {
     match args.first().map(String::as_str) {
         Some("edit") => return edit_comment(linear, &args[1..]).await,
@@ -328,6 +610,7 @@ async fn comment(linear: &impl Linear, args: &[String]) -> Result<String> {
     ))
 }
 
+/// Covers: issue::edit_comment
 async fn edit_comment(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(args, &["json"], &[])?;
     let [key, id, body] = args.positionals::<3>(COMMENT_USAGE)?;
@@ -343,6 +626,7 @@ async fn edit_comment(linear: &impl Linear, args: &[String]) -> Result<String> {
     ))
 }
 
+/// Covers: issue::delete_comment
 async fn delete_comment(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(args, &["json"], &[])?;
     let [key, id] = args.positionals::<2>(COMMENT_USAGE)?;
@@ -379,14 +663,22 @@ fn thread_store(issue: &Issue, viewer_id: Option<UserId>) -> Store {
     }
 }
 
-/// Who the signed-in user is.
-async fn viewer(linear: &impl Linear) -> Result<UserId> {
-    let Message::Viewer { id, .. } = linear.run(usecase::user::load()).await? else {
+/// Who the signed-in user is: `me` to `--assignee` and `--mine`, and
+/// whose comments may be edited.
+///
+/// Covers: user::load, user::take_viewer
+pub(super) async fn viewer(linear: &impl Linear) -> Result<UserId> {
+    let Message::Viewer { id, organization } = linear.run(usecase::user::load()).await? else {
         bail!("unexpected answer to a viewer request");
     };
-    Ok(id)
+    let mut store = Store::default();
+    usecase::user::take_viewer(&mut store, id, organization);
+    store.viewer_id.context("Linear did not say who you are")
 }
 
+/// `issue status`.
+///
+/// Covers: issue::set_status
 async fn status(linear: &impl Linear, args: &[String]) -> Result<String> {
     let args = Args::parse(args, &["json"], &[])?;
     let [key, name] = args.positionals::<2>("linear-tui issue status <ID> <state>")?;
@@ -470,16 +762,6 @@ pub fn is_identifier(text: &str) -> bool {
         && number.chars().all(|c| c.is_ascii_digit())
 }
 
-fn find_team<'a>(teams: &'a [Team], wanted: &str) -> Result<&'a Team> {
-    teams
-        .iter()
-        .find(|t| t.key.eq_ignore_ascii_case(wanted) || t.name.eq_ignore_ascii_case(wanted))
-        .with_context(|| {
-            let keys: Vec<&str> = teams.iter().map(|t| t.key.as_str()).collect();
-            format!("no team {wanted} (teams: {})", keys.join(", "))
-        })
-}
-
 /// The state called `name` in the team's workflow, ignoring case.
 pub fn resolve_state<'a>(states: &'a [WorkflowState], name: &str) -> Result<&'a WorkflowState> {
     states
@@ -494,7 +776,7 @@ pub fn resolve_state<'a>(states: &'a [WorkflowState], name: &str) -> Result<&'a 
         })
 }
 
-fn user_name(user: &User) -> &str {
+pub(super) fn user_name(user: &User) -> &str {
     user.display_name.as_deref().unwrap_or(&user.name)
 }
 
@@ -625,6 +907,7 @@ pub fn issue_json(issue: &Issue) -> Value {
         "team_id": issue.team.as_ref().map(|t| &t.id),
         "labels": issue.labels.as_ref().map_or(Vec::new(), |l| l.nodes.iter().map(|l| l.name.clone()).collect()),
         "project": issue.project.as_ref().map(|p| json!({ "id": p.id, "name": p.name })),
+        "milestone": issue.project_milestone.as_ref().map(|m| json!({ "id": m.id, "name": m.name })),
         "cycle": issue.cycle.as_ref().map(|c| json!({ "id": c.id, "name": c.label() })),
         "parent": issue.parent.as_ref().map(|p| json!({ "identifier": p.identifier, "title": p.title })),
         "children": issue.children.as_ref().map_or(Vec::new(), |c| c.nodes.iter().map(|c| json!({
@@ -961,6 +1244,33 @@ mod tests {
                 )
             )),
             "{after:?}"
+        );
+    }
+
+    /// A list names its presets by their first word, and its rows carry the
+    /// state, priority, and assignee.
+    #[test]
+    fn a_list_reads_one_issue_a_line() {
+        assert_eq!(parse_preset("backlog").unwrap(), Preset::Backlog);
+        assert!(
+            parse_preset("done")
+                .unwrap_err()
+                .to_string()
+                .contains("active, backlog, all")
+        );
+        let issue: Issue = serde_json::from_value(json!({
+            "id": "i", "identifier": "WEB-7", "title": "Fix it", "priority": 2,
+            "state": { "id": "s", "name": "Todo" },
+            "assignee": { "id": "u", "name": "Ada", "displayName": "ada" }
+        }))
+        .unwrap();
+        assert_eq!(
+            render_rows("Web issues", &[&issue], true),
+            "# Web issues (first 1)\n\n- WEB-7 Fix it — Todo · High · ada\n"
+        );
+        assert_eq!(
+            render_rows("Search", &[], false),
+            "# Search (0)\n\n(none)\n"
         );
     }
 

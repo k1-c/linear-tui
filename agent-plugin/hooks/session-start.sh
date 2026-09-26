@@ -33,6 +33,9 @@ Act on Linear through linear-tui's CLI, which uses the user's own credentials:
   [--assignee] [--estimate] [--label]... [--unlabel]... [--project] [--cycle]
   [--parent]` — `none` empties a field
 - `linear-tui issue create --team <key> --title <text> [--description <text>]`
+- `linear-tui issue list --team <key>|--mine|--view|--project` and `issue search`
+- `linear-tui project …`, `milestone …`, `team show <key>`, `cycle list`,
+  `view list`, `favorite list` — everything the TUI shows or changes
 Add `--json` for JSON. Without an instruction to change an issue, only comment;
 move or edit it (to Done, a new title, anything else) only when asked.
 
