@@ -25,7 +25,7 @@ use super::widgets::{
 use crate::config::Theme;
 use crate::core::entity::AgentLink;
 use crate::core::entity::{Comment, Issue, StateType};
-use crate::interface::tui::app::{App, InputMode};
+use crate::interface::tui::app::{App, CommentTarget, InputMode};
 use crate::interface::tui::look::hex_color;
 
 /// Width of the properties panel when there is room for one.
@@ -119,12 +119,17 @@ pub fn draw(f: &mut Frame, app: &mut App, memo: &mut Memo, area: Rect) {
 
 fn draw_comment_editor(f: &mut Frame, app: &App, area: Rect) {
     let th = &app.theme;
+    let title = match &app.view.comment_target {
+        CommentTarget::New => " Leave a comment\u{2026} ".to_string(),
+        CommentTarget::Reply(id) => format!(" Reply to {}\u{2026} ", author_of(app, id)),
+        CommentTarget::Edit(_) => " Edit your comment ".to_string(),
+    };
     let editor = Paragraph::new(super::input_lines(&app.view.comment, th)).block(
         Block::default()
             .borders(Borders::ALL)
             .border_style(Style::default().fg(th.accent))
             .title(Span::styled(
-                " Leave a comment\u{2026} ",
+                title,
                 Style::default().fg(th.text).add_modifier(Modifier::BOLD),
             ))
             .title_bottom(Line::from(Span::styled(
@@ -133,6 +138,17 @@ fn draw_comment_editor(f: &mut Frame, app: &App, area: Rect) {
             ))),
     );
     f.render_widget(editor, area);
+}
+
+/// Who wrote a comment of the open issue, for the reply field's title.
+fn author_of(app: &App, id: &crate::core::entity::CommentId) -> String {
+    app.store
+        .current_issue
+        .as_ref()
+        .and_then(|i| i.comments.as_ref())
+        .and_then(|c| c.nodes.iter().find(|c| &c.id == id))
+        .and_then(|c| c.user.as_ref())
+        .map_or_else(|| "the comment".to_string(), |u| user_name(u).to_string())
 }
 
 // --------------------------------------------------------------- main column

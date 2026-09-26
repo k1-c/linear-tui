@@ -58,6 +58,7 @@ linear-tui context                       # the page, the open issue, the list wi
 linear-tui issue show ENG-42             # description, fields, and comments as Markdown
 linear-tui issue comment ENG-42 -        # comment, body from stdin
 linear-tui issue status ENG-42 "In Review"
+linear-tui issue update ENG-42 --priority low --description -   # rewrite, body from stdin
 ```
 
 Say "fix this one" or "look at the top three" and the agent knows which you

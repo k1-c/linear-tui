@@ -87,8 +87,9 @@ wires the two outer layers together, and what every outer layer is handed.
       grouping, prefetch margins), `sidebar.rs`, `mouse.rs` (`App::click`),
       `input.rs`, `snapshot.rs` (capture the view) and `restore.rs` (reopen
       it on launch, or open the issue `linear-tui open` names), `notes.rs`,
-      `agents.rs` (herdr agents on issues, `g w`); `tests.rs` the state
-      tests
+      `agents.rs` (herdr agents on issues, `g w`), `edits.rs` (renaming
+      an issue, its description in `$EDITOR`, replying to, editing, and
+      deleting comments); `tests.rs` the state tests
     - `keys.rs` — keybindings (Controller): the `BINDINGS` table;
       `palette.rs` — the `Ctrl+K` command palette (Controller), with
       `fuzzy.rs` its matcher; `event.rs` — terminal events, routed
@@ -106,14 +107,19 @@ wires the two outer layers together, and what every outer layer is handed.
   - `cli/` — the headless commands for agents (`docs/cli.md`), against
     the `Host` port in `mod.rs` (Linear, the recorded views, the clock) —
     `context.rs` renders the view snapshot, `tui.rs` works the running TUI
-    (`linear-tui tui …`), `issue.rs` shows, creates, comments on, and moves
-    issues through `headless.rs`'s `Linear` port, which `commands.rs` backs
-    with `dispatch::execute_request`; `args.rs` parses their arguments
+    (`linear-tui tui …`), `issue.rs` shows, creates, updates, comments on,
+    and moves issues, and edits and deletes comments, through
+    `headless.rs`'s `Linear` port, which `commands.rs` backs with
+    `dispatch::execute_request`; `resolve.rs` turns the names typed into
+    members, labels, projects, cycles, and parents; `args.rs` parses their
+    arguments
 - `src/infra/` — the systems linear-tui calls on:
   - `linear/` — Linear's GraphQL client (`client.rs`, `error.rs`;
     `decode_tests.rs` checks decoding against `tests/fixtures/`) and
     `auth/` — OAuth2 + PKCE, token storage, API key fallback
   - `dispatch.rs` — `execute_request`: carries out one `usecase::Request`
+  - `editor.rs` — `$VISUAL` / `$EDITOR` on a private temporary file, for
+    writing a description; `main` lends it the terminal
   - `disk/snapshot/` — view snapshots on disk (`docs/view-snapshot.md`):
     the per-workspace files under the state dir (`Shelf`, which reads them
     as `Instance`s) and the debounced writer (`Recorder`) the main loop

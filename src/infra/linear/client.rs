@@ -9,6 +9,18 @@ use serde_json::{Value, json};
 
 use super::error::{ApiError, GraphQLError};
 use crate::core::entity::*;
+use crate::core::usecase::issue::{Changes, Draft};
+
+/// Fields selected for a comment, wherever it comes from.
+const COMMENT_FIELDS: &str = r#"
+    id
+    body
+    createdAt
+    editedAt
+    url
+    user { id name displayName }
+    parent { id }
+"#;
 
 const API_URL: &str = "https://api.linear.app/graphql";
 
@@ -318,14 +330,7 @@ impl LinearClient {
                 issue(id: $id) {{
                     {ISSUE_FIELDS}
                     comments(first: 100) {{
-                        nodes {{
-                            id
-                            body
-                            createdAt
-                            editedAt
-                            user {{ id name displayName }}
-                            parent {{ id }}
-                        }}
+                        nodes {{ {COMMENT_FIELDS} }}
                     }}
                     children(first: 50) {{
                         nodes {{ id identifier title state {{ id name color type }} }}
@@ -360,7 +365,7 @@ impl LinearClient {
             .connection(
                 r#"query TeamMembers($id: String!) {
                     team(id: $id) {
-                        members { nodes { id name displayName } }
+                        members { nodes { id name displayName email } }
                     }
                 }"#,
                 json!({ "id": team_id }),
@@ -368,6 +373,30 @@ impl LinearClient {
             )
             .await?;
         Ok(members)
+    }
+
+    /// The labels a team's issues can carry: the team's own and the
+    /// workspace's. Label groups are left out, since an issue carries the
+    /// labels inside a group, not the group.
+    pub async fn labels(&self, team_id: &TeamId) -> Result<Vec<Label>, ApiError> {
+        let (labels, _) = self
+            .connection(
+                r#"query Labels($teamId: ID!) {
+                    issueLabels(
+                        first: 250
+                        filter: {
+                            isGroup: { eq: false }
+                            or: [{ team: { id: { eq: $teamId } } }, { team: { null: true } }]
+                        }
+                    ) {
+                        nodes { id name color }
+                    }
+                }"#,
+                json!({ "teamId": team_id }),
+                "/issueLabels",
+            )
+            .await?;
+        Ok(labels)
     }
 
     pub async fn viewer(&self) -> Result<Viewer, ApiError> {
@@ -679,39 +708,81 @@ impl LinearClient {
             .await
     }
 
-    pub async fn create_comment(&self, issue_id: &IssueId, body: &str) -> Result<(), ApiError> {
+    /// Change any fields of an issue at once.
+    pub async fn edit_issue(&self, issue_id: &IssueId, changes: &Changes) -> Result<(), ApiError> {
+        self.update_issue(issue_id, update_input(changes)).await
+    }
+
+    /// Post a comment — a reply when `parent_id` is given — and return it.
+    pub async fn create_comment(
+        &self,
+        issue_id: &IssueId,
+        body: &str,
+        parent_id: Option<&CommentId>,
+    ) -> Result<Comment, ApiError> {
+        let query = format!(
+            r#"mutation CreateComment($input: CommentCreateInput!) {{
+                commentCreate(input: $input) {{
+                    success
+                    comment {{ {COMMENT_FIELDS} }}
+                }}
+            }}"#
+        );
+        let mut input = json!({ "issueId": issue_id, "body": body });
+        if let Some(parent) = parent_id {
+            input["parentId"] = json!(parent);
+        }
+        let mut payload = self
+            .mutate(
+                &query,
+                json!({ "input": input }),
+                "commentCreate",
+                "Linear rejected the comment",
+            )
+            .await?;
+        let comment = payload
+            .get_mut("comment")
+            .map(Value::take)
+            .filter(|v| !v.is_null())
+            .ok_or_else(|| ApiError::Decode("commentCreate returned no comment".into()))?;
+        serde_json::from_value(comment).map_err(|e| decode_error("CreateComment", e))
+    }
+
+    pub async fn update_comment(&self, comment_id: &CommentId, body: &str) -> Result<(), ApiError> {
         self.mutate(
-            r#"mutation CreateComment($issueId: String!, $body: String!) {
-                commentCreate(input: { issueId: $issueId, body: $body }) {
+            r#"mutation UpdateComment($id: String!, $body: String!) {
+                commentUpdate(id: $id, input: { body: $body }) {
                     success
                 }
             }"#,
-            json!({ "issueId": issue_id, "body": body }),
-            "commentCreate",
-            "Linear rejected the comment",
+            json!({ "id": comment_id, "body": body }),
+            "commentUpdate",
+            "Linear rejected the edit",
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn delete_comment(&self, comment_id: &CommentId) -> Result<(), ApiError> {
+        self.mutate(
+            r#"mutation DeleteComment($id: String!) {
+                commentDelete(id: $id) {
+                    success
+                }
+            }"#,
+            json!({ "id": comment_id }),
+            "commentDelete",
+            "Linear refused to delete the comment",
         )
         .await?;
         Ok(())
     }
 
     /// Create an issue and return it, fully populated, for optimistic insertion.
-    pub async fn create_issue(
-        &self,
-        team_id: &TeamId,
-        title: &str,
-        description: Option<&str>,
-        priority: Priority,
-    ) -> Result<Issue, ApiError> {
+    pub async fn create_issue(&self, team_id: &TeamId, draft: &Draft) -> Result<Issue, ApiError> {
         let query = format!(
-            r#"mutation CreateIssue($teamId: String!, $title: String!, $description: String, $priority: Int) {{
-                issueCreate(
-                    input: {{
-                        teamId: $teamId
-                        title: $title
-                        description: $description
-                        priority: $priority
-                    }}
-                ) {{
+            r#"mutation CreateIssue($input: IssueCreateInput!) {{
+                issueCreate(input: $input) {{
                     success
                     issue {{ {ISSUE_FIELDS} }}
                 }}
@@ -720,12 +791,7 @@ impl LinearClient {
         let mut payload = self
             .mutate(
                 &query,
-                json!({
-                    "teamId": team_id,
-                    "title": title,
-                    "description": description,
-                    "priority": priority.as_u8(),
-                }),
+                json!({ "input": create_input(team_id, draft) }),
                 "issueCreate",
                 "Linear rejected the issue",
             )
@@ -737,6 +803,77 @@ impl LinearClient {
             .ok_or_else(|| ApiError::Decode("issueCreate returned no issue".into()))?;
         serde_json::from_value(issue).map_err(|e| decode_error("CreateIssue", e))
     }
+}
+
+/// The `IssueUpdateInput` for `changes`: only the fields it changes, an
+/// emptied one as `null`.
+fn update_input(changes: &Changes) -> Value {
+    let mut input = serde_json::Map::new();
+    let mut put = |name: &str, value: Value| {
+        input.insert(name.to_string(), value);
+    };
+    if let Some(title) = &changes.title {
+        put("title", json!(title));
+    }
+    if let Some(description) = &changes.description {
+        put("description", json!(description));
+    }
+    if let Some(priority) = changes.priority {
+        put("priority", json!(priority.as_u8()));
+    }
+    if let Some(assignee) = &changes.assignee_id {
+        put("assigneeId", json!(assignee));
+    }
+    if let Some(estimate) = changes.estimate {
+        put("estimate", json!(estimate));
+    }
+    if !changes.added_label_ids.is_empty() {
+        put("addedLabelIds", json!(changes.added_label_ids));
+    }
+    if !changes.removed_label_ids.is_empty() {
+        put("removedLabelIds", json!(changes.removed_label_ids));
+    }
+    if let Some(project) = &changes.project_id {
+        put("projectId", json!(project));
+    }
+    if let Some(cycle) = &changes.cycle_id {
+        put("cycleId", json!(cycle));
+    }
+    if let Some(parent) = &changes.parent_id {
+        put("parentId", json!(parent));
+    }
+    Value::Object(input)
+}
+
+/// The `IssueCreateInput` for a draft: what it sets, and nothing else.
+fn create_input(team_id: &TeamId, draft: &Draft) -> Value {
+    let mut input = json!({
+        "teamId": team_id,
+        "title": draft.title,
+        "priority": draft.priority.as_u8(),
+    });
+    if let Some(description) = &draft.description {
+        input["description"] = json!(description);
+    }
+    if let Some(assignee) = &draft.assignee_id {
+        input["assigneeId"] = json!(assignee);
+    }
+    if let Some(estimate) = draft.estimate {
+        input["estimate"] = json!(estimate);
+    }
+    if !draft.label_ids.is_empty() {
+        input["labelIds"] = json!(draft.label_ids);
+    }
+    if let Some(project) = &draft.project_id {
+        input["projectId"] = json!(project);
+    }
+    if let Some(cycle) = &draft.cycle_id {
+        input["cycleId"] = json!(cycle);
+    }
+    if let Some(parent) = &draft.parent_id {
+        input["parentId"] = json!(parent);
+    }
+    input
 }
 
 /// The operation name of a query — `TeamIssues` in `query TeamIssues(…)` —
@@ -901,6 +1038,75 @@ mod tests {
             .update_issue_priority(&IssueId::new("i1"), Priority::High)
             .await
             .unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_update_sends_only_what_it_changes_and_nulls_what_it_empties() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_partial_json(json!({
+                "variables": { "id": "i1", "input": {
+                    "title": "New", "priority": 4, "projectId": null,
+                    "addedLabelIds": ["l1"]
+                } }
+            })))
+            .respond_with(data(json!({ "issueUpdate": { "success": true } })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let changes = Changes {
+            title: Some("New".into()),
+            priority: Some(Priority::Low),
+            project_id: Some(None),
+            added_label_ids: vec![LabelId::new("l1")],
+            ..Changes::default()
+        };
+        let input = update_input(&changes);
+        assert_eq!(input.as_object().unwrap().len(), 4, "{input}");
+        client(&server)
+            .edit_issue(&IssueId::new("i1"), &changes)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_reply_names_its_thread_and_comes_back_with_its_id() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(body_partial_json(json!({
+                "variables": { "input": { "issueId": "i1", "body": "yes", "parentId": "c1" } }
+            })))
+            .respond_with(data(
+                json!({ "commentCreate": { "success": true, "comment": {
+                "id": "c2", "body": "yes", "url": "https://linear.app/x/issue/ENG-1#comment-c2",
+                "parent": { "id": "c1" }
+            } } }),
+            ))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let comment = client(&server)
+            .create_comment(&IssueId::new("i1"), "yes", Some(&CommentId::new("c1")))
+            .await
+            .unwrap();
+        assert_eq!(comment.id, "c2");
+        assert!(comment.url.unwrap().ends_with("comment-c2"));
+    }
+
+    #[test]
+    fn a_draft_sends_only_what_it_sets() {
+        let draft = Draft {
+            title: "T".into(),
+            estimate: Some(2),
+            ..Draft::default()
+        };
+        let input = create_input(&TeamId::new("t"), &draft);
+        assert_eq!(
+            input,
+            json!({ "teamId": "t", "title": "T", "priority": 0, "estimate": 2 })
+        );
     }
 
     #[tokio::test]

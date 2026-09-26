@@ -4,10 +4,10 @@
 //!
 //! | Module | Aggregate | Use cases |
 //! | --- | --- | --- |
-//! | [`issue`] | an issue, with its comments | list, page, narrow, search, read, change, comment, create, copy, open |
+//! | [`issue`] | an issue, with its comments | list, page, narrow, search, read, change, edit, comment, reply, edit and delete a comment, create, copy, open |
 //! | [`project`] | a project | list a team's or a view's, open |
 //! | [`cycle`] | a cycle | list a team's |
-//! | [`team`] | a team, its states and members | pick at startup, switch, know its states and members |
+//! | [`team`] | a team, its states, members, and labels | pick at startup, switch, know its states, members, and labels |
 //! | [`view`] | a saved view | list, pick those a Views page shows |
 //! | [`favorite`] | a favorite | list, where one leads |
 //! | [`user`] | the signed-in user | know who that is |
@@ -167,6 +167,24 @@ pub enum Refusal {
     /// An issue needs a title.
     #[error("A title is required")]
     TitleRequired,
+    /// An edit that changes nothing.
+    #[error("Nothing to change")]
+    NothingToChange,
+    /// An issue cannot be filed under itself.
+    #[error("An issue cannot be its own parent")]
+    OwnParent,
+    /// A label named both to add and to remove.
+    #[error("Label {0} is both added and removed")]
+    LabelAddedAndRemoved(String),
+    /// A comment needs a body.
+    #[error("The comment is empty")]
+    EmptyComment,
+    /// The comment named is not in the issue's thread.
+    #[error("No comment {0} on this issue")]
+    NoSuchComment(String),
+    /// Linear lets only a comment's author change it.
+    #[error("Only {0}, who wrote it, can edit or delete this comment")]
+    NotYourComment(String),
     /// The issue has no value for what was to be copied, or there is no issue.
     #[error("No {0} to copy")]
     NothingToCopy(&'static str),

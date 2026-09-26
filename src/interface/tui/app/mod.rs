@@ -9,6 +9,7 @@ use crate::interface::tui::grouping::{GroupBy, Preset, Section, group};
 mod actions;
 mod agents;
 mod cursor;
+mod edits;
 mod frame;
 mod input;
 mod lists;
@@ -26,6 +27,7 @@ mod snapshot;
 mod tests;
 mod view;
 
+pub use edits::*;
 pub use frame::*;
 pub use input::*;
 pub use lists::*;
@@ -138,6 +140,10 @@ pub enum InputMode {
     NewIssue,
     /// Typing a note for the agent.
     Note,
+    /// Renaming an issue.
+    Title,
+    /// Rewriting an issue's description, where there is no `$EDITOR`.
+    Description,
 }
 
 /// The open popup, and what it acts on.
@@ -160,6 +166,8 @@ pub enum Popup {
     StatusChange(IssueId),
     PriorityChange(IssueId),
     AssigneeChange(IssueId),
+    /// Pick one of the open issue's comments to reply to, edit, or delete.
+    CommentPick(CommentAction),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -183,6 +191,9 @@ pub struct App {
     /// Whether linear-tui runs inside herdr, which enables the actions that
     /// hand work to its plugin.
     pub herdr: bool,
+    /// Whether there is a terminal to lend `$EDITOR`. A headless instance
+    /// has none, and edits a description in a field instead.
+    pub external_editor: bool,
     /// herdr's agents and the issues they work on, from the plugin.
     pub agents: Vec<crate::core::entity::AgentLink>,
     /// Notes written for the agent and not yet sent.
@@ -211,6 +222,7 @@ impl App {
             outbox: Outbox::default(),
             should_quit: false,
             herdr: false,
+            external_editor: false,
             agents: Vec::new(),
             notes: Default::default(),
             restore: None,

@@ -59,6 +59,20 @@ impl Args {
             .map(|(_, v)| v.as_str())
     }
 
+    /// Every value given for `name`, in order: an option that may repeat.
+    pub fn all(&self, name: &str) -> Vec<&str> {
+        self.values
+            .iter()
+            .filter(|(n, _)| n == name)
+            .map(|(_, v)| v.as_str())
+            .collect()
+    }
+
+    /// Whether any of `names` was given a value.
+    pub fn any(&self, names: &[&str]) -> bool {
+        self.values.iter().any(|(n, _)| names.contains(&n.as_str()))
+    }
+
     /// Exactly `N` positionals, or the usage line.
     pub fn positionals<const N: usize>(&self, usage: &str) -> Result<[&str; N]> {
         if self.positional.len() != N {

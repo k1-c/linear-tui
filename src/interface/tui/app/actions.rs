@@ -26,14 +26,29 @@ impl App {
         if self.focused_issue().is_some() {
             self.view.input_mode = InputMode::Comment;
             self.view.comment.clear();
+            self.view.comment_target = CommentTarget::New;
         }
     }
 
+    /// Post what the comment field holds: a comment, a reply, or an edit.
     pub fn submit_comment(&mut self) {
+        let target = std::mem::take(&mut self.view.comment_target);
         if let Some(issue_id) = self.focused_issue_id() {
             let body = std::mem::take(&mut self.view.comment.value);
-            if let Some(request) = usecase::issue::comment(&mut self.store, &issue_id, body) {
-                self.request(request);
+            let store = &mut self.store;
+            match target {
+                CommentTarget::New => {
+                    let request = usecase::issue::comment(store, &issue_id, body);
+                    self.send(request);
+                }
+                CommentTarget::Reply(parent) => {
+                    let outcome = usecase::issue::reply(store, &issue_id, &parent, body);
+                    self.run(outcome);
+                }
+                CommentTarget::Edit(comment) => {
+                    let outcome = usecase::issue::edit_comment(store, &issue_id, &comment, body);
+                    self.run(outcome);
+                }
             }
         }
         self.view.input_mode = InputMode::Normal;
@@ -43,6 +58,7 @@ impl App {
     pub fn cancel_comment(&mut self) {
         self.view.input_mode = InputMode::Normal;
         self.view.comment.clear();
+        self.view.comment_target = CommentTarget::New;
     }
 
     /// Open the search box on the list on screen.
@@ -180,8 +196,9 @@ impl App {
         };
         let draft = usecase::issue::Draft {
             title: form.title.value.clone(),
-            description: form.description.value.clone(),
+            description: Some(form.description.value.clone()),
             priority: form.priority,
+            ..Default::default()
         };
         if self.run(usecase::issue::create(team_id, draft)) {
             self.set_status("Creating issue…");

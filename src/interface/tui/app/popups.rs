@@ -219,6 +219,11 @@ impl App {
             Popup::PriorityChange(_) => self.apply_priority_selection(),
             Popup::AssigneeChange(_) => self.apply_assignee_selection(),
             Popup::GroupBy => self.apply_group_by_selection(),
+            Popup::CommentPick(action) => {
+                if let Some(index) = self.popup_choice() {
+                    self.apply_comment_pick(action, index);
+                }
+            }
             // The palette's entries come from the binding table; the
             // `palette` module runs them.
             Popup::Palette | Popup::None => {}
@@ -384,6 +389,17 @@ impl App {
                 }))
                 .collect(),
             Popup::GroupBy => GroupBy::ALL.iter().map(|g| g.label().to_string()).collect(),
+            Popup::CommentPick(action) => self
+                .pickable_comments(*action)
+                .into_iter()
+                .map(|c| {
+                    let author = c
+                        .user
+                        .as_ref()
+                        .map_or("someone", |u| u.display_name.as_deref().unwrap_or(&u.name));
+                    format!("{author} {}", c.body)
+                })
+                .collect(),
             Popup::Palette | Popup::None => Vec::new(),
         }
     }

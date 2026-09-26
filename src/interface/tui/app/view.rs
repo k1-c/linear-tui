@@ -3,7 +3,10 @@
 use std::collections::HashSet;
 use std::time::Instant;
 
-use super::{Input, InputMode, IssueList, IssueLists, NewIssueForm, PerSource, Popup, ViewKind};
+use super::{
+    CommentTarget, Input, InputMode, IssueList, IssueLists, NewIssueForm, PerSource, Popup,
+    ViewKind,
+};
 use crate::config::Config;
 use crate::core::entity::Issue;
 use crate::core::entity::{FavoriteId, IssueId};
@@ -36,6 +39,15 @@ pub struct ViewState {
     pub palette: Palette,
     pub detail_scroll: u16,
     pub comment: Input,
+    /// What the comment field posts: a comment, a reply, or an edit.
+    pub comment_target: CommentTarget,
+    /// The title being typed, while renaming.
+    pub title: Input,
+    /// The description being typed, where there is no `$EDITOR`.
+    pub description: Input,
+    /// The issue being renamed or described, held by id: a page landing
+    /// can move the cursor while the field is open.
+    pub editing: Option<IssueId>,
     /// The note being typed, and the issue it is about.
     pub note: Input,
     pub note_about: Option<crate::core::entity::Subject>,
@@ -108,6 +120,10 @@ impl ViewState {
             palette: Palette::default(),
             detail_scroll: 0,
             comment: Input::default(),
+            comment_target: CommentTarget::New,
+            title: Input::default(),
+            description: Input::default(),
+            editing: None,
             note: Input::default(),
             note_about: None,
             new_issue: None,

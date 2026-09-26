@@ -14,16 +14,24 @@
 //! identifier, URL, or branch name elsewhere.
 //!
 //! **Changes.** [`set_status`], [`set_priority`], [`set_assignee`],
-//! [`assign_to_me`], [`comment`], [`create`] (and [`created`] once Linear
-//! has it). A change is optimistic: every copy of the issue on screen shows
-//! it at once, and the returned request asks Linear to make it real. Should
-//! Linear refuse, [`change_refused`] reads the issue back.
+//! [`assign_to_me`], and [`update`] for any of its fields at once — title,
+//! description, priority, assignee, estimate, labels, project, cycle,
+//! parent; [`create`] (and [`created`] once Linear has it). A change is
+//! optimistic: every copy of the issue on screen shows it at once, and the
+//! returned request asks Linear to make it real. Should Linear refuse,
+//! [`change_refused`] reads the issue back.
+//!
+//! **The thread.** [`comment`], [`reply`], [`edit_comment`], and
+//! [`delete_comment`].
 
 use super::{Open, Refusal};
 use crate::core::entity::{
-    CustomViewId, CycleId, IssueId, ProjectId, TeamId, UserId, WorkflowStateId,
+    Comment, Connection, Cycle, Issue, IssueFilter, IssueRef, Label, Page, Preset, Priority,
+    Project, User, WorkflowState,
 };
-use crate::core::entity::{Issue, IssueFilter, Page, Preset, Priority, User, WorkflowState};
+use crate::core::entity::{
+    CommentId, CustomViewId, CycleId, IssueId, LabelId, ProjectId, TeamId, UserId, WorkflowStateId,
+};
 use crate::core::store::{IssueSource, List, ListOf, Store};
 
 /// What the issue use cases ask of Linear, and of the desktop.
@@ -81,15 +89,29 @@ pub enum Request {
         issue_id: IssueId,
         assignee_id: Option<UserId>,
     },
+    /// Any fields of an issue at once.
+    Update {
+        issue_id: IssueId,
+        changes: Changes,
+    },
+    /// A new comment, or — with `parent_id` — a reply in that thread.
     Comment {
         issue_id: IssueId,
         body: String,
+        parent_id: Option<CommentId>,
+    },
+    EditComment {
+        issue_id: IssueId,
+        comment_id: CommentId,
+        body: String,
+    },
+    DeleteComment {
+        issue_id: IssueId,
+        comment_id: CommentId,
     },
     Create {
         team_id: TeamId,
-        title: String,
-        description: Option<String>,
-        priority: Priority,
+        draft: Draft,
     },
     /// Show the issue's page on linear.app in the desktop's browser.
     OpenInBrowser(String),
@@ -115,9 +137,61 @@ impl Request {
         match self {
             Self::SetStatus { issue_id, .. }
             | Self::SetPriority { issue_id, .. }
-            | Self::SetAssignee { issue_id, .. } => Some(issue_id),
+            | Self::SetAssignee { issue_id, .. }
+            | Self::Update { issue_id, .. }
+            | Self::EditComment { issue_id, .. }
+            | Self::DeleteComment { issue_id, .. } => Some(issue_id),
             _ => None,
         }
+    }
+}
+
+/// What an update asks Linear to change, by id. A field left `None` stays as
+/// it is; for a field that can be emptied, `Some(None)` empties it.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Changes {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub priority: Option<Priority>,
+    pub assignee_id: Option<Option<UserId>>,
+    pub estimate: Option<Option<u32>>,
+    pub added_label_ids: Vec<LabelId>,
+    pub removed_label_ids: Vec<LabelId>,
+    pub project_id: Option<Option<ProjectId>>,
+    pub cycle_id: Option<Option<CycleId>>,
+    pub parent_id: Option<Option<IssueId>>,
+}
+
+/// What an edit changes on an issue, as the user chose it. A field left
+/// `None` stays as it is; for a field that can be emptied, `Some(None)`
+/// empties it.
+#[derive(Debug, Clone, Default)]
+pub struct Edit {
+    pub title: Option<String>,
+    pub description: Option<String>,
+    pub priority: Option<Priority>,
+    pub assignee: Option<Option<User>>,
+    pub estimate: Option<Option<u32>>,
+    pub add_labels: Vec<Label>,
+    pub remove_labels: Vec<Label>,
+    pub project: Option<Option<Project>>,
+    pub cycle: Option<Option<Cycle>>,
+    pub parent: Option<Option<IssueRef>>,
+}
+
+impl Edit {
+    /// Whether it changes nothing at all.
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.description.is_none()
+            && self.priority.is_none()
+            && self.assignee.is_none()
+            && self.estimate.is_none()
+            && self.add_labels.is_empty()
+            && self.remove_labels.is_empty()
+            && self.project.is_none()
+            && self.cycle.is_none()
+            && self.parent.is_none()
     }
 }
 
@@ -357,50 +431,282 @@ pub fn assign_to_me(store: &mut Store, issue_id: &IssueId) -> Result<Request, Re
     })
 }
 
+/// **Edit an issue**: any of its title, description, priority, assignee,
+/// estimate, labels, project, cycle, and parent at once — renaming it
+/// (`r`), rewriting its description (`e`), or `linear-tui issue update`.
+///
+/// An edit that changes nothing is refused, and so is an empty title, an
+/// issue made its own parent, and a label named both to add and to remove.
+/// Every copy of the issue shows the edit at once: a label already on the
+/// issue is not added twice, and one it lacks is not removed. Fields the
+/// edit leaves out are left alone.
+pub fn update(store: &mut Store, issue_id: &IssueId, edit: Edit) -> Result<Request, Refusal> {
+    if edit.is_empty() {
+        return Err(Refusal::NothingToChange);
+    }
+    if edit.title.as_ref().is_some_and(|t| t.trim().is_empty()) {
+        return Err(Refusal::TitleRequired);
+    }
+    if let Some(Some(parent)) = &edit.parent
+        && (&parent.id == issue_id
+            || store
+                .issue(issue_id)
+                .is_some_and(|i| i.identifier == parent.identifier))
+    {
+        return Err(Refusal::OwnParent);
+    }
+    if let Some(both) = edit
+        .add_labels
+        .iter()
+        .find(|a| edit.remove_labels.iter().any(|r| r.id == a.id))
+    {
+        return Err(Refusal::LabelAddedAndRemoved(both.name.clone()));
+    }
+    store.patch_issue(issue_id, |issue| apply(issue, &edit));
+    Ok(Request::Update {
+        issue_id: issue_id.clone(),
+        changes: Changes {
+            title: edit.title.clone(),
+            description: edit.description.clone(),
+            priority: edit.priority,
+            assignee_id: edit
+                .assignee
+                .as_ref()
+                .map(|a| a.as_ref().map(|u| u.id.clone())),
+            estimate: edit.estimate,
+            added_label_ids: edit.add_labels.iter().map(|l| l.id.clone()).collect(),
+            removed_label_ids: edit.remove_labels.iter().map(|l| l.id.clone()).collect(),
+            project_id: edit
+                .project
+                .as_ref()
+                .map(|p| p.as_ref().map(|p| p.id.clone())),
+            cycle_id: edit
+                .cycle
+                .as_ref()
+                .map(|c| c.as_ref().map(|c| c.id.clone())),
+            parent_id: edit
+                .parent
+                .as_ref()
+                .map(|p| p.as_ref().map(|p| p.id.clone())),
+        },
+    })
+}
+
+/// Show `edit` on one copy of an issue.
+fn apply(issue: &mut Issue, edit: &Edit) {
+    if let Some(title) = &edit.title {
+        issue.title = title.clone();
+    }
+    if let Some(description) = &edit.description {
+        issue.description = Some(description.clone());
+    }
+    if let Some(priority) = edit.priority {
+        issue.priority = priority;
+        issue.priority_label = Some(priority.label().to_string());
+    }
+    if let Some(assignee) = &edit.assignee {
+        issue.assignee = assignee.clone();
+    }
+    if let Some(estimate) = edit.estimate {
+        issue.estimate = estimate.map(f64::from);
+    }
+    if !edit.add_labels.is_empty() || !edit.remove_labels.is_empty() {
+        let labels = issue.labels.get_or_insert_with(|| Connection {
+            nodes: Vec::new(),
+            page_info: Default::default(),
+        });
+        labels
+            .nodes
+            .retain(|l| !edit.remove_labels.iter().any(|r| r.id == l.id));
+        for label in &edit.add_labels {
+            if !labels.nodes.iter().any(|l| l.id == label.id) {
+                labels.nodes.push(label.clone());
+            }
+        }
+    }
+    if let Some(project) = &edit.project {
+        issue.project = project.clone();
+    }
+    if let Some(cycle) = &edit.cycle {
+        issue.cycle = cycle.clone();
+    }
+    if let Some(parent) = &edit.parent {
+        issue.parent = parent.clone();
+    }
+}
+
 /// **Comment on an issue** (`m`).
 ///
 /// An empty comment is not sent. The open issue's thread is dropped, so it
 /// is read again once Linear has the comment and the new comment shows in
 /// place.
 pub fn comment(store: &mut Store, issue_id: &IssueId, body: String) -> Option<Request> {
-    if body.is_empty() {
+    if body.trim().is_empty() {
         return None;
     }
+    drop_thread(store, issue_id);
+    Some(Request::Comment {
+        issue_id: issue_id.clone(),
+        body,
+        parent_id: None,
+    })
+}
+
+/// **Reply to a comment**, in its thread (`Reply to comment…`, or
+/// `linear-tui issue comment --reply-to`).
+///
+/// An empty reply is refused. When the issue's thread is at hand, the
+/// comment must be in it; and since Linear's threads are one level deep, a
+/// reply to a reply answers the comment that started the thread. The thread
+/// is read again once Linear has the reply.
+pub fn reply(
+    store: &mut Store,
+    issue_id: &IssueId,
+    parent: &CommentId,
+    body: String,
+) -> Result<Request, Refusal> {
+    if body.trim().is_empty() {
+        return Err(Refusal::EmptyComment);
+    }
+    let root = match thread(store, issue_id) {
+        Some(comments) => {
+            let comment = find_comment(comments, parent)?;
+            comment
+                .parent
+                .as_ref()
+                .map_or_else(|| parent.clone(), |p| p.id.clone())
+        }
+        None => parent.clone(),
+    };
+    drop_thread(store, issue_id);
+    Ok(Request::Comment {
+        issue_id: issue_id.clone(),
+        body,
+        parent_id: Some(root),
+    })
+}
+
+/// **Edit a comment** (`Edit comment…`, or `linear-tui issue comment
+/// edit`).
+///
+/// Linear lets only a comment's author change it, so once it is known who
+/// the user is and who wrote the comment, anyone else's is refused with the
+/// author's name. When the thread is at hand, the comment must be in it. An
+/// empty body is refused: deleting is its own action. The new body shows at
+/// once.
+pub fn edit_comment(
+    store: &mut Store,
+    issue_id: &IssueId,
+    comment_id: &CommentId,
+    body: String,
+) -> Result<Request, Refusal> {
+    if body.trim().is_empty() {
+        return Err(Refusal::EmptyComment);
+    }
+    check_author(store, issue_id, comment_id)?;
+    if let Some(current) = store.current_issue.as_mut().filter(|i| &i.id == issue_id)
+        && let Some(comments) = &mut current.comments
+        && let Some(comment) = comments.nodes.iter_mut().find(|c| &c.id == comment_id)
+    {
+        comment.body = body.clone();
+    }
+    Ok(Request::EditComment {
+        issue_id: issue_id.clone(),
+        comment_id: comment_id.clone(),
+        body,
+    })
+}
+
+/// **Delete a comment** (`Delete comment…`, or `linear-tui issue comment
+/// delete`).
+///
+/// As with editing, only the comment's author may, and when the thread is at
+/// hand the comment must be in it. The thread is read again once Linear has
+/// deleted it, so whatever Linear does with its replies is what shows.
+pub fn delete_comment(
+    store: &mut Store,
+    issue_id: &IssueId,
+    comment_id: &CommentId,
+) -> Result<Request, Refusal> {
+    check_author(store, issue_id, comment_id)?;
+    drop_thread(store, issue_id);
+    Ok(Request::DeleteComment {
+        issue_id: issue_id.clone(),
+        comment_id: comment_id.clone(),
+    })
+}
+
+/// The open issue's thread, when that issue is `issue_id` and its thread
+/// has been read.
+fn thread<'a>(store: &'a Store, issue_id: &IssueId) -> Option<&'a [Comment]> {
+    store
+        .current_issue
+        .as_ref()
+        .filter(|i| &i.id == issue_id)
+        .and_then(|i| i.comments.as_ref())
+        .map(|c| c.nodes.as_slice())
+}
+
+fn find_comment<'a>(comments: &'a [Comment], id: &CommentId) -> Result<&'a Comment, Refusal> {
+    comments
+        .iter()
+        .find(|c| &c.id == id)
+        .ok_or_else(|| Refusal::NoSuchComment(id.to_string()))
+}
+
+/// Refuse a comment someone else wrote, as far as that is known.
+fn check_author(store: &Store, issue_id: &IssueId, comment_id: &CommentId) -> Result<(), Refusal> {
+    let Some(comments) = thread(store, issue_id) else {
+        return Ok(());
+    };
+    let comment = find_comment(comments, comment_id)?;
+    match (&store.viewer_id, &comment.user) {
+        (Some(me), Some(author)) if &author.id != me => Err(Refusal::NotYourComment(
+            author
+                .display_name
+                .clone()
+                .unwrap_or_else(|| author.name.clone()),
+        )),
+        _ => Ok(()),
+    }
+}
+
+/// Drop the open issue's thread, so it is read again.
+fn drop_thread(store: &mut Store, issue_id: &IssueId) {
     if let Some(current) = &mut store.current_issue
         && &current.id == issue_id
     {
         current.comments = None;
     }
-    Some(Request::Comment {
-        issue_id: issue_id.clone(),
-        body,
-    })
 }
 
-/// What a new issue is filed with.
-#[derive(Debug, Clone, PartialEq)]
+/// What a new issue is filed with. Besides the title, what the form asks
+/// for; the rest is what `linear-tui issue create` can set too.
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct Draft {
     /// Required.
     pub title: String,
-    /// Markdown; may be empty.
-    pub description: String,
+    /// Markdown; `None` for none.
+    pub description: Option<String>,
     pub priority: Priority,
+    pub assignee_id: Option<UserId>,
+    pub estimate: Option<u32>,
+    pub label_ids: Vec<LabelId>,
+    pub project_id: Option<ProjectId>,
+    pub cycle_id: Option<CycleId>,
+    pub parent_id: Option<IssueId>,
 }
 
-/// **Create an issue** in a team (`c`).
+/// **Create an issue** in a team (`c`, or `linear-tui issue create`).
 ///
 /// A title is required. An empty description is sent as none rather than
 /// as an empty text.
-pub fn create(team_id: TeamId, draft: Draft) -> Result<Request, Refusal> {
-    if draft.title.is_empty() {
+pub fn create(team_id: TeamId, mut draft: Draft) -> Result<Request, Refusal> {
+    if draft.title.trim().is_empty() {
         return Err(Refusal::TitleRequired);
     }
-    Ok(Request::Create {
-        team_id,
-        title: draft.title,
-        description: Some(draft.description).filter(|d| !d.is_empty()),
-        priority: draft.priority,
-    })
+    draft.description = draft.description.filter(|d| !d.trim().is_empty());
+    Ok(Request::Create { team_id, draft })
 }
 
 /// **A new issue is filed.** It appears at the top of its team's list at
@@ -658,10 +964,298 @@ mod tests {
             request,
             Some(Request::Comment {
                 issue_id: id(),
-                body: "hi".into()
+                body: "hi".into(),
+                parent_id: None,
             })
         );
         assert!(store.current_issue.as_ref().unwrap().comments.is_none());
+    }
+
+    /// The thread of `i1`, open: `c1` by `me` with `c2` replying to it,
+    /// and `c3` by someone else. The user is `me`.
+    fn store_with_thread() -> Store {
+        let mut store = store_with_issue();
+        store.viewer_id = Some(UserId::from("me"));
+        store.current_issue.as_mut().unwrap().comments = Some(
+            serde_json::from_str(
+                r#"{"nodes":[
+                    {"id":"c1","body":"first","user":{"id":"me","name":"Me"}},
+                    {"id":"c2","body":"reply","user":{"id":"me","name":"Me"},"parent":{"id":"c1"}},
+                    {"id":"c3","body":"theirs","user":{"id":"u2","name":"Ada","displayName":"ada"}}
+                ]}"#,
+            )
+            .unwrap(),
+        );
+        store
+    }
+
+    fn body_of(store: &Store, comment: &str) -> String {
+        let comments = &store.current_issue.as_ref().unwrap().comments;
+        let comments = &comments.as_ref().unwrap().nodes;
+        comments
+            .iter()
+            .find(|c| c.id == comment)
+            .unwrap()
+            .body
+            .clone()
+    }
+
+    /// A reply goes into the comment's thread, and the thread is read again.
+    #[test]
+    fn a_reply_goes_into_the_thread() {
+        let mut store = store_with_thread();
+        let request = reply(&mut store, &id(), &"c1".into(), "yes".into());
+        assert_eq!(
+            request,
+            Ok(Request::Comment {
+                issue_id: id(),
+                body: "yes".into(),
+                parent_id: Some("c1".into()),
+            })
+        );
+        assert!(store.current_issue.as_ref().unwrap().comments.is_none());
+    }
+
+    /// Threads are one level deep: a reply to a reply answers the comment
+    /// that started the thread.
+    #[test]
+    fn a_reply_to_a_reply_answers_the_thread() {
+        let mut store = store_with_thread();
+        let Ok(Request::Comment { parent_id, .. }) =
+            reply(&mut store, &id(), &"c2".into(), "and".into())
+        else {
+            panic!("expected a comment");
+        };
+        assert_eq!(parent_id, Some("c1".into()));
+    }
+
+    /// An empty reply, or one to a comment not in the thread, is refused.
+    #[test]
+    fn an_empty_or_misplaced_reply_is_refused() {
+        let mut store = store_with_thread();
+        assert_eq!(
+            reply(&mut store, &id(), &"c1".into(), "  ".into()),
+            Err(Refusal::EmptyComment)
+        );
+        assert_eq!(
+            reply(&mut store, &id(), &"nope".into(), "hi".into()),
+            Err(Refusal::NoSuchComment("nope".into()))
+        );
+    }
+
+    /// Without the thread at hand, the reply goes to the comment named.
+    #[test]
+    fn a_reply_without_the_thread_goes_to_the_comment_named() {
+        let Ok(Request::Comment { parent_id, .. }) =
+            reply(&mut Store::default(), &id(), &"c9".into(), "hi".into())
+        else {
+            panic!("expected a comment");
+        };
+        assert_eq!(parent_id, Some("c9".into()));
+    }
+
+    /// Editing my comment shows the new body at once and asks Linear for it.
+    #[test]
+    fn editing_my_comment_shows_at_once() {
+        let mut store = store_with_thread();
+        let request = edit_comment(&mut store, &id(), &"c1".into(), "better".into());
+        assert_eq!(
+            request,
+            Ok(Request::EditComment {
+                issue_id: id(),
+                comment_id: "c1".into(),
+                body: "better".into(),
+            })
+        );
+        assert_eq!(body_of(&store, "c1"), "better");
+    }
+
+    /// Someone else's comment cannot be edited or deleted, and the refusal
+    /// names who wrote it; nothing changes.
+    #[test]
+    fn someone_elses_comment_is_left_alone() {
+        let mut store = store_with_thread();
+        let theirs = Refusal::NotYourComment("ada".into());
+        assert_eq!(
+            edit_comment(&mut store, &id(), &"c3".into(), "x".into()),
+            Err(theirs.clone())
+        );
+        assert_eq!(delete_comment(&mut store, &id(), &"c3".into()), Err(theirs));
+        assert_eq!(body_of(&store, "c3"), "theirs");
+    }
+
+    /// An edit to an empty body, or of a comment not in the thread, is
+    /// refused.
+    #[test]
+    fn an_empty_edit_or_a_missing_comment_is_refused() {
+        let mut store = store_with_thread();
+        assert_eq!(
+            edit_comment(&mut store, &id(), &"c1".into(), "".into()),
+            Err(Refusal::EmptyComment)
+        );
+        assert_eq!(
+            delete_comment(&mut store, &id(), &"c9".into()),
+            Err(Refusal::NoSuchComment("c9".into()))
+        );
+    }
+
+    /// Deleting my comment asks Linear to, and the thread is read again.
+    #[test]
+    fn deleting_my_comment_reads_the_thread_again() {
+        let mut store = store_with_thread();
+        assert_eq!(
+            delete_comment(&mut store, &id(), &"c2".into()),
+            Ok(Request::DeleteComment {
+                issue_id: id(),
+                comment_id: "c2".into(),
+            })
+        );
+        assert!(store.current_issue.as_ref().unwrap().comments.is_none());
+    }
+
+    /// Without the thread or the user known, the change goes to Linear,
+    /// which decides.
+    #[test]
+    fn without_the_thread_linear_decides() {
+        assert!(edit_comment(&mut Store::default(), &id(), &"c".into(), "b".into()).is_ok());
+        assert!(delete_comment(&mut Store::default(), &id(), &"c".into()).is_ok());
+    }
+
+    // ---------------------------------------------------------- update
+
+    fn label(id: &str) -> Label {
+        serde_json::from_str(&format!(r#"{{"id":"{id}","name":"{id}"}}"#)).unwrap()
+    }
+
+    /// An edit that changes nothing is refused.
+    #[test]
+    fn an_empty_edit_is_refused() {
+        assert_eq!(
+            update(&mut store_with_issue(), &id(), Edit::default()),
+            Err(Refusal::NothingToChange)
+        );
+    }
+
+    /// Renaming to an empty title is refused.
+    #[test]
+    fn an_empty_title_is_refused() {
+        let edit = Edit {
+            title: Some(" ".into()),
+            ..Edit::default()
+        };
+        assert_eq!(
+            update(&mut store_with_issue(), &id(), edit),
+            Err(Refusal::TitleRequired)
+        );
+    }
+
+    /// An issue cannot be made its own parent, by id or by identifier.
+    #[test]
+    fn an_issue_cannot_be_its_own_parent() {
+        let own: IssueRef =
+            serde_json::from_str(r#"{"id":"ENG-1","identifier":"ENG-1","title":"t"}"#).unwrap();
+        let edit = Edit {
+            parent: Some(Some(own)),
+            ..Edit::default()
+        };
+        assert_eq!(
+            update(&mut store_with_issue(), &id(), edit),
+            Err(Refusal::OwnParent)
+        );
+    }
+
+    /// A label named both to add and to remove is refused.
+    #[test]
+    fn a_label_added_and_removed_is_refused() {
+        let edit = Edit {
+            add_labels: vec![label("bug")],
+            remove_labels: vec![label("bug")],
+            ..Edit::default()
+        };
+        assert_eq!(
+            update(&mut store_with_issue(), &id(), edit),
+            Err(Refusal::LabelAddedAndRemoved("bug".into()))
+        );
+    }
+
+    /// Every copy shows the new title, description, priority, and estimate at
+    /// once; Linear is asked for exactly those.
+    #[test]
+    fn an_edit_shows_everywhere_at_once() {
+        let mut store = store_with_issue();
+        let edit = Edit {
+            title: Some("Renamed".into()),
+            description: Some("# Body".into()),
+            priority: Some(Priority::Low),
+            estimate: Some(Some(3)),
+            ..Edit::default()
+        };
+        let request = update(&mut store, &id(), edit).unwrap();
+        assert_eq!(
+            request,
+            Request::Update {
+                issue_id: id(),
+                changes: Changes {
+                    title: Some("Renamed".into()),
+                    description: Some("# Body".into()),
+                    priority: Some(Priority::Low),
+                    estimate: Some(Some(3)),
+                    ..Changes::default()
+                },
+            }
+        );
+        for issue in copies(&store) {
+            assert_eq!(issue.title, "Renamed");
+            assert_eq!(issue.description.as_deref(), Some("# Body"));
+            assert_eq!(issue.priority_label.as_deref(), Some("Low"));
+            assert_eq!(issue.estimate, Some(3.0));
+        }
+    }
+
+    /// A label already on the issue is not added twice, and removing one it
+    /// lacks changes nothing.
+    #[test]
+    fn labels_are_added_once_and_removed_if_there() {
+        let mut store = store_with_issue();
+        let edit = || Edit {
+            add_labels: vec![label("bug")],
+            remove_labels: vec![label("ui")],
+            ..Edit::default()
+        };
+        update(&mut store, &id(), edit()).unwrap();
+        let request = update(&mut store, &id(), edit()).unwrap();
+        let Request::Update { changes, .. } = request else {
+            panic!("expected an update");
+        };
+        assert_eq!(changes.added_label_ids, vec![LabelId::from("bug")]);
+        assert_eq!(changes.removed_label_ids, vec![LabelId::from("ui")]);
+        let labels = &store.issue(&id()).unwrap().labels.as_ref().unwrap().nodes;
+        assert_eq!(labels.len(), 1);
+    }
+
+    /// The assignee, project, cycle, and parent can each be emptied, and
+    /// fields the edit leaves out stay as they are.
+    #[test]
+    fn fields_can_be_emptied_and_others_are_left_alone() {
+        let mut store = store_with_issue();
+        set_assignee(&mut store, &id(), Some(user("u")));
+        let edit = Edit {
+            project: Some(None),
+            cycle: Some(None),
+            parent: Some(None),
+            ..Edit::default()
+        };
+        let Ok(Request::Update { changes, .. }) = update(&mut store, &id(), edit) else {
+            panic!("expected an update");
+        };
+        assert_eq!(changes.project_id, Some(None));
+        assert_eq!(changes.cycle_id, Some(None));
+        assert_eq!(changes.parent_id, Some(None));
+        assert_eq!(changes.assignee_id, None);
+        assert_eq!(
+            store.issue(&id()).unwrap().assignee.as_ref().unwrap().name,
+            "u"
+        );
     }
 
     // ---------------------------------------------------------- create
@@ -669,8 +1263,9 @@ mod tests {
     fn draft(title: &str, description: &str) -> Draft {
         Draft {
             title: title.into(),
-            description: description.into(),
+            description: Some(description.into()),
             priority: Priority::Medium,
+            ..Draft::default()
         }
     }
 
@@ -691,9 +1286,7 @@ mod tests {
             create(TeamId::from("t"), draft("Crash", "On start")),
             Ok(Request::Create {
                 team_id: TeamId::from("t"),
-                title: "Crash".into(),
-                description: Some("On start".into()),
-                priority: Priority::Medium,
+                draft: draft("Crash", "On start"),
             })
         );
     }
@@ -701,11 +1294,10 @@ mod tests {
     /// An empty description is sent as none.
     #[test]
     fn an_empty_description_is_sent_as_none() {
-        let Ok(Request::Create { description, .. }) = create(TeamId::from("t"), draft("x", ""))
-        else {
+        let Ok(Request::Create { draft, .. }) = create(TeamId::from("t"), draft("x", "")) else {
             panic!("expected a create request");
         };
-        assert_eq!(description, None);
+        assert_eq!(draft.description, None);
     }
 
     // ------------------------------------------------------ copy, open
@@ -1196,7 +1788,13 @@ mod tests {
         let comment = Request::Comment {
             issue_id: issue_id(),
             body: "b".into(),
+            parent_id: None,
         };
         assert_eq!(comment.changed_issue(), None);
+        let update = Request::Update {
+            issue_id: issue_id(),
+            changes: Changes::default(),
+        };
+        assert_eq!(update.changed_issue(), Some(&issue_id()));
     }
 }
