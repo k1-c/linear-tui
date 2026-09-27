@@ -255,6 +255,41 @@ fn deserialize_projects() {
     assert!(resp.team.projects.nodes[1].start_date.is_none());
 }
 
+/// A project read on its own carries its body, teams, and milestones; a
+/// list row, without them, still loads.
+#[test]
+fn deserialize_project_detail() {
+    #[derive(Deserialize)]
+    struct Resp {
+        project: Project,
+    }
+    let resp: Resp = serde_json::from_str(&fixture("project_detail.json")).unwrap();
+    let project = resp.project;
+    assert_eq!(
+        project.description.as_deref(),
+        Some("Ship the first release")
+    );
+    assert!(
+        project
+            .content
+            .unwrap()
+            .starts_with("## Why\n\nCustomers asked.")
+    );
+    assert_eq!(project.teams.unwrap().nodes[0].key, "ENG");
+    assert_eq!(project.milestones.unwrap().nodes[0].name, "Beta");
+
+    #[derive(Deserialize)]
+    struct TeamResp {
+        team: TeamWithProjects,
+    }
+    #[derive(Deserialize)]
+    struct TeamWithProjects {
+        projects: Connection<Project>,
+    }
+    let rows: TeamResp = serde_json::from_str(&fixture("projects.json")).unwrap();
+    assert!(rows.team.projects.nodes[0].content.is_none());
+}
+
 #[test]
 fn deserialize_cycles() {
     #[derive(Deserialize)]

@@ -84,9 +84,12 @@ fn every_list_reads_from_the_command_line() {
     let view = run(&tui, &["issue", "list", "--view", ISSUE_VIEW]);
     assert!(view.contains(seeded.issue(WIND)), "{view}");
 
-    // Linear indexes a new issue for search a while after it is filed.
+    // Linear indexes a new issue for search a while after it is filed. By
+    // this run's identifier: Linear keeps a search's answer for a while, and
+    // a term searched before this run was seeded would still find the issues
+    // it deleted.
     eventually("issue search finds the seeded issue", || {
-        let found = json(run(&tui, &["issue", "search", CRASH, "--json"]));
+        let found = json(run(&tui, &["issue", "search", crash, "--json"]));
         identifiers(&found)
             .contains(&crash.to_string())
             .then_some(())
@@ -140,6 +143,8 @@ fn a_project_and_its_milestones_are_made_changed_and_deleted() {
             "2027-03-31",
             "--lead",
             "me",
+            "--content",
+            "## Why\n\nThe first body.",
         ],
     );
     assert!(
@@ -150,6 +155,8 @@ fn a_project_and_its_milestones_are_made_changed_and_deleted() {
     assert_eq!(shown["status"]["name"], "Planned");
     assert_eq!(shown["target_date"], "2027-03-31");
     assert_eq!(shown["lead"], seeded.viewer_name.as_str());
+    let content = shown["content"].as_str().unwrap_or_default();
+    assert!(content.contains("The first body."), "{shown}");
 
     let changed = run(
         &tui,
@@ -161,11 +168,22 @@ fn a_project_and_its_milestones_are_made_changed_and_deleted() {
             "In Progress",
             "--target",
             "none",
+            "--content",
+            "The second body.",
         ],
     );
     assert!(
         changed.contains(&format!("{name}: status Planned → In Progress")),
         "{changed}"
+    );
+    assert!(
+        changed.contains(&format!("{name}: content rewritten")),
+        "{changed}"
+    );
+    let shown = run(&tui, &["project", "show", &name]);
+    assert!(
+        shown.contains("## Content\n\nThe second body.\n") && !shown.contains("first body"),
+        "{shown}"
     );
     let backwards = tui
         .cli(&[

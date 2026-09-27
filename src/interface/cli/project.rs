@@ -120,8 +120,8 @@ fn facts(project: &Project) -> String {
     }
 }
 
-/// `project show`: its fields, teams, description, and milestones; its URL
-/// among its fields.
+/// `project show`: its fields, teams, description, content, and
+/// milestones; its URL among its fields.
 ///
 /// Covers: project::find, project::open, project::open_url
 async fn show(linear: &impl Linear, args: &[String]) -> Result<String> {
@@ -170,14 +170,15 @@ pub fn render(project: &Project) -> String {
     );
     field("URL", project.url.clone());
 
-    let description = project.description.as_deref().unwrap_or("").trim();
-    out.push_str("\n## Description\n\n");
-    out.push_str(if description.is_empty() {
-        "(none)"
-    } else {
-        description
-    });
-    out.push('\n');
+    for (heading, text) in [
+        ("Description", &project.description),
+        ("Content", &project.content),
+    ] {
+        let text = text.as_deref().unwrap_or("").trim();
+        out.push_str(&format!("\n## {heading}\n\n"));
+        out.push_str(if text.is_empty() { "(none)" } else { text });
+        out.push('\n');
+    }
 
     if let Some(milestones) = &project.milestones {
         out.push_str(&format!("\n## Milestones ({})\n\n", milestones.nodes.len()));
@@ -210,6 +211,7 @@ pub fn project_json(project: &Project) -> Value {
         "target_date": project.target_date,
         "progress": project.progress,
         "description": project.description,
+        "content": project.content,
         "milestones": project.milestones.as_ref().map(|m| m.nodes.iter().map(milestone_json).collect::<Vec<_>>()),
     })
 }
@@ -226,6 +228,7 @@ fn milestone_json(milestone: &Milestone) -> Value {
 /// The options `project create` and `update` share, beyond the name.
 const FIELDS: &[&str] = &[
     "description",
+    "content",
     "lead",
     "status",
     "priority",
@@ -238,7 +241,7 @@ const FIELDS: &[&str] = &[
 /// Covers: project::create, project::load_statuses
 async fn create(linear: &impl Linear, args: &[String]) -> Result<String> {
     let usage = "linear-tui project create --team <key>... --name <text> [--description <text>|-] \
-                 [--lead <me|name|email>] [--status <name>] [--priority <level>] \
+                 [--content <markdown>|-] [--lead <me|name|email>] [--status <name>] [--priority <level>] \
                  [--start <YYYY-MM-DD>] [--target <YYYY-MM-DD>] [--json]";
     let mut valued = vec!["team", "name"];
     valued.extend_from_slice(FIELDS);
@@ -264,6 +267,7 @@ async fn create(linear: &impl Linear, args: &[String]) -> Result<String> {
         name: text_or_stdin(name)?,
         team_ids: teams.iter().map(|t| t.id.clone()).collect(),
         description: args.value("description").map(text_or_stdin).transpose()?,
+        content: args.value("content").map(text_or_stdin).transpose()?,
         lead_id,
         status_id: match args.value("status") {
             Some(name) => Some(resolve::project_status(linear, name).await?.id),
@@ -299,7 +303,7 @@ async fn create(linear: &impl Linear, args: &[String]) -> Result<String> {
 /// Covers: project::update
 async fn update(linear: &impl Linear, args: &[String]) -> Result<String> {
     let usage = "linear-tui project update <project> [--name <text>] [--description <text>|-] \
-                 [--lead <me|name|email|none>] [--status <name>] [--priority <level>] \
+                 [--content <markdown>|-] [--lead <me|name|email|none>] [--status <name>] [--priority <level>] \
                  [--start <YYYY-MM-DD|none>] [--target <YYYY-MM-DD|none>] [--json]";
     let mut valued = vec!["name"];
     valued.extend_from_slice(FIELDS);
@@ -333,6 +337,7 @@ async fn update(linear: &impl Linear, args: &[String]) -> Result<String> {
     let changes = Changes {
         name: args.value("name").map(text_or_stdin).transpose()?,
         description: args.value("description").map(text_or_stdin).transpose()?,
+        content: args.value("content").map(text_or_stdin).transpose()?,
         lead_id: lead.as_ref().map(|l| l.as_ref().map(|u| u.id.clone())),
         status_id: status.as_ref().map(|s| s.id.clone()),
         priority: args.value("priority").map(resolve::priority).transpose()?,
@@ -342,8 +347,8 @@ async fn update(linear: &impl Linear, args: &[String]) -> Result<String> {
     let mut lines = Vec::new();
     let mut changed = |field: &str, from: Option<String>, to: Option<String>| {
         let text = |v: &Option<String>| v.clone().unwrap_or_else(|| "—".into());
-        let line = if field == "description" {
-            "description rewritten".to_string()
+        let line = if field == "description" || field == "content" {
+            format!("{field} rewritten")
         } else {
             format!("{field} {} → {}", text(&from), text(&to))
         };
@@ -385,6 +390,9 @@ async fn update(linear: &impl Linear, args: &[String]) -> Result<String> {
             project.description.clone(),
             Some(description.clone()),
         );
+    }
+    if let Some(content) = &changes.content {
+        changed("content", project.content.clone(), Some(content.clone()));
     }
     let request = usecase::project::update(&mut Store::default(), &project.id, changes)?;
     linear.run(request).await?;
@@ -572,6 +580,7 @@ mod tests {
             "id": "p1", "name": "Forecast v2", "url": "https://linear.app/w/project/forecast",
             "status": { "id": "s", "name": "In Progress", "type": "started" },
             "priorityLabel": "High", "targetDate": "2026-12-01", "progress": 0.4,
+            "description": "Hourly forecasts", "content": "## Why\n\nRain comes.\n",
             "teams": { "nodes": [{ "id": "t", "name": "Weather", "key": "WX" }] },
             "projectMilestones": { "nodes": [
                 { "id": "m1", "name": "Beta", "targetDate": "2026-11-01" },
@@ -591,6 +600,8 @@ mod tests {
             "- Teams: WX\n",
             "- Target: 2026-12-01\n",
             "- Progress: 40%\n",
+            "## Description\n\nHourly forecasts\n",
+            "## Content\n\n## Why\n\nRain comes.\n",
             "## Milestones (2)",
             "- Beta — target 2026-11-01 (id m1)\n",
             "- Launch (id m2)\n",

@@ -12,8 +12,10 @@ use crate::core::entity::*;
 use crate::core::usecase::issue::{Changes, Draft};
 use crate::core::usecase::project;
 
-/// Fields selected for a project read on its own: its teams and milestones.
+/// Fields selected for a project read on its own: its body, teams, and
+/// milestones.
 const PROJECT_DETAIL_FIELDS: &str = r#"
+    content
     teams { nodes { id name key } }
     projectMilestones { nodes { id name targetDate description } }
 "#;
@@ -1071,6 +1073,9 @@ fn project_create_input(draft: &project::Draft) -> Value {
     if let Some(description) = &draft.description {
         input["description"] = json!(description);
     }
+    if let Some(content) = &draft.content {
+        input["content"] = json!(content);
+    }
     if let Some(lead) = &draft.lead_id {
         input["leadId"] = json!(lead);
     }
@@ -1101,6 +1106,9 @@ fn project_update_input(changes: &project::Changes) -> Value {
     }
     if let Some(description) = &changes.description {
         put("description", json!(description));
+    }
+    if let Some(content) = &changes.content {
+        put("content", json!(content));
     }
     if let Some(lead) = &changes.lead_id {
         put("leadId", json!(lead));
@@ -1344,21 +1352,24 @@ mod tests {
         let draft = project::Draft {
             name: "Launch".into(),
             team_ids: vec![TeamId::new("t")],
+            content: Some("## Why\n\nBecause.".into()),
             target_date: Some("2026-12-01".into()),
             ..project::Draft::default()
         };
         assert_eq!(
             project_create_input(&draft),
-            json!({ "name": "Launch", "teamIds": ["t"], "targetDate": "2026-12-01" })
+            json!({ "name": "Launch", "teamIds": ["t"], "content": "## Why\n\nBecause.",
+                    "targetDate": "2026-12-01" })
         );
         let changes = project::Changes {
+            content: Some(String::new()),
             lead_id: Some(None),
             priority: Some(Priority::High),
             ..project::Changes::default()
         };
         assert_eq!(
             project_update_input(&changes),
-            json!({ "leadId": null, "priority": 2 })
+            json!({ "content": "", "leadId": null, "priority": 2 })
         );
     }
 

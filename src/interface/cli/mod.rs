@@ -134,10 +134,11 @@ For agents and scripts (Markdown by default, --json for JSON):
   linear-tui project list (--team <key> | --view <name>)
   linear-tui project show <project>
   linear-tui project create --team <key>... --name <text> [--description <text>]
-                            [--lead <who>] [--status <name>] [--priority <level>]
-                            [--start <date>] [--target <date>]
-  linear-tui project update <project> [--name] [--description] [--lead|none]
-                            [--status] [--priority] [--start|none] [--target|none]
+                            [--content <markdown>] [--lead <who>] [--status <name>]
+                            [--priority <level>] [--start <date>] [--target <date>]
+  linear-tui project update <project> [--name] [--description] [--content]
+                            [--lead|none] [--status] [--priority] [--start|none]
+                            [--target|none]
   linear-tui project delete <project>
   linear-tui milestone list <project>
   linear-tui milestone create <project> --name <text> [--description] [--target <date>]
@@ -158,7 +159,7 @@ For agents and scripts (Markdown by default, --json for JSON):
   linear-tui paths [--json]      Where the config and the state (view snapshots) live
 
 <ID> is an identifier (ENG-123) or an issue URL. A <body> or <text> of `-`
-is read from stdin.
+is read from stdin, by one argument at most.
 ";
 
 /// Run the subcommand `args` names — all but `auth`, which
