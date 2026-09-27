@@ -16,6 +16,9 @@ pub struct Args {
 impl Args {
     /// Parse `args` against the flags and valued options a command accepts,
     /// given without their leading `--`. After `--` everything is positional.
+    ///
+    /// Stdin is read once, so only one argument may be `-`: a second would
+    /// read nothing, and write that nothing over what it names.
     pub fn parse(args: &[String], flags: &[&str], valued: &[&str]) -> Result<Self> {
         let mut parsed = Self::default();
         let mut rest = args.iter();
@@ -42,6 +45,13 @@ impl Args {
             } else {
                 bail!("unknown option --{name}");
             }
+        }
+        let from_stdin = (parsed.values.iter().map(|(_, v)| v))
+            .chain(&parsed.positional)
+            .filter(|v| *v == "-")
+            .count();
+        if from_stdin > 1 {
+            bail!("only one argument can read stdin (`-`)");
         }
         Ok(parsed)
     }
@@ -129,6 +139,22 @@ mod tests {
         assert_eq!(err.to_string(), "unknown option --jsn");
         let err = Args::parse(&args(&["--team"]), &[], &["team"]).unwrap_err();
         assert_eq!(err.to_string(), "--team needs a value");
+    }
+
+    #[test]
+    fn stdin_is_read_by_one_argument_only() {
+        let valued = &["description", "content"];
+        let one = Args::parse(&args(&["P", "--content", "-"]), &[], valued).unwrap();
+        assert_eq!(one.value("content"), Some("-"));
+        let err = Args::parse(
+            &args(&["P", "--description", "-", "--content", "-"]),
+            &[],
+            valued,
+        )
+        .unwrap_err();
+        assert_eq!(err.to_string(), "only one argument can read stdin (`-`)");
+        let err = Args::parse(&args(&["-", "--content=-"]), &[], valued).unwrap_err();
+        assert_eq!(err.to_string(), "only one argument can read stdin (`-`)");
     }
 
     #[test]

@@ -38,7 +38,7 @@ the context starts with that issue. Use `--json` when you need exact fields.
 | Edit it | `linear-tui issue update ENG-42 --title "…" --description - --priority low --assignee me --estimate 3 --label Bug --unlabel UI --project "…" --cycle current --parent ENG-30` (any of them; `none` empties a field) |
 | File an issue | `linear-tui issue create --team ENG --title "…" --description -` (and the same fields as `update`) |
 | File under a milestone | `--project "…" --milestone "Beta"` on `create` or `update` |
-| Projects | `linear-tui project list --team ENG`, `project show "…"`, `project create --team ENG --name "…"`, `project update "…" --status "In Progress" --target 2026-12-01`, `project delete "…"` |
+| Projects | `linear-tui project list --team ENG`, `project show "…"`, `project create --team ENG --name "…"`, `project update "…" --status "In Progress" --target 2026-12-01`, `project update "…" --content -` (its body; `--description` is the one-line summary), `project delete "…"` |
 | Milestones | `linear-tui milestone list "<project>"`, `milestone create "<project>" --name Beta --target 2026-11-01`, `milestone update "<project>" Beta --name …`, `milestone delete "<project>" Beta` |
 | A team's states, members, labels | `linear-tui team show ENG` (`team list` for the teams) |
 | Cycles, views, favorites | `linear-tui cycle list --team ENG`, `view list`, `favorite list` |

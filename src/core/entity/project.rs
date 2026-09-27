@@ -18,8 +18,13 @@ pub struct Project {
     pub color: Option<String>,
     #[serde(default)]
     pub health: Option<String>,
+    /// Its summary: a line or two, shown under its name.
     #[serde(default)]
     pub description: Option<String>,
+    /// Its body, in Markdown: what the project is and why. Fetched only
+    /// when reading one project.
+    #[serde(default)]
+    pub content: Option<String>,
     #[serde(default)]
     pub progress: Option<f64>,
     #[serde(default, rename = "startDate")]

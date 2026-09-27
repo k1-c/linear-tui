@@ -19,7 +19,8 @@ This document defines the contract. Output is meant for agents first:
 
 An `<ID>` is an identifier in any case (`ENG-123`, `eng-123`), an issue URL
 (`https://linear.app/<org>/issue/ENG-123/…`), or an issue UUID. An argument
-given as `-` is read from stdin, so a multi-line body needs no quoting.
+given as `-` is read from stdin, so a multi-line body needs no quoting; only
+one argument of a command can be `-`.
 
 ## `linear-tui open <ID>`
 
@@ -362,6 +363,10 @@ and teams included; name one by its id then.
 
 …
 
+## Content
+
+…
+
 ## Milestones (2)
 
 - Beta — target 2026-11-01 (id 9a41…)
@@ -370,8 +375,8 @@ and teams included; name one by its id then.
 
 A field without a value is left out. `--json` gives `id`, `name`, `url`,
 `status` (`{ name, type }`), `priority`, `lead`, `teams` (keys),
-`start_date`, `target_date`, `progress` (0 to 1), `description`, and
-`milestones` (`{ id, name, target_date, description }`).
+`start_date`, `target_date`, `progress` (0 to 1), `description`, `content`,
+and `milestones` (`{ id, name, target_date, description }`).
 
 ## `linear-tui project create --team <key>... --name <text> [fields] [--json]`
 
@@ -380,7 +385,8 @@ A field without a value is left out. `--json` gives `id`, `name`, `url`,
 | Option | Value |
 | --- | --- |
 | `--team <key>` | create only: a team it belongs to; repeatable, at least one |
-| `--description <text>` | Markdown; `-` reads stdin |
+| `--description <text>` | its summary, a line or two under its name; `-` reads stdin |
+| `--content <markdown>` | its body, the document on its overview page; `-` reads stdin. `update` replaces it whole, and `""` empties it |
 | `--lead <who>` | `me`, or a member of its (first) team by name, display name, or email; `none` on update |
 | `--status <name>` | one of the workspace's project statuses (`Backlog`, `Planned`, `In Progress`, …) |
 | `--priority <level>` | `urgent`, `high`, `medium`, `low`, or `none` |
@@ -389,7 +395,7 @@ A field without a value is left out. `--json` gives `id`, `name`, `url`,
 A target date before the start date is refused. `create` prints `Created
 project <name> (id <id>)` and the URL; `--json` prints the project. `update`
 prints one line per field changed (`Forecast v2: status Planned → In
-Progress`), and `--json` `{ "project", "id", "changes": [{ "field", "from",
+Progress`, `Forecast v2: content rewritten`), and `--json` `{ "project", "id", "changes": [{ "field", "from",
 "to" }] }`.
 
 ## `linear-tui project delete <project> [--json]`

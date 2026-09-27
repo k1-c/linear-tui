@@ -87,8 +87,10 @@ pub struct Draft {
     pub name: String,
     /// At least one.
     pub team_ids: Vec<TeamId>,
-    /// Markdown.
+    /// Its summary, a line or two.
     pub description: Option<String>,
+    /// Its body, in Markdown.
+    pub content: Option<String>,
     pub lead_id: Option<UserId>,
     pub status_id: Option<ProjectStatusId>,
     pub priority: Option<Priority>,
@@ -102,6 +104,8 @@ pub struct Draft {
 pub struct Changes {
     pub name: Option<String>,
     pub description: Option<String>,
+    /// The whole body, replacing what it was; empty text empties it.
+    pub content: Option<String>,
     pub lead_id: Option<Option<UserId>>,
     pub status_id: Option<ProjectStatusId>,
     pub priority: Option<Priority>,
@@ -225,7 +229,7 @@ pub fn load_statuses() -> Request {
 /// **Create a project** in one or more teams.
 ///
 /// It needs a name and a team, and a target date on or after its start
-/// date. An empty description is sent as none.
+/// date. An empty description or content is sent as none.
 pub fn create(mut draft: Draft) -> Result<Request, Refusal> {
     if draft.name.trim().is_empty() {
         return Err(Refusal::NameRequired);
@@ -235,13 +239,15 @@ pub fn create(mut draft: Draft) -> Result<Request, Refusal> {
     }
     in_order(draft.start_date.as_deref(), draft.target_date.as_deref())?;
     draft.description = draft.description.filter(|d| !d.trim().is_empty());
+    draft.content = draft.content.filter(|c| !c.trim().is_empty());
     Ok(Request::Create { draft })
 }
 
-/// **Change a project**: its name, description, lead, status, priority,
-/// and dates.
+/// **Change a project**: its name, description, content, lead, status,
+/// priority, and dates.
 ///
-/// A change of nothing is refused, and so is an empty name. A target date
+/// A change of nothing is refused, and so is an empty name. Its content is
+/// replaced whole, and empty content empties it. A target date
 /// before the start date is refused when both are given; one given alone is
 /// Linear's to check against the date it holds. Every list holding the
 /// project shows the new name at once.
@@ -399,19 +405,30 @@ mod tests {
         );
     }
 
-    /// A project is made as drafted, an empty description sent as none.
+    /// A project is made as drafted, an empty description or content sent
+    /// as none.
     #[test]
     fn a_new_project_is_made_as_drafted() {
         let described = Draft {
             description: Some("".into()),
+            content: Some(" \n".into()),
             target_date: Some("2026-12-01".into()),
             ..draft("Launch")
         };
-        let Ok(Request::Create { draft }) = create(described) else {
+        let Ok(Request::Create { draft: made }) = create(described) else {
             panic!("expected a create");
         };
-        assert_eq!(draft.description, None);
-        assert_eq!(draft.target_date.as_deref(), Some("2026-12-01"));
+        assert_eq!(made.description, None);
+        assert_eq!(made.content, None);
+        assert_eq!(made.target_date.as_deref(), Some("2026-12-01"));
+        let written = Draft {
+            content: Some("## Why\n\nBecause.".into()),
+            ..draft("Launch")
+        };
+        let Ok(Request::Create { draft: made }) = create(written) else {
+            panic!("expected a create");
+        };
+        assert_eq!(made.content.as_deref(), Some("## Why\n\nBecause."));
     }
 
     /// A change of nothing, or to an empty name, is refused.
@@ -428,6 +445,27 @@ mod tests {
             ..Changes::default()
         };
         assert_eq!(update(&mut store, &p, unnamed), Err(Refusal::NameRequired));
+    }
+
+    /// A project's content is replaced whole; empty content is asked of
+    /// Linear as empty, which empties it.
+    #[test]
+    fn a_projects_content_is_replaced_whole() {
+        let mut store = Store::default();
+        let p = ProjectId::from("p");
+        for text in ["## Why\n\nBecause.", ""] {
+            let changes = Changes {
+                content: Some(text.into()),
+                ..Changes::default()
+            };
+            assert_eq!(
+                update(&mut store, &p, changes.clone()),
+                Ok(Request::Update {
+                    project_id: p.clone(),
+                    changes
+                })
+            );
+        }
     }
 
     /// A renamed project shows its new name in the lists at once, and an

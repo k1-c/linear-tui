@@ -1,0 +1,22 @@
+{
+  "project": {
+    "id": "project-001",
+    "name": "Q1 Release",
+    "description": "Ship the first release",
+    "content": "## Why\n\nCustomers asked.\n\n## Scope\n\n- Login\n- Billing",
+    "state": "started",
+    "progress": 0.45,
+    "startDate": "2026-01-01",
+    "targetDate": "2026-03-31",
+    "url": "https://linear.app/acme/project/project-001",
+    "priorityLabel": "High",
+    "status": { "id": "status-001", "name": "In Progress", "type": "started", "color": "#f2c94c" },
+    "lead": { "id": "user-001", "name": "Alice", "displayName": "alice" },
+    "teams": { "nodes": [{ "id": "team-001", "name": "Engineering", "key": "ENG" }] },
+    "projectMilestones": {
+      "nodes": [
+        { "id": "milestone-001", "name": "Beta", "targetDate": "2026-02-15", "description": null }
+      ]
+    }
+  }
+}
