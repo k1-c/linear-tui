@@ -84,9 +84,12 @@ fn every_list_reads_from_the_command_line() {
     let view = run(&tui, &["issue", "list", "--view", ISSUE_VIEW]);
     assert!(view.contains(seeded.issue(WIND)), "{view}");
 
-    // Linear indexes a new issue for search a while after it is filed.
+    // Linear indexes a new issue for search a while after it is filed. By
+    // this run's identifier: Linear keeps a search's answer for a while, and
+    // a term searched before this run was seeded would still find the issues
+    // it deleted.
     eventually("issue search finds the seeded issue", || {
-        let found = json(run(&tui, &["issue", "search", CRASH, "--json"]));
+        let found = json(run(&tui, &["issue", "search", crash, "--json"]));
         identifiers(&found)
             .contains(&crash.to_string())
             .then_some(())
