@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.0] - 2026-09-27
+
+### Features
+
+- **project**: Write a project's content from the CLI ([#102](https://github.com/k1-c/linear-tui/pull/102))
+
+
+
 ## [0.12.0] - 2026-09-26
 
 ### Features
