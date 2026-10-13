@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.13.1] - 2026-10-13
+
+### Miscellaneous
+
+- Bump dtolnay/rust-toolchain from 02cb101ec7c40f2c49e1d9714d64511d8e1b74de to 7e38f4b43b4db5c8dd498af069a4f6196df1d067 in the github-actions group ([#104](https://github.com/k1-c/linear-tui/pull/104))
+
+
+
 ## [0.13.0] - 2026-09-27
 
 ### Features
